@@ -4,7 +4,7 @@
 
 1. [ ] DynamoDB Observability Table — Create `demo-workflow-events` DynamoDB table with workflow_id partition key, timestamp sort key, event_type, agent_name, payload, and TTL configuration `S`
 
-2. [ ] AWS Credentials Configuration — Implement credential provider chain integration with settings UI for region selection and credential validation `S`
+2. [ ] AWS Connection Integration — Integrate with Kiro's built-in AWS Explorer for credentials (IAM Identity Center, profiles, roles) and region selection; read active connection context for DynamoDB and Bedrock API calls `S`
 
 3. [ ] Python Decorator Package — Build `demo-observability` package with @agent_span, @tool_call, @handoff, and @workflow_outcome decorators that write events to DynamoDB `M`
 

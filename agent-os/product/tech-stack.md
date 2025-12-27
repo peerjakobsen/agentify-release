@@ -197,6 +197,52 @@ agent = Agent(
 - Operating Systems: macOS, Windows, Linux
 - IDE: Kiro IDE (VS Code Extension API)
 
+## Local Development Workflow
+
+### Extension Development (Symlink Method)
+
+The fastest approach for iterative development — build once, symlink, then just rebuild on changes:
+
+```bash
+# 1. Build the extension
+cd agentify
+npm run compile
+
+# 2. Symlink to Kiro's extensions directory
+# macOS/Linux:
+ln -s "$(pwd)" ~/.kiro/extensions/agentify
+
+# Windows (run as Administrator):
+mklink /D "%USERPROFILE%\.kiro\extensions\agentify" "C:\path\to\agentify"
+
+# 3. Restart Kiro to load the extension
+
+# 4. On code changes, rebuild and reload:
+npm run compile
+# Then use Kiro's "Developer: Reload Window" command
+```
+
+### Kiro Extensions Directory
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/.kiro/extensions/` |
+| Linux | `~/.kiro/extensions/` |
+| Windows | `%USERPROFILE%\.kiro\extensions\` |
+
+### Development Commands
+
+```bash
+# Watch mode (auto-rebuild on changes)
+npm run watch
+
+# Build for production
+npm run package
+
+# Run extension tests
+npm run test
+```
+
 ## Technical References
 
 - Strands Agents SDK: https://strandsagents.com/latest/
