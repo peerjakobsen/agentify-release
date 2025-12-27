@@ -35,6 +35,19 @@ vi.mock('vscode', () => ({
       },
     ],
     openTextDocument: vi.fn(),
+    findFiles: vi.fn(() => Promise.resolve([])),
+    fs: {
+      stat: vi.fn(),
+      readFile: vi.fn(),
+      writeFile: vi.fn(),
+      createDirectory: vi.fn(),
+    },
+    createFileSystemWatcher: vi.fn(() => ({
+      onDidChange: vi.fn(),
+      onDidDelete: vi.fn(),
+      onDidCreate: vi.fn(),
+      dispose: vi.fn(),
+    })),
   },
   window: {
     showInformationMessage: vi.fn().mockImplementation((message: string) => {
@@ -47,14 +60,37 @@ vi.mock('vscode', () => ({
     }),
     showWarningMessage: vi.fn().mockImplementation(() => Promise.resolve(undefined)),
     showTextDocument: vi.fn(),
+    createStatusBarItem: vi.fn(() => ({
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+      text: '',
+      tooltip: '',
+      command: '',
+      backgroundColor: undefined,
+      color: undefined,
+    })),
+    showQuickPick: vi.fn(),
+    registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
   },
   Uri: {
     joinPath: vi.fn(),
     parse: vi.fn(),
+    file: (path: string) => ({ fsPath: path }),
   },
   env: {
     openExternal: vi.fn(),
   },
+  commands: {
+    executeCommand: vi.fn(),
+    registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+  },
+  StatusBarAlignment: {
+    Left: 1,
+    Right: 2,
+  },
+  ThemeColor: vi.fn((id: string) => ({ id })),
+  RelativePattern: vi.fn(),
   Disposable: class {
     private disposeFn: () => void;
     constructor(disposeFn: () => void) {
@@ -195,5 +231,205 @@ describe('Extension Integration', () => {
 
     expect(config.tableName).toBe('my-custom-table');
     expect(config.region).toBe('eu-west-1');
+  });
+});
+
+describe('Config Service Integration', () => {
+  it('should validate config schema correctly', async () => {
+    const { validateConfigSchema } = await import('../types/config');
+
+    const validConfig = {
+      version: '1.0.0',
+      project: {
+        name: 'Test Project',
+        valueMap: 'Test value',
+        industry: 'tech',
+      },
+      infrastructure: {
+        dynamodb: {
+          tableName: 'test-table',
+          tableArn: 'arn:aws:dynamodb:us-east-1:123:table/test-table',
+          region: 'us-east-1',
+        },
+      },
+      workflow: {
+        orchestrationPattern: 'graph',
+        triggerType: 'local',
+        triggerConfig: {
+          type: 'local',
+          entryScript: 'main.py',
+          pythonPath: 'python3',
+        },
+        agents: [],
+        edges: [],
+      },
+    };
+
+    const result = validateConfigSchema(validConfig);
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should reject invalid config and return all errors', async () => {
+    const { validateConfigSchema } = await import('../types/config');
+
+    const invalidConfig = {
+      // missing version
+      project: {
+        name: 'Test',
+        // missing valueMap and industry
+      },
+      // missing infrastructure and workflow
+    };
+
+    const result = validateConfigSchema(invalidConfig);
+    expect(result.isValid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors.some((e) => e.includes('version'))).toBe(true);
+  });
+});
+
+describe('AWS Client Integration', () => {
+  beforeEach(async () => {
+    const { resetClients } = await import('../services/dynamoDbClient');
+    const { resetBedrockClient } = await import('../services/bedrockClient');
+    resetClients();
+    resetBedrockClient();
+  });
+
+  it('should create DynamoDB client with lazy initialization', async () => {
+    const { getDynamoDbClient, resetClients } = await import('../services/dynamoDbClient');
+
+    const client1 = getDynamoDbClient();
+    const client2 = getDynamoDbClient();
+
+    // Should return same instance
+    expect(client1).toBe(client2);
+
+    resetClients();
+  });
+
+  it('should create Bedrock client with lazy initialization', async () => {
+    const { getBedrockClient, hasBedrockClient, resetBedrockClient } = await import(
+      '../services/bedrockClient'
+    );
+
+    // Should not have client before first access
+    expect(hasBedrockClient()).toBe(false);
+
+    const client1 = getBedrockClient();
+
+    // Should have client after first access
+    expect(hasBedrockClient()).toBe(true);
+
+    const client2 = getBedrockClient();
+
+    // Should return same instance
+    expect(client1).toBe(client2);
+
+    resetBedrockClient();
+  });
+});
+
+describe('Panel Provider Integration', () => {
+  it('should create panel providers with correct view IDs', async () => {
+    const { DemoViewerPanelProvider, DEMO_VIEWER_VIEW_ID } = await import(
+      '../panels/demoViewerPanel'
+    );
+    const { IdeationWizardPanelProvider, IDEATION_WIZARD_VIEW_ID } = await import(
+      '../panels/ideationWizardPanel'
+    );
+
+    expect(DEMO_VIEWER_VIEW_ID).toBe('agentify.demoViewer');
+    expect(IDEATION_WIZARD_VIEW_ID).toBe('agentify.ideationWizard');
+
+    const mockUri = { fsPath: '/test' } as any;
+    const demoProvider = new DemoViewerPanelProvider(mockUri);
+    const ideationProvider = new IdeationWizardPanelProvider(mockUri);
+
+    expect(demoProvider).toBeDefined();
+    expect(ideationProvider).toBeDefined();
+  });
+});
+
+describe('Type System Integration', () => {
+  it('should properly discriminate stdout events', async () => {
+    const {
+      isGraphStructureEvent,
+      isNodeStartEvent,
+      isStdoutEvent,
+    } = await import('../types');
+
+    const graphEvent = {
+      workflow_id: 'wf-1',
+      timestamp: Date.now(),
+      type: 'graph_structure' as const,
+      nodes: [],
+      edges: [],
+      entry_points: [],
+    };
+
+    expect(isGraphStructureEvent(graphEvent)).toBe(true);
+    expect(isNodeStartEvent(graphEvent)).toBe(false);
+    expect(isStdoutEvent(graphEvent)).toBe(true);
+  });
+
+  it('should properly discriminate DynamoDB events', async () => {
+    const { isToolCallEvent, isAgentSpanEvent, isDynamoDbEvent } = await import('../types');
+
+    const toolCallEvent = {
+      workflow_id: 'wf-1',
+      timestamp: Date.now(),
+      event_type: 'tool_call' as const,
+      agent_name: 'test-agent',
+      system: 'test',
+      operation: 'test-op',
+      input: {},
+      status: 'completed' as const,
+    };
+
+    expect(isToolCallEvent(toolCallEvent)).toBe(true);
+    expect(isAgentSpanEvent(toolCallEvent)).toBe(false);
+    expect(isDynamoDbEvent(toolCallEvent)).toBe(true);
+  });
+});
+
+describe('Error Handling Integration', () => {
+  it('should create and identify AgentifyError correctly', async () => {
+    const {
+      AgentifyError,
+      AgentifyErrorCode,
+      isAgentifyError,
+      hasErrorCode,
+    } = await import('../types');
+
+    const error = new AgentifyError(
+      AgentifyErrorCode.CREDENTIALS_NOT_CONFIGURED,
+      'AWS credentials not configured'
+    );
+
+    expect(isAgentifyError(error)).toBe(true);
+    expect(hasErrorCode(error, AgentifyErrorCode.CREDENTIALS_NOT_CONFIGURED)).toBe(true);
+    expect(hasErrorCode(error, AgentifyErrorCode.TABLE_NOT_FOUND)).toBe(false);
+  });
+
+  it('should create error factory functions correctly', async () => {
+    const {
+      createCredentialsNotConfiguredError,
+      createTableNotFoundError,
+      createConfigNotFoundError,
+      AgentifyErrorCode,
+    } = await import('../types');
+
+    const credError = createCredentialsNotConfiguredError();
+    expect(credError.code).toBe(AgentifyErrorCode.CREDENTIALS_NOT_CONFIGURED);
+
+    const tableError = createTableNotFoundError('test-table');
+    expect(tableError.code).toBe(AgentifyErrorCode.TABLE_NOT_FOUND);
+    expect(tableError.message).toContain('test-table');
+
+    const configError = createConfigNotFoundError('.agentify/config.json');
+    expect(configError.code).toBe(AgentifyErrorCode.CONFIG_NOT_FOUND);
+    expect(configError.message).toContain('.agentify/config.json');
   });
 });

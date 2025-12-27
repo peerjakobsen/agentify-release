@@ -19,10 +19,53 @@
     "dynamodb"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "workspaceContains:.agentify/config.json",
+    "onCommand:agentify.initializeProject"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentify",
+          "title": "Agentify",
+          "icon": "resources/agentify-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentify": [
+        {
+          "type": "webview",
+          "id": "agentify.demoViewer",
+          "name": "Demo Viewer"
+        },
+        {
+          "type": "webview",
+          "id": "agentify.ideationWizard",
+          "name": "Ideation Wizard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentify.initializeProject",
+        "title": "Agentify: Initialize Project"
+      },
+      {
+        "command": "agentify.openDemoViewer",
+        "title": "Agentify: Open Demo Viewer"
+      },
+      {
+        "command": "agentify.openIdeationWizard",
+        "title": "Agentify: Open Ideation Wizard"
+      },
+      {
+        "command": "agentify.showStatus",
+        "title": "Agentify: Show Status"
+      }
+    ],
     "configuration": {
       "title": "Agentify",
       "properties": {
@@ -58,7 +101,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.958.0",
     "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/credential-providers": "^3.958.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0"
   },
   "devDependencies": {

@@ -4,7 +4,7 @@
 
 1. [x] DynamoDB Observability Table — Create `agentify-workflow-events` DynamoDB table with workflow_id partition key, timestamp sort key, event_type, agent_name, payload, and TTL configuration `S`
 
-2. [ ] Agentify Extension Shell — Create single Kiro IDE extension with shared services (AWS clients, config, types) and registration for two webview panels: Demo Viewer (runtime) and Ideation Wizard (design-time) `S`
+2. [x] Agentify Extension Shell — Create single Kiro IDE extension with shared services (AWS clients, config, types) and registration for two webview panels: Demo Viewer (runtime) and Ideation Wizard (design-time) `S`
 
 3. [ ] AWS Connection Integration — Integrate with Kiro's built-in AWS Explorer for credentials (IAM Identity Center, profiles, roles) and region selection; read active connection context for DynamoDB and Bedrock API calls `S`
 

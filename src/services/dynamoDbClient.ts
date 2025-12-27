@@ -1,6 +1,21 @@
+/**
+ * DynamoDB client service with lazy singleton pattern
+ * Provides both low-level DynamoDBClient and high-level DynamoDBDocumentClient
+ * with retry configuration and credential provider support.
+ */
+
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { getAwsRegion } from '../config/dynamoDbConfig';
+import {
+  ICredentialProvider,
+  getDefaultCredentialProvider,
+} from './credentialProvider';
+
+/**
+ * Default retry configuration
+ */
+const DEFAULT_MAX_RETRIES = 3;
 
 /**
  * Cached DynamoDB client instance
@@ -8,62 +23,91 @@ import { getAwsRegion } from '../config/dynamoDbConfig';
 let dynamoDbClient: DynamoDBClient | null = null;
 let documentClient: DynamoDBDocumentClient | null = null;
 let currentRegion: string | null = null;
+let currentCredentialProvider: ICredentialProvider | null = null;
 
 /**
- * Create a new DynamoDB client
+ * Create a new DynamoDB client with retry configuration
  * @param region AWS region for the client
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
  * @returns DynamoDB client instance
  */
-function createClient(region: string): DynamoDBClient {
+function createClient(
+  region: string,
+  credentialProvider?: ICredentialProvider
+): DynamoDBClient {
+  const provider = credentialProvider ?? getDefaultCredentialProvider();
+
   return new DynamoDBClient({
     region,
-    // Credentials are resolved automatically via:
-    // 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-    // 2. Shared credentials file (~/.aws/credentials)
-    // 3. IAM role (when running on AWS)
-    // 4. Kiro AWS Explorer integration (when available)
+    credentials: provider.getCredentials(),
+    // Configure retry strategy with exponential backoff
+    maxAttempts: DEFAULT_MAX_RETRIES,
+    retryMode: 'adaptive', // Uses adaptive retry with exponential backoff
   });
 }
 
 /**
  * Get the DynamoDB client instance
- * Creates a new client if one doesn't exist or if the region has changed
+ * Creates a new client if one doesn't exist or if the region/credentials have changed
+ *
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
  * @returns DynamoDB client
  */
-export function getDynamoDbClient(): DynamoDBClient {
+export function getDynamoDbClient(
+  credentialProvider?: ICredentialProvider
+): DynamoDBClient {
   const region = getAwsRegion();
+  const provider = credentialProvider ?? getDefaultCredentialProvider();
 
-  if (!dynamoDbClient || currentRegion !== region) {
-    // Close existing client if region changed
+  // Check if we need to create a new client
+  const needsNewClient =
+    !dynamoDbClient ||
+    currentRegion !== region ||
+    (credentialProvider && currentCredentialProvider !== credentialProvider);
+
+  if (needsNewClient) {
+    // Close existing client if region or credentials changed
     if (dynamoDbClient) {
       dynamoDbClient.destroy();
     }
 
-    dynamoDbClient = createClient(region);
+    dynamoDbClient = createClient(region, provider);
     documentClient = null; // Reset document client when base client changes
     currentRegion = region;
+    currentCredentialProvider = provider;
   }
 
-  return dynamoDbClient;
+  // TypeScript assertion: dynamoDbClient is guaranteed non-null after the block above
+  return dynamoDbClient!;
 }
 
 /**
  * Get the DynamoDB Document client instance
  * The Document client provides simplified operations with automatic
  * marshalling/unmarshalling of JavaScript objects
+ *
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
  * @returns DynamoDB Document client
  */
-export function getDynamoDbDocumentClient(): DynamoDBDocumentClient {
-  if (!documentClient || currentRegion !== getAwsRegion()) {
-    documentClient = DynamoDBDocumentClient.from(getDynamoDbClient(), {
-      marshallOptions: {
-        removeUndefinedValues: true,
-        convertEmptyValues: false,
-      },
-      unmarshallOptions: {
-        wrapNumbers: false,
-      },
-    });
+export function getDynamoDbDocumentClient(
+  credentialProvider?: ICredentialProvider
+): DynamoDBDocumentClient {
+  const region = getAwsRegion();
+
+  // Check if we need to create a new document client
+  if (!documentClient || currentRegion !== region) {
+    documentClient = DynamoDBDocumentClient.from(
+      getDynamoDbClient(credentialProvider),
+      {
+        marshallOptions: {
+          removeUndefinedValues: true,
+          convertEmptyValues: false,
+        },
+        unmarshallOptions: {
+          wrapNumbers: false,
+        },
+      }
+    );
   }
 
   return documentClient;
@@ -71,7 +115,7 @@ export function getDynamoDbDocumentClient(): DynamoDBDocumentClient {
 
 /**
  * Reset the client instances
- * Useful for testing or when credentials change
+ * Useful for testing or when credentials/configuration change
  */
 export function resetClients(): void {
   if (dynamoDbClient) {
@@ -80,4 +124,13 @@ export function resetClients(): void {
   dynamoDbClient = null;
   documentClient = null;
   currentRegion = null;
+  currentCredentialProvider = null;
+}
+
+/**
+ * Get the current retry configuration
+ * @returns Current max retries setting
+ */
+export function getMaxRetries(): number {
+  return DEFAULT_MAX_RETRIES;
 }
