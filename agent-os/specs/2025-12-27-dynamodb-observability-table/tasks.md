@@ -25,32 +25,32 @@ This spec covers three deliverables:
 #### Task Group 1: CloudFormation Template
 **Dependencies:** None
 
-- [ ] 1.0 Complete CloudFormation template for DynamoDB table
-  - [ ] 1.1 Write 3-5 focused tests for CloudFormation template validation
+- [x] 1.0 Complete CloudFormation template for DynamoDB table
+  - [x] 1.1 Write 3-5 focused tests for CloudFormation template validation
     - Test template syntax validity using AWS CloudFormation validate-template
     - Test that required outputs are defined (TableName, TableArn)
     - Test parameter defaults are correctly specified
     - Test deployment and deletion lifecycle (integration test)
-  - [ ] 1.2 Create CloudFormation template file
+  - [x] 1.2 Create CloudFormation template file
     - Create `infrastructure/dynamodb-table.yaml`
     - Add descriptive template metadata (description, version)
     - Include inline deployment instructions in comments
-  - [ ] 1.3 Define template parameters
+  - [x] 1.3 Define template parameters
     - TableName parameter with default `agentify-workflow-events`
     - Add parameter descriptions for clarity
-  - [ ] 1.4 Configure DynamoDB table resource
+  - [x] 1.4 Configure DynamoDB table resource
     - Partition key: `workflow_id` (String type)
     - Sort key: `timestamp` (Number type for epoch milliseconds)
     - BillingMode: PAY_PER_REQUEST (on-demand capacity)
     - Enable TTL on attribute `ttl`
-  - [ ] 1.5 Add template outputs
+  - [x] 1.5 Add template outputs
     - Output TableName for reference
     - Output TableArn for IAM policy configuration
-  - [ ] 1.6 Document payload size constraints
+  - [x] 1.6 Document payload size constraints
     - Add comments documenting 350KB payload limit
     - Document 50KB headroom for other attributes
     - Note that truncation is producer responsibility
-  - [ ] 1.7 Ensure infrastructure tests pass
+  - [x] 1.7 Ensure infrastructure tests pass
     - Run template validation tests
     - Verify template deploys successfully (if AWS access available)
 
@@ -66,31 +66,31 @@ This spec covers three deliverables:
 #### Task Group 2: Extension Project Setup
 **Dependencies:** None (can run parallel with Task Group 1)
 
-- [ ] 2.0 Complete extension project foundation
-  - [ ] 2.1 Write 2-4 focused tests for extension configuration
+- [x] 2.0 Complete extension project foundation
+  - [x] 2.1 Write 2-4 focused tests for extension configuration
     - Test default table name is `agentify-workflow-events`
     - Test default region is `us-east-1`
     - Test configuration can be read from settings
     - Test configuration changes are detected
-  - [ ] 2.2 Initialize Kiro extension project structure
+  - [x] 2.2 Initialize Kiro extension project structure
     - Create `package.json` with extension manifest
     - Configure extension activation events
     - Add @aws-sdk/client-dynamodb dependency
     - Add @aws-sdk/lib-dynamodb dependency
-  - [ ] 2.3 Define extension configuration schema
+  - [x] 2.3 Define extension configuration schema
     - Add `contributes.configuration` to package.json
     - Define `agentify.dynamodb.tableName` setting
     - Set default value to `agentify-workflow-events`
     - Define `agentify.aws.region` setting
     - Set default to `us-east-1` with options: us-east-1, us-west-2, eu-west-1
     - Add setting descriptions for user guidance
-  - [ ] 2.4 Create configuration service module
+  - [x] 2.4 Create configuration service module
     - Create `src/config/dynamoDbConfig.ts`
     - Implement `getTableName()` function
     - Implement `getAwsRegion()` function
     - Subscribe to configuration change events
     - Export configuration interface and functions
-  - [ ] 2.5 Ensure configuration tests pass
+  - [x] 2.5 Ensure configuration tests pass
     - Run ONLY the tests written in 2.1
     - Verify configuration defaults work correctly
 
@@ -105,34 +105,34 @@ This spec covers three deliverables:
 #### Task Group 3: Table Existence Validation
 **Dependencies:** Task Group 2
 
-- [ ] 3.0 Complete table validation on extension startup
-  - [ ] 3.1 Write 3-5 focused tests for table validation
+- [x] 3.0 Complete table validation on extension startup
+  - [x] 3.1 Write 3-5 focused tests for table validation
     - Test successful validation when table exists and is ACTIVE
     - Test error handling when table does not exist
     - Test error handling when AWS credentials are not configured
     - Test error message directs user to deploy CloudFormation template
     - Test handling of table in non-ACTIVE states (CREATING, etc.)
-  - [ ] 3.2 Create DynamoDB client service
+  - [x] 3.2 Create DynamoDB client service
     - Create `src/services/dynamoDbClient.ts`
     - Initialize DynamoDB client using AWS SDK
     - Handle credential resolution (AWS Explorer integration)
     - Export client factory function
-  - [ ] 3.3 Implement table validation service
+  - [x] 3.3 Implement table validation service
     - Create `src/services/tableValidator.ts`
     - Implement `validateTableExists()` using DescribeTable API
     - Check table status is ACTIVE
     - Return validation result with table metadata
-  - [ ] 3.4 Create user-facing error messages
+  - [x] 3.4 Create user-facing error messages
     - Create `src/messages/tableErrors.ts`
     - Define clear error message when table not found
     - Include CloudFormation deployment instructions in error
     - Include link to infrastructure/dynamodb-table.yaml
-  - [ ] 3.5 Integrate validation into extension activation
+  - [x] 3.5 Integrate validation into extension activation
     - Update `src/extension.ts` activation handler
     - Call table validation on activation
     - Show information message on successful validation
     - Show error message with guidance on validation failure
-  - [ ] 3.6 Ensure validation tests pass
+  - [x] 3.6 Ensure validation tests pass
     - Run ONLY the tests written in 3.1
     - Verify error messages are clear and actionable
 
@@ -148,22 +148,22 @@ This spec covers three deliverables:
 #### Task Group 4: Test Review and Integration
 **Dependencies:** Task Groups 1-3
 
-- [ ] 4.0 Review tests and validate end-to-end workflow
-  - [ ] 4.1 Review tests from Task Groups 1-3
+- [x] 4.0 Review tests and validate end-to-end workflow
+  - [x] 4.1 Review tests from Task Groups 1-3
     - Review 3-5 infrastructure tests (Task 1.1)
     - Review 2-4 configuration tests (Task 2.1)
     - Review 3-5 validation tests (Task 3.1)
     - Total existing tests: approximately 8-14 tests
-  - [ ] 4.2 Analyze test coverage gaps for this feature
+  - [x] 4.2 Analyze test coverage gaps for this feature
     - Identify critical workflows that lack coverage
     - Focus on integration between components
     - Prioritize end-to-end extension activation flow
-  - [ ] 4.3 Write up to 5 additional integration tests if needed
+  - [x] 4.3 Write up to 5 additional integration tests if needed
     - Test full extension activation with valid table
     - Test full extension activation with missing table
     - Test configuration change triggers re-validation
     - Do NOT write exhaustive unit tests for all scenarios
-  - [ ] 4.4 Run feature-specific tests only
+  - [x] 4.4 Run feature-specific tests only
     - Run all tests related to this spec (approximately 13-19 tests)
     - Verify CloudFormation template validates
     - Verify extension activates correctly
