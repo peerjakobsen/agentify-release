@@ -13,6 +13,7 @@ import {
   AgentifyError,
   AgentifyErrorCode,
   createCredentialsNotConfiguredError,
+  createSsoTokenExpiredError,
 } from '../types';
 
 /**
@@ -29,6 +30,34 @@ export interface ICredentialProvider {
 }
 
 /**
+ * Checks if an error indicates SSO token expiration
+ * Detects SSO expiration by:
+ * - Error name === 'TokenProviderError'
+ * - Error message contains 'token expired' (case insensitive)
+ * - Error message contains 'sso' (case insensitive)
+ *
+ * @param error The error to check
+ * @returns True if the error indicates SSO token expiration
+ */
+function isSsoTokenExpiredError(error: Error): boolean {
+  // Check error name
+  if (error.name === 'TokenProviderError') {
+    return true;
+  }
+
+  // Check error message for SSO-related patterns (case insensitive)
+  const message = error.message.toLowerCase();
+  if (message.includes('token expired')) {
+    return true;
+  }
+  if (message.includes('sso')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Default credential provider using the standard AWS credential chain
  *
  * Resolves credentials in the following order:
@@ -37,9 +66,20 @@ export interface ICredentialProvider {
  * 3. IAM role (when running on AWS infrastructure)
  * 4. SSO credentials
  * 5. Web identity token
+ *
+ * Supports optional profile selection for multi-account environments.
  */
 export class DefaultCredentialProvider implements ICredentialProvider {
   private credentialProvider: AwsCredentialIdentityProvider | null = null;
+  private profileName: string | undefined;
+
+  /**
+   * Creates a new DefaultCredentialProvider
+   * @param profile Optional AWS profile name from ~/.aws/config or ~/.aws/credentials
+   */
+  constructor(profile?: string) {
+    this.profileName = profile;
+  }
 
   /**
    * Get the credential provider function
@@ -55,14 +95,42 @@ export class DefaultCredentialProvider implements ICredentialProvider {
   }
 
   /**
+   * Set the AWS profile to use for credential resolution
+   * Automatically resets cached credentials when profile changes
+   *
+   * @param profile The profile name or undefined to use default behavior
+   */
+  setProfile(profile: string | undefined): void {
+    if (this.profileName !== profile) {
+      this.profileName = profile;
+      this.reset();
+    }
+  }
+
+  /**
+   * Get the current profile name
+   * @returns The profile name or undefined if using default behavior
+   */
+  getProfile(): string | undefined {
+    return this.profileName;
+  }
+
+  /**
    * Creates the credential provider from the node provider chain
    * Wraps errors in AgentifyError for consistent error handling
    */
   private createProvider(): AwsCredentialIdentityProvider {
-    const baseProvider = fromNodeProviderChain({
-      // Use default timeout and retry settings
+    // Build provider options
+    const providerOptions: { maxRetries: number; profile?: string } = {
       maxRetries: 3,
-    });
+    };
+
+    // Only include profile if specified
+    if (this.profileName) {
+      providerOptions.profile = this.profileName;
+    }
+
+    const baseProvider = fromNodeProviderChain(providerOptions);
 
     // Wrap the provider to catch and transform credential errors
     return async () => {
@@ -72,10 +140,16 @@ export class DefaultCredentialProvider implements ICredentialProvider {
         // Transform credential errors to AgentifyError
         if (error instanceof Error) {
           const errorName = error.name;
+
+          // Check for SSO token expiration first
+          if (isSsoTokenExpiredError(error)) {
+            throw createSsoTokenExpiredError(this.profileName, error);
+          }
+
+          // Check for generic credential errors
           if (
             errorName === 'CredentialsProviderError' ||
             errorName === 'ExpiredTokenException' ||
-            errorName === 'TokenProviderError' ||
             error.message.includes('Could not load credentials')
           ) {
             throw createCredentialsNotConfiguredError(error);

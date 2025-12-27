@@ -6,7 +6,7 @@
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { getAwsRegion } from '../config/dynamoDbConfig';
+import { getAwsRegion, getAwsRegionSync } from '../config/dynamoDbConfig';
 import {
   ICredentialProvider,
   getDefaultCredentialProvider,
@@ -47,16 +47,16 @@ function createClient(
 }
 
 /**
- * Get the DynamoDB client instance
+ * Get the DynamoDB client instance (async version with region hierarchy)
  * Creates a new client if one doesn't exist or if the region/credentials have changed
  *
  * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
- * @returns DynamoDB client
+ * @returns Promise resolving to DynamoDB client
  */
-export function getDynamoDbClient(
+export async function getDynamoDbClientAsync(
   credentialProvider?: ICredentialProvider
-): DynamoDBClient {
-  const region = getAwsRegion();
+): Promise<DynamoDBClient> {
+  const region = await getAwsRegion();
   const provider = credentialProvider ?? getDefaultCredentialProvider();
 
   // Check if we need to create a new client
@@ -82,7 +82,74 @@ export function getDynamoDbClient(
 }
 
 /**
- * Get the DynamoDB Document client instance
+ * Get the DynamoDB client instance (sync version using VS Code settings only)
+ * Creates a new client if one doesn't exist or if the region/credentials have changed
+ *
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
+ * @returns DynamoDB client
+ */
+export function getDynamoDbClient(
+  credentialProvider?: ICredentialProvider
+): DynamoDBClient {
+  const region = getAwsRegionSync();
+  const provider = credentialProvider ?? getDefaultCredentialProvider();
+
+  // Check if we need to create a new client
+  const needsNewClient =
+    !dynamoDbClient ||
+    currentRegion !== region ||
+    (credentialProvider && currentCredentialProvider !== credentialProvider);
+
+  if (needsNewClient) {
+    // Close existing client if region or credentials changed
+    if (dynamoDbClient) {
+      dynamoDbClient.destroy();
+    }
+
+    dynamoDbClient = createClient(region, provider);
+    documentClient = null; // Reset document client when base client changes
+    currentRegion = region;
+    currentCredentialProvider = provider;
+  }
+
+  // TypeScript assertion: dynamoDbClient is guaranteed non-null after the block above
+  return dynamoDbClient!;
+}
+
+/**
+ * Get the DynamoDB Document client instance (async version with region hierarchy)
+ * The Document client provides simplified operations with automatic
+ * marshalling/unmarshalling of JavaScript objects
+ *
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
+ * @returns Promise resolving to DynamoDB Document client
+ */
+export async function getDynamoDbDocumentClientAsync(
+  credentialProvider?: ICredentialProvider
+): Promise<DynamoDBDocumentClient> {
+  const region = await getAwsRegion();
+
+  // Check if we need to create a new document client
+  if (!documentClient || currentRegion !== region) {
+    documentClient = DynamoDBDocumentClient.from(
+      await getDynamoDbClientAsync(credentialProvider),
+      {
+        marshallOptions: {
+          removeUndefinedValues: true,
+          convertEmptyValues: false,
+        },
+        unmarshallOptions: {
+          wrapNumbers: false,
+        },
+      }
+    );
+  }
+
+  return documentClient;
+}
+
+/**
+ * Get the DynamoDB Document client instance (sync version using VS Code settings only)
  * The Document client provides simplified operations with automatic
  * marshalling/unmarshalling of JavaScript objects
  *
@@ -92,7 +159,7 @@ export function getDynamoDbClient(
 export function getDynamoDbDocumentClient(
   credentialProvider?: ICredentialProvider
 ): DynamoDBDocumentClient {
-  const region = getAwsRegion();
+  const region = getAwsRegionSync();
 
   // Check if we need to create a new document client
   if (!documentClient || currentRegion !== region) {
