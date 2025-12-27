@@ -6,9 +6,9 @@
 
 2. [x] Agentify Extension Shell — Create single Kiro IDE extension with shared services (AWS clients, config, types) and registration for two webview panels: Demo Viewer (runtime) and Ideation Wizard (design-time) `S`
 
-3. [ ] AWS Connection Integration — Integrate with Kiro's built-in AWS Explorer for credentials (IAM Identity Center, profiles, roles) and region selection; read active connection context for DynamoDB and Bedrock API calls `S`
+3. [x] AWS Credential Chain Integration — Use AWS SDK's default credential provider chain to automatically consume credentials from shared AWS config files (~/.aws/credentials, ~/.aws/config), supporting IAM credentials, IAM Identity Center (SSO), and assumed roles configured via AWS CLI or AWS Toolkit; add project-level region configuration in .agentify/config.json for DynamoDB and Bedrock API calls `S`
 
-4. [ ] Project Initialization Command — Add "Agentify: Initialize Project" command that: (1) checks AWS credentials via AWS Explorer integration, (2) validates DynamoDB table exists using tableValidator service, (3) if table missing, prompts user to deploy using bundled `infrastructure/dynamodb-table.yaml` template via CloudFormation SDK, (4) waits for stack CREATE_COMPLETE, (5) generates `.agentify/config.json` with table name, region, and stack name, (6) creates `.kiro/steering/agentify-integration.md` steering file. The CloudFormation template from spec #1 is packaged with the extension for automated deployment. `M`
+4. [ ] Project Initialization Command — Add "Agentify: Initialize Project" command that: (1) checks AWS credentials via default credential chain, (2) validates DynamoDB table exists using tableValidator service, (3) if table missing, prompts user to deploy using bundled `infrastructure/dynamodb-table.yaml` template via CloudFormation SDK, (4) waits for stack CREATE_COMPLETE, (5) generates `.agentify/config.json` with table name, region, and stack name, (6) creates `.kiro/steering/agentify-integration.md` steering file. The CloudFormation template from spec #1 is packaged with the extension for automated deployment. `M`
 
 5. [ ] Workflow Input Panel — Build input panel UI with prompt text input, Run Workflow button, workflow ID display, and trigger configuration (local subprocess for dev, AgentCore for production) `S`
 

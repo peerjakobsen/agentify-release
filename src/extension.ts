@@ -12,12 +12,24 @@ import * as vscode from 'vscode';
 import {
   initializeConfigurationWatcher,
   onConfigurationChange,
+  getAwsProfile,
   DynamoDbConfiguration,
 } from './config/dynamoDbConfig';
 import { resetClients } from './services/dynamoDbClient';
 import { resetBedrockClient } from './services/bedrockClient';
-import { ConfigService, getConfigService, resetConfigService } from './services/configService';
-import { resetDefaultCredentialProvider } from './services/credentialProvider';
+import {
+  ConfigService,
+  getConfigService,
+  resetConfigService,
+} from './services/configService';
+import {
+  getDefaultCredentialProvider,
+  resetDefaultCredentialProvider,
+} from './services/credentialProvider';
+import {
+  validateCredentialsOnActivation,
+  setStatusUpdateCallback,
+} from './services/credentialValidation';
 import { validateTableExists } from './services/tableValidator';
 import { StatusBarManager, StatusState } from './statusBar';
 import {
@@ -29,6 +41,7 @@ import {
   IDEATION_WIZARD_VIEW_ID,
 } from './panels/ideationWizardPanel';
 import { TableValidationErrorType } from './messages/tableErrors';
+import type { AgentifyConfig } from './types';
 
 /**
  * Extension context for managing lifecycle
@@ -67,6 +80,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Create status bar immediately
   statusBarManager = new StatusBarManager();
   context.subscriptions.push({ dispose: () => statusBarManager?.dispose() });
+
+  // Set up status update callback for credential validation
+  setStatusUpdateCallback((state: StatusState) => {
+    statusBarManager?.updateStatus(state);
+  });
 
   // Register commands immediately (available regardless of config state)
   registerCommands(context);
@@ -150,13 +168,26 @@ async function initializeWithConfig(context: vscode.ExtensionContext): Promise<v
     const watcherDisposable = configService.startWatching();
     context.subscriptions.push(watcherDisposable);
 
-    // Subscribe to config changes
+    // Subscribe to config changes (handles profile and region updates)
     const configChangeSub = configService.onConfigChanged(handleAgentifyConfigChange);
     context.subscriptions.push(configChangeSub);
+
+    // Initialize profile from config
+    await initializeProfileFromConfig();
 
     // Initialize AWS services and validate
     await initializeAwsServices();
   }
+}
+
+/**
+ * Initialize the AWS profile from config.json
+ */
+async function initializeProfileFromConfig(): Promise<void> {
+  const profile = await getAwsProfile();
+  const credentialProvider = getDefaultCredentialProvider();
+  credentialProvider.setProfile(profile);
+  console.log('[Agentify] Profile initialized:', profile ?? 'default');
 }
 
 /**
@@ -168,6 +199,41 @@ async function initializeAwsServices(): Promise<void> {
   }
 
   awsServicesInitialized = true;
+
+  // First, validate credentials on activation
+  const credentialStatus = await validateCredentialsOnActivation();
+
+  if (credentialStatus !== 'ready') {
+    // Update status bar with credential status
+    statusBarManager?.updateStatus(credentialStatus);
+
+    // Show warning notification but don't block activation
+    if (credentialStatus === 'sso-expired') {
+      vscode.window.showWarningMessage(
+        'Agentify: AWS SSO token expired. Run "aws sso login" to refresh.',
+        'Learn More'
+      ).then((selection) => {
+        if (selection === 'Learn More') {
+          vscode.env.openExternal(
+            vscode.Uri.parse('https://docs.aws.amazon.com/cli/latest/userguide/sso-using-profile.html')
+          );
+        }
+      });
+    } else {
+      vscode.window.showWarningMessage(
+        'Agentify: AWS credentials not configured. Some features may be unavailable.',
+        'Learn More'
+      ).then((selection) => {
+        if (selection === 'Learn More') {
+          vscode.env.openExternal(
+            vscode.Uri.parse('https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html')
+          );
+        }
+      });
+    }
+
+    return;
+  }
 
   // Validate DynamoDB table exists and is accessible
   await validateAndUpdateStatus();
@@ -273,8 +339,23 @@ async function handleVsCodeConfigChange(newConfig: DynamoDbConfiguration): Promi
 /**
  * Handle Agentify config file changes (.agentify/config.json)
  */
-async function handleAgentifyConfigChange(config: unknown): Promise<void> {
+async function handleAgentifyConfigChange(config: AgentifyConfig | null): Promise<void> {
   if (config) {
+    // Update profile in credential provider if it changed
+    const newProfile = config.aws?.profile;
+    const credentialProvider = getDefaultCredentialProvider();
+    const currentProfile = credentialProvider.getProfile();
+
+    if (newProfile !== currentProfile) {
+      console.log('[Agentify] Profile changed:', currentProfile, '->', newProfile ?? 'default');
+      credentialProvider.setProfile(newProfile);
+      // setProfile automatically calls reset() when profile changes
+
+      // Reset AWS clients to use new credentials
+      resetClients();
+      resetBedrockClient();
+    }
+
     // Config exists - ensure AWS services are initialized
     if (!awsServicesInitialized) {
       await initializeAwsServices();
@@ -327,6 +408,9 @@ async function handleShowStatus(): Promise<void> {
  * Called when the extension is deactivated
  */
 export function deactivate(): void {
+  // Clear status update callback
+  setStatusUpdateCallback(null);
+
   // Reset all AWS clients
   resetClients();
   resetBedrockClient();

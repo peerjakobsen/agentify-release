@@ -189,16 +189,16 @@ describe('Extension Integration', () => {
     expect(result.error?.message).toContain('not found');
   });
 
-  // Test 4.3.3: Configuration provides correct default values for validation
+  // Test 4.3.3: Configuration provides correct default values for validation (using sync version)
   it('should use configuration defaults for table validation', async () => {
-    const { getDynamoDbConfiguration } = await import('../config/dynamoDbConfig');
-    const config = getDynamoDbConfiguration();
+    const { getDynamoDbConfigurationSync } = await import('../config/dynamoDbConfig');
+    const config = getDynamoDbConfigurationSync();
 
     expect(config.tableName).toBe('agentify-workflow-events');
     expect(config.region).toBe('us-east-1');
   });
 
-  // Test 4.3.4: Custom configuration is used for validation
+  // Test 4.3.4: Custom configuration is used for validation (using sync version)
   it('should use custom configuration values when set', async () => {
     setConfigValue('dynamodb.tableName', 'my-custom-table');
     setConfigValue('aws.region', 'eu-west-1');
@@ -214,7 +214,24 @@ describe('Extension Integration', () => {
         onDidChangeConfiguration: vi.fn().mockReturnValue({
           dispose: vi.fn(),
         }),
+        workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+        fs: {
+          stat: vi.fn(),
+          readFile: vi.fn(),
+          writeFile: vi.fn(),
+          createDirectory: vi.fn(),
+        },
+        createFileSystemWatcher: vi.fn(() => ({
+          onDidChange: vi.fn(),
+          onDidDelete: vi.fn(),
+          onDidCreate: vi.fn(),
+          dispose: vi.fn(),
+        })),
       },
+      Uri: {
+        file: (path: string) => ({ fsPath: path }),
+      },
+      RelativePattern: vi.fn(),
       Disposable: class {
         private disposeFn: () => void;
         constructor(disposeFn: () => void) {
@@ -226,8 +243,8 @@ describe('Extension Integration', () => {
       },
     }));
 
-    const { getDynamoDbConfiguration } = await import('../config/dynamoDbConfig');
-    const config = getDynamoDbConfiguration();
+    const { getDynamoDbConfigurationSync } = await import('../config/dynamoDbConfig');
+    const config = getDynamoDbConfigurationSync();
 
     expect(config.tableName).toBe('my-custom-table');
     expect(config.region).toBe('eu-west-1');

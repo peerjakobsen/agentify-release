@@ -22,7 +22,24 @@ vi.mock('vscode', () => {
       onDidChangeConfiguration: vi.fn().mockReturnValue({
         dispose: vi.fn(),
       }),
+      workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+      fs: {
+        stat: vi.fn(),
+        readFile: vi.fn(),
+        writeFile: vi.fn(),
+        createDirectory: vi.fn(),
+      },
+      createFileSystemWatcher: vi.fn(() => ({
+        onDidChange: vi.fn(),
+        onDidDelete: vi.fn(),
+        onDidCreate: vi.fn(),
+        dispose: vi.fn(),
+      })),
     },
+    Uri: {
+      file: (path: string) => ({ fsPath: path }),
+    },
+    RelativePattern: vi.fn(),
     Disposable: class {
       private disposeFn: () => void;
       constructor(disposeFn: () => void) {
@@ -62,15 +79,15 @@ describe('DynamoDB Configuration', () => {
     expect(getTableName()).toBe('agentify-workflow-events');
   });
 
-  // Test 2.1.2: Default region is correct
+  // Test 2.1.2: Default region is correct (using sync version)
   it('should have default region of "us-east-1"', async () => {
-    const { getAwsRegion, DEFAULT_REGION } = await import('../config/dynamoDbConfig');
+    const { getAwsRegionSync, DEFAULT_REGION } = await import('../config/dynamoDbConfig');
 
     expect(DEFAULT_REGION).toBe('us-east-1');
-    expect(getAwsRegion()).toBe('us-east-1');
+    expect(getAwsRegionSync()).toBe('us-east-1');
   });
 
-  // Test 2.1.3: Configuration can be read from settings
+  // Test 2.1.3: Configuration can be read from settings (using sync version)
   it('should read configuration from VS Code settings', async () => {
     setConfigValue('dynamodb.tableName', 'custom-table-name');
     setConfigValue('aws.region', 'us-west-2');
@@ -89,7 +106,24 @@ describe('DynamoDB Configuration', () => {
         onDidChangeConfiguration: vi.fn().mockReturnValue({
           dispose: vi.fn(),
         }),
+        workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+        fs: {
+          stat: vi.fn(),
+          readFile: vi.fn(),
+          writeFile: vi.fn(),
+          createDirectory: vi.fn(),
+        },
+        createFileSystemWatcher: vi.fn(() => ({
+          onDidChange: vi.fn(),
+          onDidDelete: vi.fn(),
+          onDidCreate: vi.fn(),
+          dispose: vi.fn(),
+        })),
       },
+      Uri: {
+        file: (path: string) => ({ fsPath: path }),
+      },
+      RelativePattern: vi.fn(),
       Disposable: class {
         private disposeFn: () => void;
         constructor(disposeFn: () => void) {
@@ -101,10 +135,10 @@ describe('DynamoDB Configuration', () => {
       },
     }));
 
-    const { getTableName, getAwsRegion } = await import('../config/dynamoDbConfig');
+    const { getTableName, getAwsRegionSync } = await import('../config/dynamoDbConfig');
 
     expect(getTableName()).toBe('custom-table-name');
-    expect(getAwsRegion()).toBe('us-west-2');
+    expect(getAwsRegionSync()).toBe('us-west-2');
   });
 
   // Test 2.1.4: Configuration defaults are exported correctly

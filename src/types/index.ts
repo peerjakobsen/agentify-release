@@ -12,6 +12,7 @@ export {
   isAgentifyError,
   hasErrorCode,
   createCredentialsNotConfiguredError,
+  createSsoTokenExpiredError,
   createTableNotFoundError,
   createConfigNotFoundError,
   createConfigInvalidError,
@@ -45,6 +46,7 @@ export type {
   EdgeDefinition,
   OrchestrationPattern,
   WorkflowConfig,
+  AwsConfig,
   AgentifyConfig,
   ConfigValidationResult,
 } from './config';

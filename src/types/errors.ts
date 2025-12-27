@@ -5,6 +5,8 @@
 export enum AgentifyErrorCode {
   /** AWS credentials not configured or invalid */
   CREDENTIALS_NOT_CONFIGURED = 'CREDENTIALS_NOT_CONFIGURED',
+  /** SSO token has expired and needs refresh */
+  SSO_TOKEN_EXPIRED = 'SSO_TOKEN_EXPIRED',
   /** DynamoDB table not found */
   TABLE_NOT_FOUND = 'TABLE_NOT_FOUND',
   /** DynamoDB table exists but is not in ACTIVE state */
@@ -85,6 +87,22 @@ export function createCredentialsNotConfiguredError(cause?: Error): AgentifyErro
     'AWS credentials not configured. Please configure AWS credentials using the AWS CLI, environment variables, or shared credentials file.',
     cause
   );
+}
+
+/**
+ * Creates an SSO Token Expired error with actionable guidance
+ * @param profileName Optional AWS profile name for specific remediation command
+ * @param cause Optional underlying error that caused this error
+ * @returns AgentifyError with SSO_TOKEN_EXPIRED code
+ */
+export function createSsoTokenExpiredError(
+  profileName?: string,
+  cause?: Error
+): AgentifyError {
+  const profileArg = profileName ? ` --profile ${profileName}` : '';
+  const message = `SSO token expired. Run 'aws sso login${profileArg}' to refresh.`;
+
+  return new AgentifyError(AgentifyErrorCode.SSO_TOKEN_EXPIRED, message, cause);
 }
 
 /**

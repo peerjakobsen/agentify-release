@@ -144,6 +144,20 @@ export interface WorkflowConfig {
 }
 
 /**
+ * AWS configuration for credential and profile management
+ * Allows project-level override of AWS profile selection
+ */
+export interface AwsConfig {
+  /**
+   * AWS CLI profile name to use for credentials
+   * When specified, this profile is passed to the AWS SDK credential provider chain.
+   * When omitted, the SDK uses default behavior (AWS_PROFILE env var or 'default' profile).
+   * @example "my-dev-profile"
+   */
+  profile?: string;
+}
+
+/**
  * Root configuration for an Agentify project
  * Stored in .agentify/config.json
  */
@@ -168,6 +182,12 @@ export interface AgentifyConfig {
    * Workflow definition and trigger configuration
    */
   workflow: WorkflowConfig;
+
+  /**
+   * AWS configuration for credential and profile management
+   * Optional - when omitted, AWS SDK uses default credential resolution
+   */
+  aws?: AwsConfig;
 }
 
 /**
@@ -262,6 +282,23 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
     }
     if (!Array.isArray(workflow.edges)) {
       errors.push('Missing or invalid "workflow.edges" array');
+    }
+  }
+
+  // Validate optional aws section (backward compatible - section can be omitted)
+  if (cfg.aws !== undefined) {
+    if (typeof cfg.aws !== 'object' || cfg.aws === null) {
+      errors.push('Invalid "aws" field - must be an object when provided');
+    } else {
+      const aws = cfg.aws as Record<string, unknown>;
+      // Validate aws.profile when provided (optional field)
+      if (aws.profile !== undefined) {
+        if (typeof aws.profile !== 'string') {
+          errors.push('Invalid "aws.profile" field - must be a string when provided');
+        } else if (aws.profile.trim() === '') {
+          errors.push('Invalid "aws.profile" field - must be a non-empty string when provided');
+        }
+      }
     }
   }
 

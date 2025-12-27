@@ -5,7 +5,7 @@
  */
 
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
-import { getAwsRegion } from '../config/dynamoDbConfig';
+import { getAwsRegion, getAwsRegionSync } from '../config/dynamoDbConfig';
 import {
   ICredentialProvider,
   getDefaultCredentialProvider,
@@ -45,7 +45,43 @@ function createClient(
 }
 
 /**
- * Get the Bedrock Runtime client instance
+ * Get the Bedrock Runtime client instance (async version with region hierarchy)
+ * Creates a new client if one doesn't exist or if the region/credentials have changed
+ *
+ * The client is lazily initialized - it won't be created until first access.
+ *
+ * @param credentialProvider Optional credential provider (defaults to DefaultCredentialProvider)
+ * @returns Promise resolving to Bedrock Runtime client
+ */
+export async function getBedrockClientAsync(
+  credentialProvider?: ICredentialProvider
+): Promise<BedrockRuntimeClient> {
+  const region = await getAwsRegion();
+  const provider = credentialProvider ?? getDefaultCredentialProvider();
+
+  // Check if we need to create a new client
+  const needsNewClient =
+    !bedrockClient ||
+    currentRegion !== region ||
+    (credentialProvider && currentCredentialProvider !== credentialProvider);
+
+  if (needsNewClient) {
+    // Close existing client if region or credentials changed
+    if (bedrockClient) {
+      bedrockClient.destroy();
+    }
+
+    bedrockClient = createClient(region, provider);
+    currentRegion = region;
+    currentCredentialProvider = provider;
+  }
+
+  // TypeScript assertion: bedrockClient is guaranteed non-null after the block above
+  return bedrockClient!;
+}
+
+/**
+ * Get the Bedrock Runtime client instance (sync version using VS Code settings only)
  * Creates a new client if one doesn't exist or if the region/credentials have changed
  *
  * The client is lazily initialized - it won't be created until first access.
@@ -56,7 +92,7 @@ function createClient(
 export function getBedrockClient(
   credentialProvider?: ICredentialProvider
 ): BedrockRuntimeClient {
-  const region = getAwsRegion();
+  const region = getAwsRegionSync();
   const provider = credentialProvider ?? getDefaultCredentialProvider();
 
   // Check if we need to create a new client
