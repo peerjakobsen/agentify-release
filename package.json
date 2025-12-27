@@ -1,0 +1,74 @@
+{
+  "name": "agentify",
+  "displayName": "Agentify",
+  "description": "AI agent workflow observability and ideation for Kiro IDE",
+  "version": "0.1.0",
+  "publisher": "agentify",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "workflow",
+    "observability",
+    "dynamodb"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Agentify",
+      "properties": {
+        "agentify.dynamodb.tableName": {
+          "type": "string",
+          "default": "agentify-workflow-events",
+          "description": "Name of the DynamoDB table for storing workflow events. Change this to isolate environments or support multiple users on the same AWS account."
+        },
+        "agentify.aws.region": {
+          "type": "string",
+          "default": "us-east-1",
+          "enum": [
+            "us-east-1",
+            "us-west-2",
+            "eu-west-1"
+          ],
+          "enumDescriptions": [
+            "US East (N. Virginia)",
+            "US West (Oregon)",
+            "Europe (Ireland)"
+          ],
+          "description": "AWS region where the DynamoDB table is deployed."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "yaml": "^2.6.0"
+  }
+}

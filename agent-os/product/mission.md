@@ -82,24 +82,29 @@ This results in demos that showcase AWS's agentic AI capabilities and pave the p
 
 ## Key Features
 
-### Core Features (Plugin 1: Value Map Ideation Wizard)
+The Agentify extension provides two webview panels within a single installation:
+
+### Ideation Wizard Panel (Design-Time)
 - **Account Context Ingestion:** Upload account plans, select value maps, choose industry verticals, and identify known customer systems
 - **AI-Assisted Gap Filling:** Claude proposes industry-typical configurations when specific customer details are unknown
 - **Outcome Definition:** Define measurable business outcomes and success criteria that map to customer priorities
 - **Agent Design:** AI-proposed agent teams with appropriate orchestration patterns for the use case
 - **Mock Data Strategy:** Realistic mock data generation based on industry context for compelling demos
-
-### Demo Design Features
 - **Demo Narrative Flow:** Capture key "aha moments" and demo persona for impactful customer presentations
 - **Kiro Artifact Generation:** Automatic creation of steering files, MCP configurations, and hooks
 - **Kiro Spec Trigger:** Seamless handoff to Kiro's spec-driven development flow
 
-### Observability Features (Plugin 2: Demo Viewer)
-- **Workflow Connection:** Connect to AgentCore Runtime endpoints and DynamoDB event tables
-- **Input Panel:** Simple prompt input, workflow triggering, and workflow ID display
-- **Agent Graph Visualization:** Live graph showing agents, handoffs, and execution status
-- **Execution Log Panel:** Chronological events with timestamps and expandable details
+### Demo Viewer Panel (Runtime)
+- **Workflow Triggering:** Support for local subprocess, AgentCore API, and HTTP endpoint modes
+- **Input Panel:** Simple prompt input, Run Workflow button, and workflow ID display
+- **Agent Graph Visualization:** Live React Flow graph showing agents, handoffs, and execution status with real-time updates
+- **Execution Log Panel:** Chronological events with timestamps and expandable details (tool calls from DynamoDB)
 - **Outcome Panel:** Final results, success/failure indicators, and key metrics
+
+### Shared Services
+- **AWS Clients:** DynamoDB and Bedrock clients shared across both panels
+- **Configuration Service:** Reads `.agentify/config.json` for project settings
+- **Project Initialization:** "Agentify: Initialize Project" command sets up infrastructure and config
 
 ### Advanced Features
 - **Industry Templates:** Pre-built agent patterns for retail, FSI, healthcare, and manufacturing
