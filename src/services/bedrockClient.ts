@@ -5,11 +5,39 @@
  */
 
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
-import { getAwsRegion, getAwsRegionSync } from '../config/dynamoDbConfig';
+import { getAwsRegionSync } from '../config/dynamoDbConfig';
+import { getConfigService } from './configService';
 import {
   ICredentialProvider,
   getDefaultCredentialProvider,
 } from './credentialProvider';
+
+/**
+ * Default AWS region for Bedrock
+ */
+const DEFAULT_BEDROCK_REGION = 'us-east-1';
+
+/**
+ * Get the configured Bedrock region with hierarchy:
+ * 1. .agentify/config.json (infrastructure.bedrock.region)
+ * 2. VS Code settings (agentify.aws.region as fallback)
+ * 3. Default region constant
+ *
+ * @returns Promise resolving to the AWS region for Bedrock
+ */
+async function getBedrockRegion(): Promise<string> {
+  const configService = getConfigService();
+  if (configService) {
+    const config = await configService.getConfig();
+    const bedrockRegion = config?.infrastructure?.bedrock?.region;
+    if (bedrockRegion && bedrockRegion.trim() !== '') {
+      return bedrockRegion;
+    }
+  }
+
+  // Fall back to VS Code settings region or default
+  return getAwsRegionSync() || DEFAULT_BEDROCK_REGION;
+}
 
 /**
  * Default retry configuration
@@ -56,7 +84,7 @@ function createClient(
 export async function getBedrockClientAsync(
   credentialProvider?: ICredentialProvider
 ): Promise<BedrockRuntimeClient> {
-  const region = await getAwsRegion();
+  const region = await getBedrockRegion();
   const provider = credentialProvider ?? getDefaultCredentialProvider();
 
   // Check if we need to create a new client

@@ -359,6 +359,10 @@ async function generateConfig(
         tableArn,
         region,
       },
+      bedrock: {
+        modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        region,
+      },
     },
     workflow: {
       entryScript: 'agents/main.py',

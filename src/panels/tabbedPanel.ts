@@ -5,6 +5,8 @@
  */
 
 import * as vscode from 'vscode';
+import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
+import { buildContextMessage, parseAssumptionsFromResponse, generateStep1Hash, hasStep1Changed } from '../services/gapFillingService';
 
 /**
  * View ID for the Tabbed Panel
@@ -50,6 +52,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   // Config change listener
   private _configChangeDisposable?: vscode.Disposable;
+
+  // Bedrock service for AI gap-filling
+  private _bedrockService?: BedrockConversationService;
+  private _bedrockDisposables: vscode.Disposable[] = [];
+  private _streamingResponse = '';
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
@@ -213,6 +220,20 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.updateWebviewContent();
         this.syncStateToWebview();
         break;
+
+      // Step 2: AI Gap-Filling commands
+      case 'sendChatMessage':
+        this.handleSendChatMessage(message.value as string);
+        break;
+      case 'acceptAssumptions':
+        this.handleAcceptAssumptions();
+        break;
+      case 'regenerateAssumptions':
+        this.handleRegenerateAssumptions();
+        break;
+      case 'retryLastMessage':
+        this.handleRetryLastMessage();
+        break;
     }
   }
 
@@ -279,6 +300,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const previousStep = this._ideationState.currentStep;
+
     if (this._ideationState.currentStep < 6) {
       this._ideationState.currentStep++;
       this._ideationState.highestStepReached = Math.max(
@@ -288,6 +311,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       this._ideationState.validationAttempted = false;
       this.updateWebviewContent();
       this.syncStateToWebview();
+
+      // Auto-send context to Claude when entering Step 2
+      if (previousStep === 1 && this._ideationState.currentStep === 2) {
+        this.triggerAutoSendForStep2();
+      }
     }
   }
 
@@ -343,6 +371,286 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  // =========================================================================
+  // Step 2: AI Gap-Filling Methods
+  // =========================================================================
+
+  /**
+   * Trigger auto-send when entering Step 2
+   */
+  private triggerAutoSendForStep2(): void {
+    const state = this._ideationState.aiGapFillingState;
+
+    // Check if Step 1 inputs have changed since last visit
+    if (hasStep1Changed(
+      state.step1InputHash,
+      this._ideationState.businessObjective,
+      this._ideationState.industry,
+      this._ideationState.systems,
+      this._ideationState.customSystems
+    )) {
+      // Reset conversation state due to input changes
+      this._ideationState.aiGapFillingState = {
+        conversationHistory: [],
+        confirmedAssumptions: [],
+        assumptionsAccepted: false,
+        isStreaming: false,
+      };
+    }
+
+    // Only auto-send if conversation is empty
+    if (this._ideationState.aiGapFillingState.conversationHistory.length === 0 && !this._ideationState.aiGapFillingState.isStreaming) {
+      this.sendContextToClaude();
+    }
+  }
+
+  /**
+   * Initialize Bedrock service if needed
+   */
+  private initBedrockService(): BedrockConversationService | undefined {
+    if (this._bedrockService) {
+      return this._bedrockService;
+    }
+
+    if (!this._context) {
+      console.warn('[TabbedPanel] Extension context not available for Bedrock service');
+      return undefined;
+    }
+
+    this._bedrockService = getBedrockConversationService(this._context);
+
+    // Subscribe to streaming events
+    this._bedrockDisposables.push(
+      this._bedrockService.onToken((token) => {
+        this.handleStreamingToken(token);
+      })
+    );
+
+    this._bedrockDisposables.push(
+      this._bedrockService.onComplete((response) => {
+        this.handleStreamingComplete(response);
+      })
+    );
+
+    this._bedrockDisposables.push(
+      this._bedrockService.onError((error) => {
+        this.handleStreamingError(error.message);
+      })
+    );
+
+    return this._bedrockService;
+  }
+
+  /**
+   * Build and send context to Claude via Bedrock
+   */
+  private async sendContextToClaude(): Promise<void> {
+    const service = this.initBedrockService();
+    if (!service) {
+      this._ideationState.aiGapFillingState.streamingError =
+        'Claude service not available. Please check your configuration.';
+      this.syncStateToWebview();
+      return;
+    }
+
+    // Build context message from Step 1 inputs (including custom systems)
+    const contextMessage = buildContextMessage(
+      this._ideationState.businessObjective,
+      this._ideationState.industry,
+      this._ideationState.systems,
+      this._ideationState.customSystems
+    );
+
+    // Store hash for change detection (include custom systems)
+    this._ideationState.aiGapFillingState.step1InputHash = generateStep1Hash(
+      this._ideationState.businessObjective,
+      this._ideationState.industry,
+      this._ideationState.systems,
+      this._ideationState.customSystems
+    );
+
+    // Add user message to conversation history
+    this._ideationState.aiGapFillingState.conversationHistory.push({
+      role: 'user',
+      content: contextMessage,
+      timestamp: Date.now(),
+    });
+
+    // Set streaming state
+    this._ideationState.aiGapFillingState.isStreaming = true;
+    this._ideationState.aiGapFillingState.streamingError = undefined;
+    this._streamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude (streaming handled by event handlers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(contextMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle incoming streaming token from Claude
+   */
+  private handleStreamingToken(token: string): void {
+    this._streamingResponse += token;
+
+    // Send incremental update to webview
+    if (this._view) {
+      this._view.webview.postMessage({
+        type: 'streamingToken',
+        content: this._streamingResponse,
+      });
+    }
+  }
+
+  /**
+   * Handle streaming completion from Claude
+   */
+  private handleStreamingComplete(fullResponse: string): void {
+    // Parse assumptions from response
+    const parsedAssumptions = parseAssumptionsFromResponse(fullResponse);
+
+    // Add assistant message to conversation history
+    this._ideationState.aiGapFillingState.conversationHistory.push({
+      role: 'assistant',
+      content: fullResponse,
+      timestamp: Date.now(),
+      parsedAssumptions,
+    });
+
+    // Update streaming state
+    this._ideationState.aiGapFillingState.isStreaming = false;
+    this._streamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle streaming error from Claude
+   */
+  private handleStreamingError(errorMessage: string): void {
+    this._ideationState.aiGapFillingState.isStreaming = false;
+    this._ideationState.aiGapFillingState.streamingError = errorMessage;
+    this._streamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle send chat message command
+   */
+  private async handleSendChatMessage(content: string): Promise<void> {
+    if (!content.trim()) return;
+
+    const service = this.initBedrockService();
+    if (!service) {
+      return;
+    }
+
+    // Add user message to conversation history
+    this._ideationState.aiGapFillingState.conversationHistory.push({
+      role: 'user',
+      content: content.trim(),
+      timestamp: Date.now(),
+    });
+
+    // Set streaming state
+    this._ideationState.aiGapFillingState.isStreaming = true;
+    this._ideationState.aiGapFillingState.streamingError = undefined;
+    this._streamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(content.trim())) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle accept assumptions command
+   */
+  private handleAcceptAssumptions(): void {
+    const history = this._ideationState.aiGapFillingState.conversationHistory;
+
+    // Find last assistant message with assumptions
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'assistant' && msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
+        this._ideationState.aiGapFillingState.confirmedAssumptions = [...msg.parsedAssumptions];
+        this._ideationState.aiGapFillingState.assumptionsAccepted = true;
+        break;
+      }
+    }
+
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle regenerate assumptions command
+   */
+  private handleRegenerateAssumptions(): void {
+    // Reset conversation but keep the hash
+    const hash = this._ideationState.aiGapFillingState.step1InputHash;
+    this._ideationState.aiGapFillingState = {
+      conversationHistory: [],
+      confirmedAssumptions: [],
+      assumptionsAccepted: false,
+      isStreaming: false,
+    };
+    this._ideationState.aiGapFillingState.step1InputHash = hash;
+
+    // Reset the Bedrock service conversation history
+    if (this._bedrockService) {
+      this._bedrockService.resetConversation();
+    }
+
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Trigger new conversation
+    this.sendContextToClaude();
+  }
+
+  /**
+   * Handle retry last message command
+   */
+  private handleRetryLastMessage(): void {
+    const history = this._ideationState.aiGapFillingState.conversationHistory;
+
+    // Clear the error
+    this._ideationState.aiGapFillingState.streamingError = undefined;
+
+    // If there's no history or only one message, resend context
+    if (history.length <= 1) {
+      this.sendContextToClaude();
+      return;
+    }
+
+    // Find the last user message and resend it
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'user') {
+        // Remove this message from history (it will be re-added by handleSendChatMessage)
+        history.splice(i, 1);
+        this.handleSendChatMessage(msg.content);
+        break;
+      }
+    }
+  }
+
   /**
    * Get full HTML content
    */
@@ -378,6 +686,23 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       const message = event.data;
       if (message.type === 'stateSync') {
         handleStateSync(message);
+      }
+      if (message.type === 'streamingToken') {
+        // Update the streaming message content in real-time
+        const streamingText = document.querySelector('.streaming .streaming-text');
+        const typingIndicator = document.querySelector('.streaming .typing-indicator');
+        const chatContainer = document.querySelector('.chat-container');
+        if (streamingText) {
+          streamingText.textContent = message.content;
+          // Hide typing indicator once we have content
+          if (typingIndicator && message.content) {
+            typingIndicator.style.display = 'none';
+          }
+          // Auto-scroll to bottom
+          if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          }
+        }
       }
     });
   </script>
@@ -687,6 +1012,258 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         padding: 40px 20px;
         color: var(--vscode-descriptionForeground);
       }
+
+      /* Step 2: AI Gap-Filling Chat Styles */
+      .step2-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+        gap: 12px;
+      }
+      .step-description {
+        font-size: 13px;
+        color: var(--vscode-descriptionForeground);
+        margin: 0;
+        flex: 1;
+      }
+      .regenerate-btn {
+        padding: 6px 12px;
+        font-size: 12px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .regenerate-btn:hover:not(:disabled) {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .regenerate-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .chat-container {
+        min-height: 200px;
+        max-height: 350px;
+        overflow-y: auto;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        margin-bottom: 12px;
+      }
+      .chat-messages {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px;
+      }
+      .chat-message {
+        display: flex;
+        gap: 8px;
+        max-width: 90%;
+      }
+      .chat-message.claude-message {
+        align-self: flex-start;
+      }
+      .chat-message.user-message {
+        align-self: flex-end;
+        flex-direction: row-reverse;
+      }
+      .message-avatar {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        flex-shrink: 0;
+      }
+      .message-content {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .message-text {
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .claude-message .message-text {
+        background: var(--vscode-input-background);
+        border-bottom-left-radius: 4px;
+      }
+      .user-message .message-text {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border-bottom-right-radius: 4px;
+      }
+      .streaming-text:empty {
+        display: none;
+      }
+      .streaming-text {
+        background: var(--vscode-input-background);
+        border-bottom-left-radius: 4px;
+      }
+      .typing-indicator {
+        display: flex;
+        gap: 4px;
+        padding: 12px 14px;
+        background: var(--vscode-input-background);
+        border-radius: 12px;
+        border-bottom-left-radius: 4px;
+      }
+      .typing-indicator .dot {
+        width: 8px;
+        height: 8px;
+        background: var(--vscode-descriptionForeground);
+        border-radius: 50%;
+        animation: typing 1.4s infinite ease-in-out both;
+      }
+      .typing-indicator .dot:nth-child(1) { animation-delay: 0s; }
+      .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+      .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes typing {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+        40% { transform: scale(1); opacity: 1; }
+      }
+      .assumptions-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .assumption-card {
+        padding: 12px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-editorWidget-border);
+        border-radius: 6px;
+      }
+      .assumption-card.user-corrected {
+        border-left: 3px solid var(--vscode-charts-blue, #3794ff);
+      }
+      .assumption-header {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .assumption-modules {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      .module-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        border-radius: 12px;
+      }
+      .assumption-integrations {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .assumption-integrations li {
+        margin-bottom: 2px;
+      }
+      .accept-btn {
+        margin-top: 8px;
+        padding: 8px 16px;
+        font-size: 12px;
+        font-weight: 500;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .accept-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .accept-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .error-content {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+        border-radius: 6px;
+      }
+      .error-text {
+        font-size: 12px;
+        color: var(--vscode-errorForeground, #f48771);
+      }
+      .retry-btn {
+        align-self: flex-start;
+        padding: 6px 12px;
+        font-size: 11px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .retry-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .chat-input-area {
+        display: flex;
+        gap: 8px;
+      }
+      .chat-input {
+        flex: 1;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .chat-input:focus {
+        outline: 1px solid var(--vscode-focusBorder);
+        border-color: var(--vscode-focusBorder);
+      }
+      .chat-input:disabled {
+        opacity: 0.5;
+      }
+      .send-btn {
+        padding: 10px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .send-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .send-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .finalization-hint {
+        padding: 8px 12px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        text-align: center;
+        color: var(--vscode-descriptionForeground);
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
     `;
   }
 
@@ -839,6 +1416,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     if (this._ideationState.currentStep === 1) {
       return this.getStep1Html();
     }
+    if (this._ideationState.currentStep === 2) {
+      return this.getStep2Html();
+    }
     return `
       <div class="placeholder-content">
         <p>Step ${this._ideationState.currentStep} - Coming Soon</p>
@@ -927,6 +1507,137 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       <div class="form-section">
         <label class="form-label">Supporting Document</label>
         ${fileHtml}
+      </div>
+    `;
+  }
+
+  /**
+   * Get Step 2 (AI Gap-Filling) HTML
+   */
+  private getStep2Html(): string {
+    const state = this._ideationState.aiGapFillingState;
+    const isStreaming = state?.isStreaming ?? false;
+    const hasError = !!state?.streamingError;
+    const assumptionsAccepted = state?.assumptionsAccepted ?? false;
+    const conversationHistory = state?.conversationHistory ?? [];
+    const conversationCount = conversationHistory.filter((m: { role: string }) => m.role === 'user').length;
+    const showHint = conversationCount >= 3 && !assumptionsAccepted;
+
+    // Render conversation messages
+    const messagesHtml = conversationHistory
+      .map((msg: { role: string; content: string; parsedAssumptions?: Array<{ system: string; modules: string[]; integrations: string[]; source: string }> }) => {
+        if (msg.role === 'user') {
+          return `
+            <div class="chat-message user-message">
+              <div class="message-content">
+                <div class="message-text">${this.escapeHtml(msg.content)}</div>
+              </div>
+            </div>
+          `;
+        } else {
+          // Claude message with optional assumption cards
+          let assumptionsHtml = '';
+          if (msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
+            const cardsHtml = msg.parsedAssumptions.map((a: { system: string; modules: string[]; integrations: string[]; source: string }) => {
+              const modulesHtml = a.modules.map((m: string) => `<span class="module-chip">${this.escapeHtml(m)}</span>`).join('');
+              const integrationsHtml = a.integrations.map((i: string) => `<li>${this.escapeHtml(i)}</li>`).join('');
+              const sourceClass = a.source === 'user-corrected' ? 'user-corrected' : '';
+              return `
+                <div class="assumption-card ${sourceClass}">
+                  <div class="assumption-header">${this.escapeHtml(a.system)}</div>
+                  ${modulesHtml ? `<div class="assumption-modules">${modulesHtml}</div>` : ''}
+                  ${integrationsHtml ? `<ul class="assumption-integrations">${integrationsHtml}</ul>` : ''}
+                </div>
+              `;
+            }).join('');
+
+            const acceptDisabled = assumptionsAccepted || isStreaming;
+            const acceptLabel = assumptionsAccepted ? 'Accepted ✓' : 'Accept Assumptions';
+
+            assumptionsHtml = `
+              <div class="assumptions-container">
+                ${cardsHtml}
+                <button class="accept-btn" onclick="acceptAssumptions()" ${acceptDisabled ? 'disabled' : ''}>
+                  ${acceptLabel}
+                </button>
+              </div>
+            `;
+          }
+
+          return `
+            <div class="chat-message claude-message">
+              <div class="message-avatar">🤖</div>
+              <div class="message-content">
+                <div class="message-text">${this.escapeHtml(msg.content)}</div>
+                ${assumptionsHtml}
+              </div>
+            </div>
+          `;
+        }
+      })
+      .join('');
+
+    // Render streaming indicator or error
+    let statusHtml = '';
+    if (isStreaming) {
+      statusHtml = `
+        <div class="chat-message claude-message streaming">
+          <div class="message-avatar">🤖</div>
+          <div class="message-content">
+            <div class="message-text streaming-text"></div>
+            <div class="typing-indicator">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (hasError) {
+      statusHtml = `
+        <div class="chat-message error-message">
+          <div class="error-content">
+            <div class="error-text">Response interrupted: ${this.escapeHtml(state?.streamingError || '')}</div>
+            <button class="retry-btn" onclick="retryLastMessage()">Try Again</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Render finalization hint
+    const hintHtml = showHint
+      ? '<div class="finalization-hint">Ready to finalize? Click Confirm & Continue.</div>'
+      : '';
+
+    return `
+      <div class="step2-header">
+        <p class="step-description">Claude will analyze your context and propose assumptions about your environment.</p>
+        <button class="regenerate-btn" onclick="regenerateAssumptions()" ${isStreaming ? 'disabled' : ''}>
+          ↻ Regenerate
+        </button>
+      </div>
+
+      <div class="chat-container">
+        <div class="chat-messages" id="chatMessages">
+          ${messagesHtml}
+          ${statusHtml}
+        </div>
+      </div>
+
+      ${hintHtml}
+
+      <div class="chat-input-area">
+        <input
+          type="text"
+          id="chatInput"
+          class="chat-input"
+          placeholder="Refine assumptions..."
+          ${isStreaming ? 'disabled' : ''}
+          onkeydown="handleChatKeydown(event)"
+        >
+        <button class="send-btn" onclick="sendChatMessage()" ${isStreaming ? 'disabled' : ''}>
+          Send
+        </button>
       </div>
     `;
   }
@@ -1039,6 +1750,39 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       }
       function handleStateSync(message) {
         // State sync handled by full re-render
+        // Auto-scroll chat to bottom after sync
+        scrollChatToBottom();
+      }
+      function scrollChatToBottom() {
+        const chatContainer = document.querySelector('.chat-container');
+        if (chatContainer) {
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+      }
+      // Auto-scroll on initial load
+      setTimeout(scrollChatToBottom, 100);
+      // Step 2: AI Gap-Filling functions
+      function sendChatMessage() {
+        const input = document.getElementById('chatInput');
+        if (input && input.value.trim()) {
+          vscode.postMessage({ command: 'sendChatMessage', value: input.value.trim() });
+          input.value = '';
+        }
+      }
+      function handleChatKeydown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          sendChatMessage();
+        }
+      }
+      function acceptAssumptions() {
+        vscode.postMessage({ command: 'acceptAssumptions' });
+      }
+      function regenerateAssumptions() {
+        vscode.postMessage({ command: 'regenerateAssumptions' });
+      }
+      function retryLastMessage() {
+        vscode.postMessage({ command: 'retryLastMessage' });
       }
     `;
   }
@@ -1116,12 +1860,37 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    */
   public dispose(): void {
     this._configChangeDisposable?.dispose();
+    this._bedrockDisposables.forEach(d => d.dispose());
+    this._bedrockDisposables = [];
   }
 }
 
 // ============================================
 // Supporting Types and Constants
 // ============================================
+
+interface SystemAssumption {
+  system: string;
+  modules: string[];
+  integrations: string[];
+  source: 'ai-proposed' | 'user-corrected';
+}
+
+interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  parsedAssumptions?: SystemAssumption[];
+}
+
+interface AIGapFillingState {
+  conversationHistory: ConversationMessage[];
+  confirmedAssumptions: SystemAssumption[];
+  assumptionsAccepted: boolean;
+  isStreaming: boolean;
+  step1InputHash?: string;
+  streamingError?: string;
+}
 
 interface IdeationState {
   currentStep: number;
@@ -1137,6 +1906,7 @@ interface IdeationState {
     size: number;
     data: Uint8Array;
   };
+  aiGapFillingState: AIGapFillingState;
 }
 
 interface IdeationValidationError {
@@ -1164,6 +1934,12 @@ function createDefaultIdeationState(): IdeationState {
     businessObjective: '',
     industry: '',
     systems: [],
+    aiGapFillingState: {
+      conversationHistory: [],
+      confirmedAssumptions: [],
+      assumptionsAccepted: false,
+      isStreaming: false,
+    },
   };
 }
 

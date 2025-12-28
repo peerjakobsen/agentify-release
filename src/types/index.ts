@@ -43,13 +43,13 @@ export {
 export type {
   ProjectConfig,
   DynamoDbInfrastructureConfig,
+  BedrockInfrastructureConfig,
   InfrastructureConfig,
   AgentDefinition,
   EdgeDefinition,
   OrchestrationPattern,
   WorkflowConfig,
   AwsConfig,
-  BedrockConfig,
   AgentifyConfig,
   ConfigValidationResult,
 } from './config';

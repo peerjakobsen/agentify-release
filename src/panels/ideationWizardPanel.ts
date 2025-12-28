@@ -13,11 +13,21 @@ import {
   WIZARD_COMMANDS,
   FILE_UPLOAD_CONSTRAINTS,
   createDefaultWizardState,
+  createDefaultAIGapFillingState,
   type WizardState,
   type WizardValidationState,
   type WizardValidationError,
   type WizardStepConfig,
+  type ConversationMessage,
+  type SystemAssumption,
 } from '../types/wizardPanel';
+import {
+  buildContextMessage,
+  parseAssumptionsFromResponse,
+  generateStep1Hash,
+  hasStep1Changed,
+} from '../services/gapFillingService';
+import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
 
 /**
  * View ID for the Ideation Wizard panel
@@ -47,10 +57,35 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   private _validationState: WizardValidationState;
 
   /**
+   * Bedrock conversation service for AI gap-filling
+   */
+  private _bedrockService?: BedrockConversationService;
+
+  /**
+   * VS Code extension context for service initialization
+   */
+  private _extensionContext?: vscode.ExtensionContext;
+
+  /**
+   * Disposable subscriptions for cleanup
+   */
+  private _disposables: vscode.Disposable[] = [];
+
+  /**
+   * Accumulated streaming response for current Claude message
+   */
+  private _streamingResponse = '';
+
+  /**
    * Creates a new IdeationWizardPanelProvider
    * @param extensionUri The URI of the extension for loading local resources
+   * @param extensionContext Optional VS Code extension context for service initialization
    */
-  constructor(private readonly extensionUri: vscode.Uri) {
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    extensionContext?: vscode.ExtensionContext
+  ) {
+    this._extensionContext = extensionContext;
     this._wizardState = createDefaultWizardState();
     this._validationState = this.validateStep1();
   }
@@ -162,6 +197,39 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Validate Step 2 (AI Gap-Filling) state
+   * @returns WizardValidationState with errors
+   */
+  private validateStep2(): WizardValidationState {
+    const errors: WizardValidationError[] = [];
+    const state = this._wizardState.aiGapFillingState;
+
+    // Block navigation while streaming
+    if (state.isStreaming) {
+      errors.push({
+        type: 'businessObjective', // Using existing error type
+        message: 'Please wait for Claude to finish responding',
+        severity: 'error',
+      });
+    }
+
+    // Require at least one confirmed assumption
+    if (state.confirmedAssumptions.length === 0 && !state.isStreaming) {
+      errors.push({
+        type: 'businessObjective', // Using existing error type
+        message: 'Please accept or refine assumptions before continuing',
+        severity: 'error',
+      });
+    }
+
+    return {
+      isValid: errors.filter((e) => e.severity === 'error').length === 0,
+      errors,
+      hasWarnings: false,
+    };
+  }
+
+  /**
    * Validate current step
    * @returns WizardValidationState
    */
@@ -169,7 +237,9 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
     switch (this._wizardState.currentStep) {
       case WizardStep.BusinessContext:
         return this.validateStep1();
-      // Steps 2-6 have placeholder validation (always valid for now)
+      case WizardStep.AIGapFilling:
+        return this.validateStep2();
+      // Steps 3-8 have placeholder validation (always valid for now)
       default:
         return { isValid: true, errors: [], hasWarnings: false };
     }
@@ -218,6 +288,7 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const previousStep = this._wizardState.currentStep;
     const nextStep = this._wizardState.currentStep + 1;
     this._wizardState.currentStep = nextStep;
     this._wizardState.highestStepReached = Math.max(this._wizardState.highestStepReached, nextStep);
@@ -226,6 +297,11 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
 
     this.updateWebviewContent();
     this.syncStateToWebview();
+
+    // Auto-send context to Claude when entering Step 2 from Step 1
+    if (previousStep === WizardStep.BusinessContext && nextStep === WizardStep.AIGapFilling) {
+      this.triggerAutoSendForStep2();
+    }
   }
 
   /**
@@ -234,6 +310,18 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   private navigateBackward(): void {
     if (!this.canNavigateBackward()) {
       return;
+    }
+
+    const currentStep = this._wizardState.currentStep;
+
+    // Store hash before going back to Step 1 from Step 2
+    if (currentStep === WizardStep.AIGapFilling) {
+      const hash = generateStep1Hash(
+        this._wizardState.businessObjective,
+        this._wizardState.industry,
+        this._wizardState.systems
+      );
+      this._wizardState.aiGapFillingState.step1InputHash = hash;
     }
 
     this._wizardState.currentStep = this._wizardState.currentStep - 1;
@@ -461,6 +549,187 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Generate Step 2 (AI Gap-Filling) HTML
+   */
+  private generateStep2Html(): string {
+    const state = this._wizardState.aiGapFillingState;
+    const isStreaming = state.isStreaming;
+    const hasError = !!state.streamingError;
+    const assumptionsAccepted = state.assumptionsAccepted;
+    const conversationCount = state.conversationHistory.filter((m) => m.role === 'user').length;
+    const showHint = conversationCount >= 3 && !assumptionsAccepted;
+
+    // Render conversation messages
+    const messagesHtml = state.conversationHistory
+      .map((msg) => {
+        if (msg.role === 'user') {
+          return this.renderUserMessage(msg.content);
+        } else {
+          return this.renderClaudeMessage(msg.content, msg.parsedAssumptions, false);
+        }
+      })
+      .join('');
+
+    // Render streaming indicator or error
+    let statusHtml = '';
+    if (isStreaming) {
+      statusHtml = this.renderStreamingIndicator();
+    } else if (hasError) {
+      statusHtml = this.renderErrorMessage(state.streamingError!);
+    }
+
+    // Render finalization hint
+    const hintHtml = showHint
+      ? '<div class="finalization-hint">Ready to finalize? Click Confirm & Continue.</div>'
+      : '';
+
+    return `
+      <div class="step-content step2-content">
+        <div class="step-header">
+          <h2>AI Gap Filling</h2>
+          <p class="step-description">Claude will analyze your context and propose assumptions about your environment.</p>
+        </div>
+
+        <div class="chat-actions">
+          <button class="action-button regenerate" onclick="regenerateAssumptions()" ${isStreaming ? 'disabled' : ''}>
+            Regenerate
+          </button>
+        </div>
+
+        <div class="chat-container">
+          <div class="chat-messages" id="chatMessages">
+            ${messagesHtml}
+            ${statusHtml}
+          </div>
+        </div>
+
+        ${hintHtml}
+
+        <div class="chat-input-area">
+          <input
+            type="text"
+            id="chatInput"
+            class="chat-input"
+            placeholder="Refine assumptions..."
+            ${isStreaming ? 'disabled' : ''}
+            onkeydown="handleChatKeydown(event)"
+          >
+          <button class="send-button" onclick="sendMessage()" ${isStreaming ? 'disabled' : ''}>
+            Send
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render a Claude (assistant) message
+   */
+  private renderClaudeMessage(
+    content: string,
+    assumptions?: SystemAssumption[],
+    isStreaming?: boolean
+  ): string {
+    // Render assumption cards if present
+    let assumptionsHtml = '';
+    if (assumptions && assumptions.length > 0) {
+      const cardsHtml = assumptions.map((a) => this.renderAssumptionCard(a)).join('');
+      const acceptDisabled =
+        this._wizardState.aiGapFillingState.assumptionsAccepted || isStreaming;
+      const acceptLabel = this._wizardState.aiGapFillingState.assumptionsAccepted
+        ? 'Accepted'
+        : 'Accept Assumptions';
+
+      assumptionsHtml = `
+        <div class="assumptions-container">
+          ${cardsHtml}
+          <button class="accept-button" onclick="acceptAssumptions()" ${acceptDisabled ? 'disabled' : ''}>
+            ${acceptLabel}
+          </button>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="chat-message claude-message">
+        <div class="message-avatar">🤖</div>
+        <div class="message-content">
+          <div class="message-text">${this.escapeHtml(content)}</div>
+          ${assumptionsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render a user message
+   */
+  private renderUserMessage(content: string): string {
+    return `
+      <div class="chat-message user-message">
+        <div class="message-content">
+          <div class="message-text">${this.escapeHtml(content)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render streaming indicator (typing dots)
+   */
+  private renderStreamingIndicator(): string {
+    return `
+      <div class="chat-message claude-message streaming">
+        <div class="message-avatar">🤖</div>
+        <div class="message-content">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render an assumption card
+   */
+  private renderAssumptionCard(assumption: SystemAssumption): string {
+    const modulesHtml = assumption.modules
+      .map((m) => `<span class="module-chip">${this.escapeHtml(m)}</span>`)
+      .join('');
+
+    const integrationsHtml = assumption.integrations
+      .map((i) => `<li>${this.escapeHtml(i)}</li>`)
+      .join('');
+
+    const sourceClass = assumption.source === 'user-corrected' ? 'user-corrected' : '';
+
+    return `
+      <div class="assumption-card ${sourceClass}">
+        <div class="assumption-header">${this.escapeHtml(assumption.system)}</div>
+        ${modulesHtml ? `<div class="assumption-modules">${modulesHtml}</div>` : ''}
+        ${integrationsHtml ? `<ul class="assumption-integrations">${integrationsHtml}</ul>` : ''}
+      </div>
+    `;
+  }
+
+  /**
+   * Render an error message with retry button
+   */
+  private renderErrorMessage(error: string): string {
+    return `
+      <div class="chat-message error-message">
+        <div class="error-content">
+          <div class="error-text">Response interrupted: ${this.escapeHtml(error)}</div>
+          <button class="retry-button" onclick="retryLastMessage()">Try Again</button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Generate step content based on current step
    */
   private generateStepContent(): string {
@@ -468,7 +737,7 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       case WizardStep.BusinessContext:
         return this.generateStep1Html();
       case WizardStep.AIGapFilling:
-        return this.generatePlaceholderStepHtml('AI Gap Filling', 'AI-assisted clarification and gap filling will be available here.');
+        return this.generateStep2Html();
       case WizardStep.AgentDesign:
         return this.generatePlaceholderStepHtml('Agent Design', 'Design your agent architecture and workflows here.');
       case WizardStep.MockData:
@@ -975,6 +1244,315 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       outline: 2px solid var(--vscode-focusBorder);
       outline-offset: 2px;
     }
+
+    /* =====================================================================
+       Step 2: AI Gap-Filling Chat Styles
+       ===================================================================== */
+
+    .step2-content {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .chat-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+
+    .action-button {
+      padding: 6px 12px;
+      font-size: 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .action-button.regenerate {
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+
+    .action-button.regenerate:hover:not(:disabled) {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .action-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Chat Container */
+    .chat-container {
+      flex: 1;
+      min-height: 200px;
+      max-height: 400px;
+      overflow-y: auto;
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border, #444);
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+
+    .chat-messages {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    /* Chat Messages */
+    .chat-message {
+      display: flex;
+      gap: 8px;
+      max-width: 90%;
+    }
+
+    .chat-message.claude-message {
+      align-self: flex-start;
+    }
+
+    .chat-message.user-message {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+
+    .message-avatar {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .message-content {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .message-text {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .claude-message .message-text {
+      background-color: var(--vscode-input-background);
+      border-bottom-left-radius: 4px;
+    }
+
+    .user-message .message-text {
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-bottom-right-radius: 4px;
+    }
+
+    /* Streaming Indicator */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 12px 14px;
+      background-color: var(--vscode-input-background);
+      border-radius: 12px;
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing-indicator .dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--vscode-descriptionForeground);
+      border-radius: 50%;
+      animation: typing 1.4s infinite ease-in-out both;
+    }
+
+    .typing-indicator .dot:nth-child(1) { animation-delay: 0s; }
+    .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typing {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Assumption Cards */
+    .assumptions-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .assumption-card {
+      padding: 12px;
+      background-color: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-editorWidget-border, #454545);
+      border-radius: 6px;
+    }
+
+    .assumption-card.user-corrected {
+      border-left: 3px solid var(--vscode-charts-blue, #3794ff);
+    }
+
+    .assumption-header {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--vscode-foreground);
+    }
+
+    .assumption-modules {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .module-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      background-color: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      border-radius: 12px;
+    }
+
+    .assumption-integrations {
+      margin: 0;
+      padding-left: 16px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .assumption-integrations li {
+      margin-bottom: 2px;
+    }
+
+    /* Accept Button */
+    .accept-button {
+      margin-top: 8px;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .accept-button:hover:not(:disabled) {
+      background-color: var(--vscode-button-hoverBackground);
+    }
+
+    .accept-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* Error Message */
+    .error-message {
+      max-width: 100%;
+    }
+
+    .error-content {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      border-radius: 6px;
+    }
+
+    .error-text {
+      font-size: 12px;
+      color: var(--vscode-errorForeground, #f48771);
+    }
+
+    .retry-button {
+      align-self: flex-start;
+      padding: 6px 12px;
+      font-size: 11px;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .retry-button:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    /* Chat Input Area */
+    .chat-input-area {
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-family: var(--vscode-font-family);
+      background-color: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+    }
+
+    .chat-input:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .chat-input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    .chat-input:disabled {
+      opacity: 0.5;
+    }
+
+    .send-button {
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .send-button:hover:not(:disabled) {
+      background-color: var(--vscode-button-hoverBackground);
+    }
+
+    .send-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Finalization Hint */
+    .finalization-hint {
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground);
+      background-color: var(--vscode-input-background);
+      border-radius: 4px;
+    }
     `;
   }
 
@@ -1060,12 +1638,47 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ command: '${WIZARD_COMMANDS.REMOVE_FILE}' });
     }
 
+    // Step 2: AI Gap-Filling functions
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      if (input && input.value.trim()) {
+        vscode.postMessage({ command: '${WIZARD_COMMANDS.SEND_CHAT_MESSAGE}', value: input.value.trim() });
+        input.value = '';
+      }
+    }
+
+    function handleChatKeydown(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function acceptAssumptions() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.ACCEPT_ASSUMPTIONS}' });
+    }
+
+    function regenerateAssumptions() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.REGENERATE_ASSUMPTIONS}' });
+    }
+
+    function retryLastMessage() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.RETRY_LAST_MESSAGE}' });
+    }
+
     // Handle messages from extension
     window.addEventListener('message', event => {
       const message = event.data;
       if (message.type === 'stateSync') {
         // State sync handled by full HTML re-render
         // This is for future incremental updates
+      }
+      if (message.type === 'streamingToken') {
+        // Update the streaming message content in real-time
+        const streamingMessage = document.querySelector('.streaming .message-text');
+        if (streamingMessage) {
+          streamingMessage.textContent = message.content;
+        }
       }
     });
     `;
@@ -1158,6 +1771,25 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
         this._validationState = this.validateCurrentStep();
         this.updateWebviewContent();
         this.syncStateToWebview();
+        break;
+
+      // Step 2: AI Gap-Filling commands
+      case WIZARD_COMMANDS.SEND_CHAT_MESSAGE:
+        if (msg.value && typeof msg.value === 'string') {
+          this.handleSendChatMessage(msg.value);
+        }
+        break;
+
+      case WIZARD_COMMANDS.ACCEPT_ASSUMPTIONS:
+        this.handleAcceptAssumptions();
+        break;
+
+      case WIZARD_COMMANDS.REGENERATE_ASSUMPTIONS:
+        this.handleRegenerateAssumptions();
+        break;
+
+      case WIZARD_COMMANDS.RETRY_LAST_MESSAGE:
+        this.handleRetryLastMessage();
         break;
 
       default:
@@ -1265,7 +1897,292 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
    * Dispose of resources
    */
   public dispose(): void {
+    // Dispose all subscriptions
+    this._disposables.forEach((d) => d.dispose());
+    this._disposables = [];
     // State is lost on dispose per spec
     // Persistence will be added in roadmap item 22
+  }
+
+  // =========================================================================
+  // Step 2: AI Gap-Filling Private Methods
+  // =========================================================================
+
+  /**
+   * Initialize the Bedrock conversation service if needed
+   */
+  private initBedrockService(): BedrockConversationService | undefined {
+    if (this._bedrockService) {
+      return this._bedrockService;
+    }
+
+    if (!this._extensionContext) {
+      console.warn('[IdeationWizard] Extension context not available for Bedrock service');
+      return undefined;
+    }
+
+    this._bedrockService = getBedrockConversationService(this._extensionContext);
+
+    // Subscribe to streaming events
+    this._disposables.push(
+      this._bedrockService.onToken((token) => {
+        this.handleStreamingToken(token);
+      })
+    );
+
+    this._disposables.push(
+      this._bedrockService.onComplete((response) => {
+        this.handleStreamingComplete(response);
+      })
+    );
+
+    this._disposables.push(
+      this._bedrockService.onError((error) => {
+        this.handleStreamingError(error.message);
+      })
+    );
+
+    return this._bedrockService;
+  }
+
+  /**
+   * Trigger auto-send of context to Claude when entering Step 2
+   * Checks for Step 1 input changes and resets conversation if needed
+   */
+  private triggerAutoSendForStep2(): void {
+    const state = this._wizardState.aiGapFillingState;
+
+    // Check if Step 1 inputs have changed since last visit
+    if (
+      hasStep1Changed(
+        state.step1InputHash,
+        this._wizardState.businessObjective,
+        this._wizardState.industry,
+        this._wizardState.systems
+      )
+    ) {
+      // Reset conversation state due to input changes
+      this._wizardState.aiGapFillingState = createDefaultAIGapFillingState();
+    }
+
+    // Only auto-send if conversation is empty (first visit or after reset)
+    if (state.conversationHistory.length === 0 && !state.isStreaming) {
+      this.sendContextToClaude();
+    }
+  }
+
+  /**
+   * Build and send context message to Claude for Step 2
+   */
+  private async sendContextToClaude(): Promise<void> {
+    const service = this.initBedrockService();
+    if (!service) {
+      this._wizardState.aiGapFillingState.streamingError =
+        'Claude service not available. Please check your configuration.';
+      this.syncStateToWebview();
+      return;
+    }
+
+    // Build context message from Step 1 inputs
+    const contextMessage = buildContextMessage(
+      this._wizardState.businessObjective,
+      this._wizardState.industry,
+      this._wizardState.systems
+    );
+
+    // Store hash for change detection
+    this._wizardState.aiGapFillingState.step1InputHash = generateStep1Hash(
+      this._wizardState.businessObjective,
+      this._wizardState.industry,
+      this._wizardState.systems
+    );
+
+    // Add user message to conversation history
+    const userMessage: ConversationMessage = {
+      role: 'user',
+      content: contextMessage,
+      timestamp: Date.now(),
+    };
+    this._wizardState.aiGapFillingState.conversationHistory.push(userMessage);
+
+    // Set streaming state
+    this._wizardState.aiGapFillingState.isStreaming = true;
+    this._wizardState.aiGapFillingState.streamingError = undefined;
+    this._streamingResponse = '';
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude (streaming will be handled by event handlers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(contextMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle incoming streaming token from Claude
+   */
+  private handleStreamingToken(token: string): void {
+    this._streamingResponse += token;
+
+    // Send incremental update to webview
+    if (this._view) {
+      this._view.webview.postMessage({
+        type: 'streamingToken',
+        content: this._streamingResponse,
+      });
+    }
+  }
+
+  /**
+   * Handle streaming completion from Claude
+   */
+  private handleStreamingComplete(fullResponse: string): void {
+    // Parse assumptions from response
+    const parsedAssumptions = parseAssumptionsFromResponse(fullResponse);
+
+    // Add assistant message to conversation history
+    const assistantMessage: ConversationMessage = {
+      role: 'assistant',
+      content: fullResponse,
+      timestamp: Date.now(),
+      parsedAssumptions,
+    };
+    this._wizardState.aiGapFillingState.conversationHistory.push(assistantMessage);
+
+    // Update streaming state
+    this._wizardState.aiGapFillingState.isStreaming = false;
+    this._streamingResponse = '';
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle streaming error from Claude
+   */
+  private handleStreamingError(errorMessage: string): void {
+    this._wizardState.aiGapFillingState.isStreaming = false;
+    this._wizardState.aiGapFillingState.streamingError = errorMessage;
+    this._streamingResponse = '';
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle SEND_CHAT_MESSAGE command - send user refinement message
+   */
+  private async handleSendChatMessage(content: string): Promise<void> {
+    const service = this.initBedrockService();
+    if (!service) {
+      return;
+    }
+
+    // Add user message to conversation history
+    const userMessage: ConversationMessage = {
+      role: 'user',
+      content,
+      timestamp: Date.now(),
+    };
+    this._wizardState.aiGapFillingState.conversationHistory.push(userMessage);
+
+    // Set streaming state
+    this._wizardState.aiGapFillingState.isStreaming = true;
+    this._wizardState.aiGapFillingState.streamingError = undefined;
+    this._streamingResponse = '';
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(content)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle ACCEPT_ASSUMPTIONS command - accept all proposed assumptions
+   */
+  private handleAcceptAssumptions(): void {
+    const history = this._wizardState.aiGapFillingState.conversationHistory;
+
+    // Find the last assistant message with parsed assumptions
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'assistant' && msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
+        // Copy assumptions to confirmed list
+        this._wizardState.aiGapFillingState.confirmedAssumptions = [...msg.parsedAssumptions];
+        this._wizardState.aiGapFillingState.assumptionsAccepted = true;
+        break;
+      }
+    }
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle REGENERATE_ASSUMPTIONS command - clear and restart conversation
+   */
+  private handleRegenerateAssumptions(): void {
+    // Reset conversation but keep the hash
+    const hash = this._wizardState.aiGapFillingState.step1InputHash;
+    this._wizardState.aiGapFillingState = createDefaultAIGapFillingState();
+    this._wizardState.aiGapFillingState.step1InputHash = hash;
+
+    // Reset the Bedrock service conversation
+    if (this._bedrockService) {
+      this._bedrockService.resetConversation();
+    }
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Trigger new conversation
+    this.sendContextToClaude();
+  }
+
+  /**
+   * Handle RETRY_LAST_MESSAGE command - retry after an error
+   */
+  private handleRetryLastMessage(): void {
+    const history = this._wizardState.aiGapFillingState.conversationHistory;
+
+    // Clear the error
+    this._wizardState.aiGapFillingState.streamingError = undefined;
+
+    // If there's no history or only one message, resend context
+    if (history.length <= 1) {
+      this.sendContextToClaude();
+      return;
+    }
+
+    // Find the last user message and resend it
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'user') {
+        // Remove this message from history (it will be re-added by handleSendChatMessage)
+        history.splice(i, 1);
+        this.handleSendChatMessage(msg.content);
+        break;
+      }
+    }
   }
 }

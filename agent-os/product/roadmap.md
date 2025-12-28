@@ -133,36 +133,47 @@ No separate merge service needed — panel handles trivial array combination. `M
 - Graceful handling of model access errors (user may not have Bedrock enabled)
 - Handle `AccessDeniedException` for cross-region inference SCP issues `M`
 
-15. [ ] AI Gap-Filling Conversation — Create wizard step 2 as a conversational UI where Claude analyzes the business objective and system selections, then proposes industry-typical assumptions:
+15. [x] AI Gap-Filling Conversation — Create wizard step 2 as a conversational UI where the model analyzes the business objective and system selections, then proposes industry-typical assumptions:
 
 **Conversation Flow:**
-1. On step entry, auto-send context summary to Claude: "User's objective: {objective}. Industry: {industry}. Known systems: {systems}."
-2. Claude responds with structured proposal: "Based on your {industry} context, here's what I'm assuming about your environment..." with specific module/integration assumptions
+1. On step entry, auto-send context summary to Bedrock: "User's objective: {objective}. Industry: {industry}. Known systems: {systems}."
+2. Model responds with structured proposal: "Based on your {industry} context, here's what I'm assuming about your environment..." with specific module/integration assumptions
 3. User can accept all, or reply with corrections: "Actually we use SAP IBP, not APO"
-4. Claude acknowledges and refines: "Got it, updating to SAP IBP for demand planning..."
+4. Model acknowledges and refines: "Got it, updating to SAP IBP for demand planning..."
 5. Conversation continues until user clicks "Confirm & Continue"
 
 **UI Pattern:**
-- Chat-style interface with Claude messages (left-aligned) and user messages (right-aligned)
-- Claude messages include "Accept Assumptions" button for quick confirmation
+- Chat-style interface with AI messages (left-aligned) and user messages (right-aligned)
+- AI messages include "Accept Assumptions" button for quick confirmation
 - Editable text input for user refinements
-- Streaming token display as Claude responds
+- Streaming token display as model responds
 - "Regenerate" button to get fresh proposal
 
 **State Output:**
 - `confirmedAssumptions: {system: string, modules: string[], integrations: string[]}[]`
 - Stored in wizard state for downstream steps `L`
 
-16. [ ] Outcome Definition Step — Build wizard step 3 for defining measurable business outcomes that the demo will showcase:
+16. [ ] Outcome Definition Step — Build wizard step 3 for defining measurable business outcomes:
+
+**AI-Driven Suggestions on Step Entry:**
+- Auto-send context (objective, industry, assumptions from Step 2) to Bedrock
+- Model returns JSON with suggested primary outcome, KPIs, and relevant stakeholders
+- Display suggestions as editable starting points, not locked values
 
 **Fields:**
-- Primary outcome statement (text input): "What business result should this workflow achieve?" — e.g., "Reduce fresh produce stockouts by 30%"
-- Success metrics (repeatable field group): metric name + target value + unit — e.g., "Order accuracy" / "95" / "%"
-- Stakeholders (multi-select + custom): Who benefits? (Operations, Finance, Supply Chain, Customer Service, Executive)
+- Primary outcome statement (text input pre-filled with AI suggestion, fully editable)
+- Success metrics (repeatable field group with AI-suggested KPIs, user can edit/add/remove)
+- Stakeholders (multi-select with AI-suggested options pre-checked, user can uncheck/add custom)
 
-**AI Assistance:**
-- "Suggest Metrics" button sends context to Claude, receives 3-5 suggested KPIs based on industry/objective
-- User can accept/modify suggestions
+**User Control:**
+- All AI suggestions are editable, removable, or ignorable
+- "Add Custom" option always available for each field
+- "Regenerate Suggestions" button for fresh AI proposal
+- User modifications take precedence over AI suggestions
+
+**Fallback:**
+- If AI fails: show static stakeholder list (Internal/External groups) and empty fields
+- Manual entry always works regardless of AI status
 
 **Validation:**
 - Primary outcome required
@@ -186,15 +197,17 @@ No separate merge service needed — panel handles trivial array combination. `M
 
 **Guardrail Notes (optional text area):**
 - Free-form notes for additional constraints
-- Example placeholder: "No PII in demo data, mask account numbers..."
+- On step entry: AI suggests relevant guardrail notes based on context from steps 1-2
+- Suggestions are editable, user can modify or clear entirely
+- Example placeholder if AI fails: "No PII in demo data, mask account numbers..."
 
 This step is optional — "Skip" button available with sensible defaults applied. `S`
 
-18. [ ] Agent Design Phase — Create wizard step 5 where Claude proposes agent team composition based on all previous inputs:
+18. [ ] Agent Design Phase — Create wizard step 5 where the model proposes agent team composition based on all previous inputs:
 
 **Auto-Proposal on Step Entry:**
-- Send full wizard context to Claude with structured prompt requesting agent team design
-- Claude responds with JSON-structured proposal (parsed for UI display):
+- Send full wizard context to Bedrock with structured prompt requesting agent team design
+- Model responds with JSON-structured proposal (parsed for UI display):
 ```json
 {
   "agents": [
@@ -220,7 +233,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 - "Accept & Continue" — proceed with proposal as-is
 - "Let me adjust..." — transitions to Agent Design Refinement (item 19) `L`
 
-19. [ ] Agent Design Refinement — Enable user modification of Claude's proposed agent team when "Let me adjust..." is selected:
+19. [ ] Agent Design Refinement — Enable user modification of the model's proposed agent team when "Let me adjust..." is selected:
 
 **Agent Card Editing:**
 - Each agent displayed as editable card
@@ -234,8 +247,8 @@ This step is optional — "Skip" button available with sensible defaults applied
 - Validation: warn if orphan agents (no incoming/outgoing edges), warn if entry point missing
 
 **AI Assistance:**
-- "Ask Claude" button for each agent: "Suggest tools for this agent" / "Improve role description"
-- "Validate Design" button: Claude reviews full design, suggests improvements
+- "Ask AI" button for each agent: "Suggest tools for this agent" / "Improve role description"
+- "Validate Design" button: model reviews full design, suggests improvements
 
 **Save:**
 - "Confirm Design" saves to wizard state and proceeds to next step `M`
@@ -245,7 +258,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 **Pattern Selection UI:**
 - Three large cards (Graph, Swarm, Workflow) with icons and one-line descriptions
 - Current selection highlighted
-- Claude's recommendation badge on suggested pattern
+- AI recommendation badge on suggested pattern
 
 **Pattern Descriptions:**
 - **Graph**: "Deterministic structure, LLM picks path at runtime. Best for: conditional workflows, approval gates, decision trees."
@@ -264,7 +277,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 21. [ ] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
 
 **Auto-Generation on Step Entry:**
-- For each tool identified in agent design, Claude proposes mock data shape:
+- For each tool identified in agent design, model proposes mock data shape:
 ```json
 {
   "tool": "sap_inventory",
@@ -282,10 +295,10 @@ This step is optional — "Skip" button available with sensible defaults applied
 - Accordion for each tool with mock definition
 - JSON editor for request/response schemas (with syntax highlighting)
 - Sample data table with add/edit/delete rows
-- "Use customer terminology" toggle: when ON, Claude regenerates with industry-specific naming from wizard context
+- "Use customer terminology" toggle: when ON, model regenerates with industry-specific naming from wizard context
 
 **Bulk Actions:**
-- "Regenerate All" — fresh mock data proposal from Claude
+- "Regenerate All" — fresh mock data proposal from model
 - "Import Sample Data" — upload CSV/JSON to populate sample data tables
 
 **Validation:**
@@ -333,7 +346,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 **Narrative Flow:**
 - Ordered list of demo scenes (drag-to-reorder)
 - Each scene: title, description, which agents are highlighted
-- "Generate Narrative" button: Claude proposes scene sequence based on agent design
+- "Generate Narrative" button: model proposes scene sequence based on agent design
 
 **Output:**
 - Stored in wizard state for `demo-strategy.md` generation in Phase 4 `M`

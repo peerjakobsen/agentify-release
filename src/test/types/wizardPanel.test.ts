@@ -12,11 +12,16 @@ import {
   WIZARD_COMMANDS,
   FILE_UPLOAD_CONSTRAINTS,
   createDefaultWizardState,
+  createDefaultAIGapFillingState,
   type WizardState,
   type WizardValidationError,
   type WizardValidationState,
   type UploadedFile,
   type WizardStepConfig,
+  type SystemAssumption,
+  type AIGapFillingState,
+  type ConversationMessage,
+  type AssumptionSource,
 } from '../../types/wizardPanel';
 
 describe('WizardPanel Types', () => {
@@ -36,6 +41,14 @@ describe('WizardPanel Types', () => {
       expect(state.customIndustry).toBeUndefined();
       expect(state.customSystems).toBeUndefined();
       expect(state.uploadedFile).toBeUndefined();
+
+      // Verify AI gap-filling defaults (Step 2)
+      expect(state.aiGapFillingState.conversationHistory).toEqual([]);
+      expect(state.aiGapFillingState.confirmedAssumptions).toEqual([]);
+      expect(state.aiGapFillingState.assumptionsAccepted).toBe(false);
+      expect(state.aiGapFillingState.isStreaming).toBe(false);
+      expect(state.aiGapFillingState.step1InputHash).toBeUndefined();
+      expect(state.aiGapFillingState.streamingError).toBeUndefined();
 
       // Verify outcome definition defaults (Step 3)
       expect(state.outcome.primaryOutcome).toBe('');
@@ -65,6 +78,12 @@ describe('WizardPanel Types', () => {
         systems: ['Salesforce', 'HubSpot'],
         customSystems: 'Custom System',
         uploadedFile,
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
         outcome: {
           primaryOutcome: 'Reduce stockouts by 30%',
           successMetrics: [{ name: 'Order accuracy', targetValue: '95', unit: '%' }],
@@ -230,6 +249,191 @@ describe('WizardPanel Types', () => {
       expect(WizardStep.MockData).toBe(6);
       expect(WizardStep.DemoStrategy).toBe(7);
       expect(WizardStep.Generate).toBe(8);
+    });
+  });
+
+  // ============================================================================
+  // AI Gap-Filling Conversation Types (Task Group 1 - 4 Focused Tests)
+  // ============================================================================
+
+  describe('SystemAssumption interface', () => {
+    it('should validate SystemAssumption structure with all required fields', () => {
+      const assumption: SystemAssumption = {
+        system: 'SAP S/4HANA',
+        modules: ['MM', 'SD', 'PP'],
+        integrations: ['Salesforce CRM sync', 'EDI with suppliers'],
+        source: 'ai-proposed',
+      };
+
+      // Verify all required fields exist with correct types
+      expect(assumption.system).toBe('SAP S/4HANA');
+      expect(assumption.modules).toBeInstanceOf(Array);
+      expect(assumption.modules).toHaveLength(3);
+      expect(assumption.modules).toContain('MM');
+      expect(assumption.modules).toContain('SD');
+      expect(assumption.modules).toContain('PP');
+      expect(assumption.integrations).toBeInstanceOf(Array);
+      expect(assumption.integrations).toHaveLength(2);
+      expect(assumption.integrations).toContain('Salesforce CRM sync');
+      expect(assumption.source).toBe('ai-proposed');
+
+      // Verify empty arrays are valid
+      const minimalAssumption: SystemAssumption = {
+        system: 'Custom System',
+        modules: [],
+        integrations: [],
+        source: 'user-corrected',
+      };
+
+      expect(minimalAssumption.modules).toEqual([]);
+      expect(minimalAssumption.integrations).toEqual([]);
+    });
+  });
+
+  describe('AIGapFillingState interface', () => {
+    it('should validate AIGapFillingState required fields and optional fields', () => {
+      // Test default state creation
+      const defaultState = createDefaultAIGapFillingState();
+
+      // Verify all required fields exist
+      expect(defaultState.conversationHistory).toBeInstanceOf(Array);
+      expect(defaultState.conversationHistory).toEqual([]);
+      expect(defaultState.confirmedAssumptions).toBeInstanceOf(Array);
+      expect(defaultState.confirmedAssumptions).toEqual([]);
+      expect(defaultState.assumptionsAccepted).toBe(false);
+      expect(defaultState.isStreaming).toBe(false);
+
+      // Verify optional fields are undefined by default
+      expect(defaultState.step1InputHash).toBeUndefined();
+      expect(defaultState.streamingError).toBeUndefined();
+
+      // Test populated state with all fields
+      const populatedState: AIGapFillingState = {
+        conversationHistory: [
+          {
+            role: 'assistant',
+            content: 'Based on your requirements, I propose the following assumptions.',
+            timestamp: Date.now(),
+            parsedAssumptions: [
+              { system: 'SAP', modules: ['MM'], integrations: [], source: 'ai-proposed' },
+            ],
+          },
+        ],
+        confirmedAssumptions: [
+          { system: 'SAP', modules: ['MM'], integrations: [], source: 'ai-proposed' },
+        ],
+        assumptionsAccepted: true,
+        isStreaming: false,
+        step1InputHash: 'abc123hash',
+        streamingError: undefined,
+      };
+
+      expect(populatedState.conversationHistory).toHaveLength(1);
+      expect(populatedState.confirmedAssumptions).toHaveLength(1);
+      expect(populatedState.assumptionsAccepted).toBe(true);
+      expect(populatedState.step1InputHash).toBe('abc123hash');
+
+      // Test error state
+      const errorState: AIGapFillingState = {
+        conversationHistory: [],
+        confirmedAssumptions: [],
+        assumptionsAccepted: false,
+        isStreaming: false,
+        streamingError: 'Response interrupted. Try again?',
+      };
+
+      expect(errorState.streamingError).toBe('Response interrupted. Try again?');
+    });
+  });
+
+  describe('AssumptionSource type', () => {
+    it('should only allow valid source enum values (ai-proposed or user-corrected)', () => {
+      // Test ai-proposed source
+      const aiProposedAssumption: SystemAssumption = {
+        system: 'Salesforce',
+        modules: ['Sales Cloud'],
+        integrations: [],
+        source: 'ai-proposed',
+      };
+      expect(aiProposedAssumption.source).toBe('ai-proposed');
+
+      // Test user-corrected source
+      const userCorrectedAssumption: SystemAssumption = {
+        system: 'SAP IBP',
+        modules: ['Demand Planning'],
+        integrations: ['S/4HANA integration'],
+        source: 'user-corrected',
+      };
+      expect(userCorrectedAssumption.source).toBe('user-corrected');
+
+      // Verify source can be assigned to type
+      const validSources: AssumptionSource[] = ['ai-proposed', 'user-corrected'];
+      expect(validSources).toContain(aiProposedAssumption.source);
+      expect(validSources).toContain(userCorrectedAssumption.source);
+      expect(validSources).toHaveLength(2);
+
+      // TypeScript compilation ensures only valid values can be assigned
+      // Invalid values like 'other' would cause a compile error
+    });
+  });
+
+  describe('ConversationMessage interface', () => {
+    it('should validate ConversationMessage structure for chat history', () => {
+      // Test user message
+      const userMessage: ConversationMessage = {
+        role: 'user',
+        content: 'Actually, we use SAP IBP instead of APO',
+        timestamp: 1704067200000,
+      };
+
+      expect(userMessage.role).toBe('user');
+      expect(userMessage.content).toBe('Actually, we use SAP IBP instead of APO');
+      expect(userMessage.timestamp).toBe(1704067200000);
+      expect(userMessage.parsedAssumptions).toBeUndefined();
+
+      // Test assistant message with parsed assumptions
+      const assistantMessage: ConversationMessage = {
+        role: 'assistant',
+        content: 'I understand. Let me update the assumptions to reflect SAP IBP.',
+        timestamp: 1704067260000,
+        parsedAssumptions: [
+          {
+            system: 'SAP IBP',
+            modules: ['Demand Planning', 'Supply Planning'],
+            integrations: ['S/4HANA synchronization'],
+            source: 'user-corrected',
+          },
+        ],
+      };
+
+      expect(assistantMessage.role).toBe('assistant');
+      expect(assistantMessage.content).toContain('SAP IBP');
+      expect(assistantMessage.timestamp).toBe(1704067260000);
+      expect(assistantMessage.parsedAssumptions).toBeDefined();
+      expect(assistantMessage.parsedAssumptions).toHaveLength(1);
+      expect(assistantMessage.parsedAssumptions?.[0].system).toBe('SAP IBP');
+      expect(assistantMessage.parsedAssumptions?.[0].source).toBe('user-corrected');
+
+      // Test role type constraints
+      const validRoles: ConversationMessage['role'][] = ['user', 'assistant'];
+      expect(validRoles).toContain(userMessage.role);
+      expect(validRoles).toContain(assistantMessage.role);
+    });
+  });
+
+  describe('WIZARD_COMMANDS for Step 2', () => {
+    it('should define Step 2 AI gap-filling conversation commands', () => {
+      // Verify Step 2 specific commands exist and follow naming pattern
+      expect(WIZARD_COMMANDS.SEND_CHAT_MESSAGE).toBe('sendChatMessage');
+      expect(WIZARD_COMMANDS.ACCEPT_ASSUMPTIONS).toBe('acceptAssumptions');
+      expect(WIZARD_COMMANDS.REGENERATE_ASSUMPTIONS).toBe('regenerateAssumptions');
+      expect(WIZARD_COMMANDS.RETRY_LAST_MESSAGE).toBe('retryLastMessage');
+
+      // Verify commands follow existing camelCase naming pattern
+      expect(WIZARD_COMMANDS.SEND_CHAT_MESSAGE).toMatch(/^[a-z][a-zA-Z]+$/);
+      expect(WIZARD_COMMANDS.ACCEPT_ASSUMPTIONS).toMatch(/^[a-z][a-zA-Z]+$/);
+      expect(WIZARD_COMMANDS.REGENERATE_ASSUMPTIONS).toMatch(/^[a-z][a-zA-Z]+$/);
+      expect(WIZARD_COMMANDS.RETRY_LAST_MESSAGE).toMatch(/^[a-z][a-zA-Z]+$/);
     });
   });
 });

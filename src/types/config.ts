@@ -64,6 +64,11 @@ export interface InfrastructureConfig {
    * DynamoDB configuration for workflow events
    */
   dynamodb: DynamoDbInfrastructureConfig;
+
+  /**
+   * Bedrock configuration for AI model integration
+   */
+  bedrock: BedrockInfrastructureConfig;
 }
 
 /**
@@ -170,16 +175,21 @@ export interface AwsConfig {
 }
 
 /**
- * Bedrock configuration for Claude API integration
- * Controls the model used for ideation assistance
+ * Bedrock configuration for AI model integration
+ * Controls the model and region used for ideation assistance
  */
-export interface BedrockConfig {
+export interface BedrockInfrastructureConfig {
   /**
-   * Bedrock model ID for Claude API calls
-   * When omitted, defaults to `global.anthropic.claude-sonnet-4-5-20250929-v1:0` (Sonnet for cost efficiency)
+   * Bedrock model ID for API calls
    * @example "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
    */
-  modelId?: string;
+  modelId: string;
+
+  /**
+   * AWS region for Bedrock API calls
+   * @example "us-east-1"
+   */
+  region: string;
 }
 
 /**
@@ -211,7 +221,7 @@ export interface AgentifyConfig {
   project: ProjectConfig;
 
   /**
-   * Infrastructure settings (DynamoDB, etc.)
+   * Infrastructure settings (DynamoDB, Bedrock)
    */
   infrastructure: InfrastructureConfig;
 
@@ -225,12 +235,6 @@ export interface AgentifyConfig {
    * Optional - when omitted, AWS SDK uses default credential resolution
    */
   aws?: AwsConfig;
-
-  /**
-   * Bedrock configuration for Claude API integration
-   * Optional - when omitted, uses default model (Sonnet)
-   */
-  bedrock?: BedrockConfig;
 
   /**
    * Observability configuration (X-Ray, tracing)
@@ -308,6 +312,23 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
         errors.push('Missing or invalid "infrastructure.dynamodb.region" field');
       }
     }
+
+    // Validate infrastructure.bedrock
+    if (!infra.bedrock || typeof infra.bedrock !== 'object') {
+      errors.push('Missing or invalid "infrastructure.bedrock" field');
+    } else {
+      const bedrock = infra.bedrock as Record<string, unknown>;
+      if (typeof bedrock.modelId !== 'string') {
+        errors.push('Missing or invalid "infrastructure.bedrock.modelId" field');
+      } else if (bedrock.modelId.trim() === '') {
+        errors.push('Invalid "infrastructure.bedrock.modelId" field - must be a non-empty string');
+      }
+      if (typeof bedrock.region !== 'string') {
+        errors.push('Missing or invalid "infrastructure.bedrock.region" field');
+      } else if (bedrock.region.trim() === '') {
+        errors.push('Invalid "infrastructure.bedrock.region" field - must be a non-empty string');
+      }
+    }
   }
 
   // Validate workflow
@@ -354,23 +375,6 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
           errors.push('Invalid "aws.profile" field - must be a string when provided');
         } else if (aws.profile.trim() === '') {
           errors.push('Invalid "aws.profile" field - must be a non-empty string when provided');
-        }
-      }
-    }
-  }
-
-  // Validate optional bedrock section (backward compatible - section can be omitted)
-  if (cfg.bedrock !== undefined) {
-    if (typeof cfg.bedrock !== 'object' || cfg.bedrock === null) {
-      errors.push('Invalid "bedrock" field - must be an object when provided');
-    } else {
-      const bedrock = cfg.bedrock as Record<string, unknown>;
-      // Validate bedrock.modelId when provided (optional field)
-      if (bedrock.modelId !== undefined) {
-        if (typeof bedrock.modelId !== 'string') {
-          errors.push('Invalid "bedrock.modelId" field - must be a string when provided');
-        } else if (bedrock.modelId.trim() === '') {
-          errors.push('Invalid "bedrock.modelId" field - must be a non-empty string when provided');
         }
       }
     }

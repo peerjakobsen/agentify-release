@@ -234,12 +234,12 @@ export class BedrockConversationService implements vscode.Disposable {
       return this._systemPrompt;
     }
 
-    // Build URI to prompt file
+    // Build URI to prompt file (gap-filling assistant for Step 2)
     const promptUri = vscode.Uri.joinPath(
       this._extensionUri,
       'resources',
       'prompts',
-      'ideation-assistant.md'
+      'gap-filling-assistant.md'
     );
 
     // Read and cache the prompt
@@ -263,7 +263,7 @@ export class BedrockConversationService implements vscode.Disposable {
     const configService = getConfigService();
     const config = await configService?.getConfig();
 
-    return config?.bedrock?.modelId || DEFAULT_MODEL_ID;
+    return config?.infrastructure?.bedrock?.modelId || DEFAULT_MODEL_ID;
   }
 
   // -------------------------------------------------------------------------
@@ -406,11 +406,11 @@ export class BedrockConversationService implements vscode.Disposable {
       errorObj.name === 'ModelNotReadyException' ||
       errorObj.name === 'ResourceNotFoundException'
     ) {
-      // Get region from config for error message
+      // Get region and model from config for error message
       const configService = getConfigService();
       const config = await configService?.getConfig();
-      const region = config?.infrastructure?.dynamodb?.region || 'unknown';
-      const modelId = config?.bedrock?.modelId || DEFAULT_MODEL_ID;
+      const region = config?.infrastructure?.bedrock?.region || 'unknown';
+      const modelId = config?.infrastructure?.bedrock?.modelId || DEFAULT_MODEL_ID;
 
       const agentifyError = createBedrockModelNotAvailableError(modelId, region, errorObj);
       this._onError.fire(agentifyError);

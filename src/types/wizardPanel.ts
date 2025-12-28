@@ -152,6 +152,64 @@ export interface UploadedFile {
 }
 
 // ============================================================================
+// Step 2: AI Gap-Filling Conversation Types (Roadmap Item 15)
+// ============================================================================
+
+/**
+ * Source of an assumption - either proposed by AI or corrected by user
+ */
+export type AssumptionSource = 'ai-proposed' | 'user-corrected';
+
+/**
+ * System assumption representing Claude's proposed or user-refined assumption
+ * about a system's modules and integrations
+ */
+export interface SystemAssumption {
+  /** System name (e.g., 'SAP S/4HANA') */
+  system: string;
+  /** Array of modules within the system (e.g., ['MM', 'SD', 'PP']) */
+  modules: string[];
+  /** Array of integration descriptions (e.g., ['Salesforce CRM sync']) */
+  integrations: string[];
+  /** Source of the assumption - 'ai-proposed' for initial, 'user-corrected' for refined */
+  source: AssumptionSource;
+}
+
+/**
+ * Chat message in the AI gap-filling conversation
+ * Represents either a user message or assistant (Claude) response
+ */
+export interface ConversationMessage {
+  /** Message role - 'user' for human input, 'assistant' for Claude response */
+  role: 'user' | 'assistant';
+  /** Message content text */
+  content: string;
+  /** Unix timestamp when message was created */
+  timestamp: number;
+  /** Parsed assumptions from assistant messages (if any) */
+  parsedAssumptions?: SystemAssumption[];
+}
+
+/**
+ * AI Gap-Filling state for Step 2
+ * Tracks conversation history, confirmed assumptions, and streaming state
+ */
+export interface AIGapFillingState {
+  /** Array of conversation messages between user and assistant */
+  conversationHistory: ConversationMessage[];
+  /** Array of confirmed/accepted assumptions */
+  confirmedAssumptions: SystemAssumption[];
+  /** Whether assumptions have been accepted by user */
+  assumptionsAccepted: boolean;
+  /** Whether Claude is currently streaming a response */
+  isStreaming: boolean;
+  /** Hash of Step 1 inputs for change detection */
+  step1InputHash?: string;
+  /** Error message from last streaming attempt (for retry UI) */
+  streamingError?: string;
+}
+
+// ============================================================================
 // Step 3: Outcome Definition Types (Roadmap Item 16)
 // ============================================================================
 
@@ -309,6 +367,16 @@ export interface WizardState {
   uploadedFile?: UploadedFile;
 
   // -------------------------------------------------------------------------
+  // Step 2: AI Gap-Filling Conversation (Roadmap Item 15)
+  // -------------------------------------------------------------------------
+
+  /**
+   * AI gap-filling conversation state
+   * Contains conversation history, confirmed assumptions, and streaming state
+   */
+  aiGapFillingState: AIGapFillingState;
+
+  // -------------------------------------------------------------------------
   // Step 3: Outcome Definition (Roadmap Item 16)
   // -------------------------------------------------------------------------
 
@@ -429,6 +497,15 @@ export const WIZARD_COMMANDS = {
   REMOVE_FILE: 'removeFile',
   /** Sync state to webview */
   SYNC_STATE: 'syncState',
+  // Step 2: AI Gap-Filling Conversation commands
+  /** Send a chat message in the gap-filling conversation */
+  SEND_CHAT_MESSAGE: 'sendChatMessage',
+  /** Accept all proposed assumptions from Claude */
+  ACCEPT_ASSUMPTIONS: 'acceptAssumptions',
+  /** Regenerate assumptions by resending context to Claude */
+  REGENERATE_ASSUMPTIONS: 'regenerateAssumptions',
+  /** Retry the last message after an error */
+  RETRY_LAST_MESSAGE: 'retryLastMessage',
 } as const;
 
 /**
@@ -455,6 +532,21 @@ export interface WizardStateSyncMessage {
 }
 
 /**
+ * Creates default AI gap-filling state
+ * Used to initialize or reset Step 2 state
+ */
+export function createDefaultAIGapFillingState(): AIGapFillingState {
+  return {
+    conversationHistory: [],
+    confirmedAssumptions: [],
+    assumptionsAccepted: false,
+    isStreaming: false,
+    step1InputHash: undefined,
+    streamingError: undefined,
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -468,6 +560,8 @@ export function createDefaultWizardState(): WizardState {
     systems: [],
     customSystems: undefined,
     uploadedFile: undefined,
+    // Step 2: AI Gap-Filling Conversation
+    aiGapFillingState: createDefaultAIGapFillingState(),
     // Step 3: Outcome Definition
     outcome: {
       primaryOutcome: '',
