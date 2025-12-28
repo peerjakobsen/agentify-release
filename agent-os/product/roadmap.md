@@ -80,7 +80,7 @@ This steering file is the source of truth for Kiro's code generation — all gen
 
 This service handles raw subprocess I/O; stdout JSON parsing is handled by item 11. `M`
 
-11. [ ] stdout Event Streaming & Panel Integration — Parse real-time JSON line events from `WorkflowTriggerService.onStdoutLine` following the schema in `agentify-integration.md`: `graph_structure`, `node_start`/`node_stream`/`node_stop`, `tool_call`/`tool_result`, `workflow_complete`/`workflow_error`. Create `StdoutEventParser` service that:
+11. [x] stdout Event Streaming & Panel Integration — Parse real-time JSON line events from `WorkflowTriggerService.onStdoutLine` following the schema in `agentify-integration.md`: `graph_structure`, `node_start`/`node_stream`/`node_stop`, `tool_call`/`tool_result`, `workflow_complete`/`workflow_error`. Create `StdoutEventParser` service that:
 
 **Parsing:**
 - Subscribes to `WorkflowTriggerService.onStdoutLine`
@@ -98,31 +98,40 @@ No separate merge service needed — panel handles trivial array combination. `M
 
 ## Phase 2: AI-Assisted Ideation
 
-13. [ ] Ideation Wizard Panel & Business Objective Step — Create Ideation Wizard webview panel with multi-step wizard navigation framework (step indicator, next/back buttons, progress tracking), then build the first step with: (1) multi-line text input for business objective/problem statement, (2) industry vertical dropdown (Retail, FSI, Healthcare, Manufacturing, Energy, Telecom, Public Sector), (3) system checkboxes grouped by category — CRM (Salesforce, HubSpot, Dynamics), ERP (SAP S/4HANA, Oracle, NetSuite), Data (Databricks, Snowflake, Redshift), HR (Workday, SuccessFactors), Service (ServiceNow, Zendesk), (4) "Other systems" free-text field, (5) optional file upload for additional context (account plan, requirements doc — stored in memory, not persisted). Wizard state held in memory; file persistence added in item 22. `M`
+13. [ ] Ideation Wizard Panel & Business Objective Step — Create Ideation Wizard webview panel with multi-step wizard navigation framework (step indicator, next/back buttons, progress tracking), then build the first step with: (1) multi-line text input for business objective/problem statement, (2) industry vertical dropdown (Retail, FSI, Healthcare, Life Sciences, Manufacturing, Energy, Telecom, Public Sector, Media & Entertainment, Travel & Hospitality, Other) with conditional "Other industry" free-text field when "Other" is selected, (3) system checkboxes grouped by category — CRM (Salesforce, HubSpot, Dynamics), ERP (SAP S/4HANA, Oracle, NetSuite), Data (Databricks, Snowflake, Redshift), HR (Workday, SuccessFactors), Service (ServiceNow, Zendesk), (4) "Other systems" free-text field, (5) optional file upload for additional context (account plan, requirements doc — stored in memory, not persisted). Wizard state held in memory; file persistence added in item 22. `M`
 
 14. [ ] Claude Bedrock Integration — Implement Amazon Bedrock client service for Claude API calls:
 
 **Client Setup:**
 - Use `@aws-sdk/client-bedrock-runtime` with credential chain from shared AWS services
-- Model: `anthropic.claude-3-sonnet-20240229-v1:0` (configurable in `.agentify/config.json`)
+- Model: `global.anthropic.claude-opus-4-5-20251101-v1:0` (configurable in `.agentify/config.json`)
 - Region from `infrastructure.dynamodb.region` (same as DynamoDB)
+- Use **Converse API** (`ConverseStreamCommand`) — the unified, model-agnostic interface
 
 **Conversation Management:**
 - `BedrockConversationService` singleton with `vscode.EventEmitter` pattern
-- Maintain conversation history as `{role: 'user' | 'assistant', content: string}[]`
-- System prompt loaded from bundled `prompts/ideation-assistant.md`
+- Maintain conversation history using Converse API message format:
+```typescript
+  interface Message {
+    role: 'user' | 'assistant';
+    content: Array<{ text: string }>;
+  }
+```
+- System prompt loaded from bundled `prompts/ideation-assistant.md`, passed via `system` parameter
 - `sendMessage(userMessage: string): AsyncIterable<string>` — streaming response
 - `resetConversation(): void` — clear history for new ideation session
 
 **Streaming to Webview:**
-- Use Bedrock's `InvokeModelWithResponseStreamCommand`
-- Parse SSE chunks, emit tokens via `onToken: Event<string>`
-- Emit `onComplete: Event<string>` with full response
+- Use `ConverseStreamCommand` from Converse API
+- Async iterate `response.stream`, extract `contentBlockDelta.delta.text` tokens
+- Emit tokens via `onToken: Event<string>`
+- Emit `onComplete: Event<string>` with full response on `messageStop` event
 - Handle `ThrottlingException` with exponential backoff (1s, 2s, 4s, max 30s)
 
 **Error Handling:**
 - `onError: Event<BedrockError>` for UI display
-- Graceful handling of model access errors (user may not have Bedrock enabled) `M`
+- Graceful handling of model access errors (user may not have Bedrock enabled)
+- Handle `AccessDeniedException` for cross-region inference SCP issues `M`
 
 15. [ ] AI Gap-Filling Conversation — Create wizard step 2 as a conversational UI where Claude analyzes the business objective and system selections, then proposes industry-typical assumptions:
 

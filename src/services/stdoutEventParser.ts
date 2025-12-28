@@ -1,24 +1,27 @@
 /**
  * Stdout Event Parser Service
- * Parses JSON events from workflow subprocess stdout stream
- * Converts raw stdout data into typed MergedEvent objects
+ *
+ * Parses JSON events from workflow subprocess stdout stream.
+ * Converts raw stdout data into typed MergedEvent objects and emits them
+ * via vscode.EventEmitter pattern for subscribers to consume.
+ *
+ * Usage:
+ *   const parser = getStdoutEventParser();
+ *   parser.onEvent((mergedEvent) => handleEvent(mergedEvent));
+ *   parser.onParseError((error) => handleError(error));
  */
 
+import * as vscode from 'vscode';
 import type {
   MergedEvent,
   StdoutEvent,
   AgentifyEvent,
 } from '../types/events';
+import { getWorkflowTriggerService } from './workflowTriggerService';
 
-/**
- * Interface for event handling callbacks
- */
-export interface StdoutEventCallbacks {
-  /** Called when a valid event is parsed */
-  onEvent?: (mergedEvent: MergedEvent) => void;
-  /** Called when an error occurs during parsing */
-  onParseError?: (error: Error, rawData: string) => void;
-}
+// ============================================================================
+// EventDeduplicator Class
+// ============================================================================
 
 /**
  * Tracks seen event IDs for deduplication
@@ -74,19 +77,63 @@ export class EventDeduplicator {
   }
 }
 
+// ============================================================================
+// StdoutEventParser Class
+// ============================================================================
+
 /**
  * Parses stdout data into typed events
  * Handles newline-delimited JSON format
+ * Implements vscode.Disposable for proper resource cleanup
  */
-export class StdoutEventParser {
+export class StdoutEventParser implements vscode.Disposable {
+  // -------------------------------------------------------------------------
+  // Private State Fields
+  // -------------------------------------------------------------------------
+
+  /** Buffer for incomplete lines */
   private buffer = '';
-  private callbacks: StdoutEventCallbacks;
+
+  /** Deduplicator for event IDs */
   private deduplicator: EventDeduplicator;
 
-  constructor(callbacks: StdoutEventCallbacks = {}, deduplicator?: EventDeduplicator) {
-    this.callbacks = callbacks;
+  /** Array of subscriptions to dispose */
+  private _disposables: vscode.Disposable[] = [];
+
+  // -------------------------------------------------------------------------
+  // EventEmitters (VS Code pattern from dynamoDbPollingService.ts)
+  // -------------------------------------------------------------------------
+
+  /** Event emitter for parsed stdout events */
+  private readonly _onEvent = new vscode.EventEmitter<MergedEvent<StdoutEvent>>();
+
+  /** Public event for subscribing to parsed stdout events */
+  public readonly onEvent = this._onEvent.event;
+
+  /** Event emitter for parse errors */
+  private readonly _onParseError = new vscode.EventEmitter<{ error: Error; rawData: string }>();
+
+  /** Public event for subscribing to parse errors */
+  public readonly onParseError = this._onParseError.event;
+
+  // -------------------------------------------------------------------------
+  // Constructor
+  // -------------------------------------------------------------------------
+
+  constructor(deduplicator?: EventDeduplicator) {
     this.deduplicator = deduplicator || new EventDeduplicator();
+
+    // Subscribe to WorkflowTriggerService.onStdoutLine
+    const workflowService = getWorkflowTriggerService();
+    const subscription = workflowService.onStdoutLine((line) => {
+      this.processLine(line);
+    });
+    this._disposables.push(subscription);
   }
+
+  // -------------------------------------------------------------------------
+  // Public Methods
+  // -------------------------------------------------------------------------
 
   /**
    * Processes raw stdout data chunk
@@ -109,6 +156,49 @@ export class StdoutEventParser {
       this.processLine(line);
     }
   }
+
+  /**
+   * Flushes any remaining buffered data
+   * Call this when the stream ends
+   */
+  flush(): void {
+    if (this.buffer.trim()) {
+      this.processLine(this.buffer);
+      this.buffer = '';
+    }
+  }
+
+  /**
+   * Resets the parser state (called on new workflow run)
+   */
+  reset(): void {
+    this.buffer = '';
+    this.deduplicator.clear();
+  }
+
+  /**
+   * Dispose of all resources
+   * Implements vscode.Disposable
+   */
+  dispose(): void {
+    // Dispose all subscriptions
+    for (const disposable of this._disposables) {
+      disposable.dispose();
+    }
+    this._disposables = [];
+
+    // Dispose EventEmitters
+    this._onEvent.dispose();
+    this._onParseError.dispose();
+
+    // Clear buffer and deduplicator
+    this.buffer = '';
+    this.deduplicator.clear();
+  }
+
+  // -------------------------------------------------------------------------
+  // Private Methods
+  // -------------------------------------------------------------------------
 
   /**
    * Processes a single line of stdout data
@@ -150,14 +240,14 @@ export class StdoutEventParser {
         event: parsed,
       };
 
-      // Emit the event
-      this.callbacks.onEvent?.(mergedEvent);
+      // Fire the event via EventEmitter
+      this._onEvent.fire(mergedEvent);
     } catch (error) {
       // Not valid JSON or parsing failed
-      this.callbacks.onParseError?.(
-        error instanceof Error ? error : new Error(String(error)),
-        trimmed
-      );
+      this._onParseError.fire({
+        error: error instanceof Error ? error : new Error(String(error)),
+        rawData: trimmed,
+      });
     }
   }
 
@@ -189,59 +279,45 @@ export class StdoutEventParser {
 
     return `${event.workflow_id}-${type}-${event.timestamp}-${nodeId}`;
   }
+}
 
-  /**
-   * Flushes any remaining buffered data
-   * Call this when the stream ends
-   */
-  flush(): void {
-    if (this.buffer.trim()) {
-      this.processLine(this.buffer);
-      this.buffer = '';
-    }
-  }
+// ============================================================================
+// Singleton Pattern (from dynamoDbPollingService.ts)
+// ============================================================================
 
-  /**
-   * Resets the parser state (called on new workflow run)
-   */
-  reset(): void {
-    this.buffer = '';
-    this.deduplicator.clear();
-  }
+/**
+ * Singleton instance of the stdout event parser
+ */
+let instance: StdoutEventParser | null = null;
 
-  /**
-   * Updates the callbacks
-   */
-  setCallbacks(callbacks: StdoutEventCallbacks): void {
-    this.callbacks = callbacks;
+/**
+ * Get the singleton StdoutEventParser instance
+ * Creates the instance on first call (lazy initialization)
+ *
+ * @returns The StdoutEventParser singleton
+ */
+export function getStdoutEventParser(): StdoutEventParser {
+  if (!instance) {
+    instance = new StdoutEventParser();
   }
+  return instance;
 }
 
 /**
- * Creates a stdout event handler function for use with WorkflowTriggerService
- * Returns a function that processes stdout data and calls the callback for each event
- *
- * @param onEvent - Callback for each parsed event
- * @param onParseError - Optional callback for parse errors
- * @returns Function to handle stdout data chunks
+ * Reset the singleton instance
+ * Disposes current instance and sets to null
+ * Useful for testing or when cleanup is needed
  */
-export function createStdoutEventHandler(
-  onEvent: (mergedEvent: MergedEvent) => void,
-  onParseError?: (error: Error, rawData: string) => void
-): {
-  handler: (data: string) => void;
-  parser: StdoutEventParser;
-} {
-  const parser = new StdoutEventParser({
-    onEvent,
-    onParseError,
-  });
-
-  return {
-    handler: (data: string) => parser.processChunk(data),
-    parser,
-  };
+export function resetStdoutEventParser(): void {
+  if (instance) {
+    instance.dispose();
+    instance = null;
+  }
 }
+
+// ============================================================================
+// Utility Functions (preserved from original)
+// ============================================================================
 
 /**
  * Parses a single stdout line into a MergedEvent

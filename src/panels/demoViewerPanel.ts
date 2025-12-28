@@ -12,6 +12,8 @@ import {
   getWorkflowTriggerService,
   type ProcessState,
 } from '../services/workflowTriggerService';
+import { getStdoutEventParser } from '../services/stdoutEventParser';
+import { getDynamoDbPollingService } from '../services/dynamoDbPollingService';
 import { formatTime } from '../utils/timerFormatter';
 import { getNextState } from '../utils/inputPanelStateMachine';
 import {
@@ -20,6 +22,7 @@ import {
   generateLogSectionJs,
 } from '../utils/logPanelHtmlGenerator';
 import { applyFilters } from '../utils/logFilterUtils';
+import { transformEventToLogEntry } from '../utils/eventTransformer';
 import type {
   InputPanelState,
   ValidationState,
@@ -43,6 +46,17 @@ import {
   generateOutcomePanelCss,
   generateOutcomePanelJs,
 } from '../utils/outcomePanelHtmlGenerator';
+import type {
+  MergedEvent,
+  GraphStructureEvent,
+  NodeStreamEvent,
+} from '../types/events';
+import {
+  isGraphStructureEvent,
+  isNodeStreamEvent,
+  isWorkflowCompleteEvent,
+  isWorkflowErrorEvent,
+} from '../types/events';
 
 /**
  * View ID for the Demo Viewer panel
@@ -116,14 +130,44 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
    * Log panel state (stored in instance, not workspace state)
    * Per spec: Store events array in DemoViewerPanelProvider instance state
    * Log state is NOT persisted across IDE restart (stored in instance, not workspaceState)
+   * Note: Must deep-clone to avoid sharing arrays/objects between instances
    */
-  private _logPanelState: LogPanelState = { ...DEFAULT_LOG_PANEL_STATE };
+  private _logPanelState: LogPanelState = {
+    ...DEFAULT_LOG_PANEL_STATE,
+    entries: [],
+    filters: { ...DEFAULT_FILTER_STATE },
+  };
 
   /**
    * Outcome panel state for displaying workflow results
    * Shows success/failure status, rendered content, and data sources
    */
   private _outcomePanelState: OutcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
+
+  /**
+   * Phase 3 event storage: Graph structure for visualization
+   */
+  private _graphStructure: GraphStructureEvent | null = null;
+
+  /**
+   * Phase 3 event storage: Node stream buffer for streaming tokens by node_id
+   */
+  private _nodeStreamBuffer: Map<string, string> = new Map();
+
+  /**
+   * Pending events waiting to be flushed (debounce batching)
+   */
+  private _pendingEvents: MergedEvent[] = [];
+
+  /**
+   * Debounce timer for event batching
+   */
+  private _sortDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Output channel for logging parse errors and debug info
+   */
+  private _outputChannel: vscode.OutputChannel | null = null;
 
   /**
    * Creates a new DemoViewerPanelProvider
@@ -216,6 +260,42 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
         console.error('[Workflow stderr]', data);
       })
     );
+
+    // Subscribe to StdoutEventParser.onEvent for stdout events
+    const stdoutParser = getStdoutEventParser();
+    this._serviceSubscriptions.push(
+      stdoutParser.onEvent((mergedEvent) => {
+        this.addEventToBatch(mergedEvent);
+      })
+    );
+
+    // Subscribe to StdoutEventParser.onParseError for parse error logging
+    // Create output channel if not already created
+    if (!this._outputChannel) {
+      this._outputChannel = vscode.window.createOutputChannel('Agentify');
+    }
+    this._serviceSubscriptions.push(
+      stdoutParser.onParseError(({ error, rawData }) => {
+        // Log to Output channel (not UI log panel)
+        const truncatedData = rawData.length > 100 ? rawData.substring(0, 100) + '...' : rawData;
+        this._outputChannel?.appendLine(`[StdoutEventParser] Malformed JSON: ${truncatedData}`);
+      })
+    );
+
+    // Subscribe to DynamoDbPollingService.onEvent for DynamoDB events
+    const dynamoDbService = getDynamoDbPollingService();
+    if (dynamoDbService) {
+      this._serviceSubscriptions.push(
+        dynamoDbService.onEvent((event) => {
+          // Wrap DynamoDB event as MergedEvent
+          const mergedEvent: MergedEvent = {
+            source: 'dynamodb',
+            event,
+          };
+          this.addEventToBatch(mergedEvent);
+        })
+      );
+    }
   }
 
   /**
@@ -538,6 +618,96 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     if (syncToWebview) {
       this.syncStateToWebview();
     }
+  }
+
+  /**
+   * Flush pending events to the log panel
+   * Transforms events, filters null results, merges with existing entries, and sorts by timestamp
+   */
+  private flushPendingEvents(): void {
+    if (this._pendingEvents.length === 0) {
+      return;
+    }
+
+    // Transform each pending event
+    const newEntries: LogEntry[] = [];
+    for (const mergedEvent of this._pendingEvents) {
+      const entry = transformEventToLogEntry(mergedEvent);
+      if (entry !== null) {
+        newEntries.push(entry);
+      }
+    }
+
+    // Clear pending events
+    this._pendingEvents = [];
+
+    // Merge with existing entries
+    if (newEntries.length > 0) {
+      this._logPanelState.entries.push(...newEntries);
+
+      // Sort by timestamp ascending
+      this._logPanelState.entries.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Enforce maximum entries limit
+      if (this._logPanelState.entries.length > MAX_LOG_ENTRIES) {
+        const overflow = this._logPanelState.entries.length - MAX_LOG_ENTRIES;
+        this._logPanelState.entries.splice(0, overflow);
+      }
+
+      // Auto-expand on first event
+      if (this._logPanelState.isCollapsed && this._logPanelState.entries.length > 0) {
+        this._logPanelState.isCollapsed = false;
+      }
+
+      // Sync to webview
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Add an event to the batch for debounced processing
+   * Handles special cases: graph_structure and node_stream are stored but not batched
+   *
+   * @param mergedEvent The event to process
+   */
+  private addEventToBatch(mergedEvent: MergedEvent): void {
+    const event = mergedEvent.event;
+
+    // Store graph_structure for Phase 3 visualization (don't add to batch)
+    if (isGraphStructureEvent(event)) {
+      this._graphStructure = event;
+      return;
+    }
+
+    // Append node_stream data to buffer by node_id (don't add to batch)
+    if (isNodeStreamEvent(event)) {
+      const currentData = this._nodeStreamBuffer.get(event.node_id) || '';
+      this._nodeStreamBuffer.set(event.node_id, currentData + event.data);
+      return;
+    }
+
+    // Handle Outcome Panel triggers for stdout terminal events
+    if (mergedEvent.source === 'stdout') {
+      if (isWorkflowCompleteEvent(event)) {
+        this.setOutcomeSuccess(event.result, event.sources, false);
+      } else if (isWorkflowErrorEvent(event)) {
+        this.setOutcomeError(event.error_message, event.error_code, false);
+      }
+    }
+
+    // Add displayable events to pending batch
+    this._pendingEvents.push(mergedEvent);
+
+    // Clear existing debounce timer
+    if (this._sortDebounceTimer !== null) {
+      clearTimeout(this._sortDebounceTimer);
+    }
+
+    // Set new 50ms debounce timer
+    this._sortDebounceTimer = setTimeout(() => {
+      this._sortDebounceTimer = null;
+      this.flushPendingEvents();
+    }, 50);
   }
 
   /**
@@ -1541,6 +1711,17 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     // Clear outcome panel for new run (hide immediately)
     this._outcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
 
+    // Clear Phase 3 data for new run
+    this._graphStructure = null;
+    this._nodeStreamBuffer.clear();
+
+    // Clear pending events and debounce timer
+    this._pendingEvents = [];
+    if (this._sortDebounceTimer !== null) {
+      clearTimeout(this._sortDebounceTimer);
+      this._sortDebounceTimer = null;
+    }
+
     try {
       // Start workflow via service - returns generated IDs
       const service = getWorkflowTriggerService();
@@ -1673,6 +1854,20 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get the current graph structure (Phase 3 storage)
+   */
+  public get graphStructure(): GraphStructureEvent | null {
+    return this._graphStructure;
+  }
+
+  /**
+   * Get the node stream buffer (Phase 3 storage)
+   */
+  public get nodeStreamBuffer(): Map<string, string> {
+    return this._nodeStreamBuffer;
+  }
+
+  /**
    * Refresh the panel content
    * Call this after initialization state changes externally
    */
@@ -1708,5 +1903,22 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       subscription.dispose();
     }
     this._serviceSubscriptions = [];
+
+    // Clear debounce timer
+    if (this._sortDebounceTimer !== null) {
+      clearTimeout(this._sortDebounceTimer);
+      this._sortDebounceTimer = null;
+    }
+
+    // Dispose output channel
+    if (this._outputChannel) {
+      this._outputChannel.dispose();
+      this._outputChannel = null;
+    }
+
+    // Clear Phase 3 data
+    this._graphStructure = null;
+    this._nodeStreamBuffer.clear();
+    this._pendingEvents = [];
   }
 }
