@@ -18,7 +18,7 @@
 
 8. [x] DynamoDB Polling Service — Implement polling service for workflow events: (1) poll `infrastructure.dynamodb.tableName` every 500ms using AWS SDK DocumentClient, (2) query by `workflow_id` (partition key) with `timestamp` (sort key) greater than last-polled timestamp to fetch only new events, (3) start polling when `handleRunWorkflow()` generates a workflow_id, (4) stop polling on `workflow_complete`/`workflow_error` event, panel dispose, or new workflow run, (5) exponential backoff on errors (1s, 2s, 4s, max 30s) with automatic recovery, (6) emit events to subscribers (for merging with stdout stream), (7) track seen event IDs for deduplication. Service is separate from panel lifecycle — panel subscribes to events, service manages AWS calls. `M`
 
-9. [ ] Observability Steering Documentation — Expand `.kiro/steering/agentify-integration.md` (created in item 4) with complete implementation guidance for Kiro-generated agent code:
+9. [x] Observability Steering Documentation — Expand `.kiro/steering/agentify-integration.md` (created in item 4) with complete implementation guidance for Kiro-generated agent code:
 
 **CLI Contract:**
 - `agents/main.py` must accept `--prompt`, `--workflow-id`, `--trace-id` via argparse

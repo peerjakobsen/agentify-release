@@ -155,12 +155,16 @@ describe('Steering File Constants', () => {
 
   it('should have content with expected sections', () => {
     expect(STEERING_FILE_CONTENT).toContain('# Agentify Integration');
-    expect(STEERING_FILE_CONTENT).toContain('Architecture Overview');
-    expect(STEERING_FILE_CONTENT).toContain('CLI Interface');
+    expect(STEERING_FILE_CONTENT).toContain('## 1. CLI Contract');
+    expect(STEERING_FILE_CONTENT).toContain('## 2. Hybrid Identity Pattern');
+    expect(STEERING_FILE_CONTENT).toContain('## 3. stdout Event Streaming');
+    expect(STEERING_FILE_CONTENT).toContain('## 4. DynamoDB Event Persistence');
+    expect(STEERING_FILE_CONTENT).toContain('## 5. Strands SDK Integration');
     expect(STEERING_FILE_CONTENT).toContain('--workflow-id');
     expect(STEERING_FILE_CONTENT).toContain('--trace-id');
-    expect(STEERING_FILE_CONTENT).toContain('DynamoDB');
-    expect(STEERING_FILE_CONTENT).toContain('workflow_id');
+    expect(STEERING_FILE_CONTENT).toContain('AGENTIFY_TABLE_NAME');
+    expect(STEERING_FILE_CONTENT).toContain('emit_stdout_event');
+    expect(STEERING_FILE_CONTENT).toContain('DynamoDBEventWriter');
   });
 });
 
