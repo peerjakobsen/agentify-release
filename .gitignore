@@ -65,6 +65,9 @@ ehthumbs.db
 .vscode/settings.json
 .vscode/launch.json
 
+# Claude Code - local MCP server config
+.mcp.json
+
 # Test coverage
 coverage/
 .nyc_output/
