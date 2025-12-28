@@ -351,9 +351,39 @@ This step is optional — "Skip" button available with sensible defaults applied
 **Output:**
 - Stored in wizard state for `demo-strategy.md` generation in Phase 4 `M`
 
+24. [ ] Generate Step (Wizard Step 8) — Build the final wizard step that orchestrates steering file generation and Kiro handoff:
+
+**Pre-Generation Checklist Display:**
+- Show read-only summary of all wizard inputs across steps 1-7
+- Validation status for each step (green check if complete, warning if optional fields skipped)
+- "Edit" button next to each section to jump back to that step
+
+**Generation Progress UI:**
+- Checklist with real-time status updates:
+  - [ ] Validate wizard inputs
+  - [ ] Generate steering files (→ Phase 4, Item 28)
+  - [ ] Install Agentify Power (→ Phase 4, Item 33)
+  - [ ] Ready for Kiro
+- Each item shows spinner while in progress, checkmark on success, X on failure
+- Error details expandable if any step fails
+
+**Actions:**
+- "Generate" button — triggers the generation sequence
+- "Generate & Open in Kiro" button — generates then triggers Kiro spec flow (→ Phase 4, Item 34)
+- Progress is non-blocking — user can see what's happening
+
+**Post-Generation:**
+- Success state shows generated file list with "Open File" links
+- "Start Over" button to begin new ideation session (clears wizard state)
+- If not in Kiro IDE, show message directing user to open project in Kiro
+
+**Dependencies:**
+- Requires Phase 4 Items 28, 33, 34 to be implemented for full functionality
+- Can show placeholder/disabled state until Phase 4 is complete `M`
+
 ## Phase 3: Visual Polish
 
-24. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
+25. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
 
 **Node Components:**
 - Custom React Flow node for each agent
@@ -380,7 +410,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 - Zoom/pan controls
 - "Fit to view" button `L`
 
-25. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions:
+26. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions:
 
 **Event Handling:**
 - `node_start` → transition node to "running" state with blue pulse animation
@@ -401,7 +431,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 - Graph state synced with Execution Log scroll position
 - Clicking log entry highlights corresponding node `M`
 
-26. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
+27. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
 
 **Collapsible Sections:**
 - Group events by agent (collapsible agent sections)
@@ -424,7 +454,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 
 ## Phase 4: Kiro Integration & Enforcement
 
-27. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
+28. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
 
 **Files Generated:**
 
@@ -451,7 +481,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 - If `.kiro/steering/` exists, prompt: "Overwrite existing steering files?"
 - Option to backup existing files to `.kiro/steering.backup/` `M`
 
-28. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks:
+29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks:
 
 **Power Structure:**
 ```
@@ -477,7 +507,7 @@ agentify-power/
 - Bundled with Agentify extension in `resources/agentify-power/`
 - Can be published to Kiro community powers for standalone use `M`
 
-29. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook`:
+30. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook`:
 
 **Trigger:**
 - Event: `fileSaved`
@@ -507,7 +537,7 @@ Suggest fixes for any missing observability code.
 - Inline suggestions for missing event emissions
 - Warning if no observability code detected `S`
 
-30. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
+31. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
 
 **Trigger:**
 - Event: `fileSaved`
@@ -530,7 +560,7 @@ Flag any missing arguments or environment variable reads.
 Suggest argparse setup if not present.
 `````S`
 
-31. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook:
+32. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook:
 
 Trigger:
 
@@ -557,7 +587,7 @@ Check:
 Suggest improvements for realistic mock behavior.
 `````S`
 
-32. [ ] Power Installation Integration — Update steering generation (Item 27) to install Agentify Power:
+33. [ ] Power Installation Integration — Update steering generation (Item 28) to install Agentify Power:
 
 **Installation Flow:**
 1. After writing steering files, check if Agentify Power installed
@@ -581,11 +611,11 @@ Suggest improvements for realistic mock behavior.
 - Validate hooks are syntactically correct
 - Show notification: "Agentify Power installed - enforcement hooks active" `S`
 
-33. [ ] Kiro Spec Trigger — Implement seamless handoff from Ideation Wizard to Kiro spec mode:
+34. [ ] Kiro Spec Trigger — Implement seamless handoff from Ideation Wizard to Kiro spec mode:
 
 **Pre-Flight Checks:**
 1. Verify all steering files exist in `.kiro/steering/`
-2. Verify Agentify Power installed (item 32)
+2. Verify Agentify Power installed (item 33)
 3. Verify `.agentify/config.json` exists with valid DynamoDB config
 
 **Trigger Flow:**
@@ -611,33 +641,33 @@ Suggest improvements for realistic mock behavior.
 
 ## Phase 5: Templates and Patterns
 
-37. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
+38. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
 
-38. [ ] Retail Industry Template — Create agent patterns for common retail scenarios: inventory optimization, customer service, demand forecasting `M`
+39. [ ] Retail Industry Template — Create agent patterns for common retail scenarios: inventory optimization, customer service, demand forecasting `M`
 
-39. [ ] FSI Industry Template — Create agent patterns for financial services: fraud detection, customer onboarding, risk assessment `M`
+40. [ ] FSI Industry Template — Create agent patterns for financial services: fraud detection, customer onboarding, risk assessment `M`
 
-40. [ ] Healthcare Industry Template — Create agent patterns for healthcare: patient scheduling, claims processing, clinical decision support `M`
+41. [ ] Healthcare Industry Template — Create agent patterns for healthcare: patient scheduling, claims processing, clinical decision support `M`
 
-41. [ ] Manufacturing Industry Template — Create agent patterns for manufacturing: predictive maintenance, quality control, supply chain optimization `M`
+42. [ ] Manufacturing Industry Template — Create agent patterns for manufacturing: predictive maintenance, quality control, supply chain optimization `M`
 
-42. [ ] Value Map Template Framework — Build storage and loading system for value map templates with metadata schema including recommended orchestration pattern `M`
+43. [ ] Value Map Template Framework — Build storage and loading system for value map templates with metadata schema including recommended orchestration pattern `M`
 
-43. [ ] Common Value Map Templates — Create templates for common value maps, each with suggested agent teams and recommended Strands pattern: Cost Reduction (typically Workflow for deterministic optimization pipeline), Revenue Growth (typically Graph for conditional customer journey routing), Operational Efficiency (typically Workflow for parallel automation tasks), Customer Experience (typically Swarm for collaborative issue resolution), Risk Mitigation (typically Graph for decision trees with approval gates) `L`
+44. [ ] Common Value Map Templates — Create templates for common value maps, each with suggested agent teams and recommended Strands pattern: Cost Reduction (typically Workflow for deterministic optimization pipeline), Revenue Growth (typically Graph for conditional customer journey routing), Operational Efficiency (typically Workflow for parallel automation tasks), Customer Experience (typically Swarm for collaborative issue resolution), Risk Mitigation (typically Graph for decision trees with approval gates) `L`
 
-44. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
+45. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
 
 ## Phase 6: Enterprise Features
 
-45. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
+46. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
 
-46. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
+47. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
 
-47. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
+48. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
 
-48. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
+49. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
 
-49. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
+50. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
 
 ---
 
