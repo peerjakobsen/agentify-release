@@ -36,6 +36,18 @@ describe('WizardPanel Types', () => {
       expect(state.customIndustry).toBeUndefined();
       expect(state.customSystems).toBeUndefined();
       expect(state.uploadedFile).toBeUndefined();
+
+      // Verify outcome definition defaults (Step 3)
+      expect(state.outcome.primaryOutcome).toBe('');
+      expect(state.outcome.successMetrics).toEqual([]);
+      expect(state.outcome.stakeholders).toEqual([]);
+
+      // Verify security defaults (Step 4)
+      expect(state.security.dataSensitivity).toBe('internal');
+      expect(state.security.complianceFrameworks).toEqual([]);
+      expect(state.security.approvalGates).toEqual([]);
+      expect(state.security.guardrailNotes).toBe('');
+      expect(state.security.skipped).toBe(false);
     });
 
     it('should accept valid wizard state with all fields populated', () => {
@@ -53,6 +65,18 @@ describe('WizardPanel Types', () => {
         systems: ['Salesforce', 'HubSpot'],
         customSystems: 'Custom System',
         uploadedFile,
+        outcome: {
+          primaryOutcome: 'Reduce stockouts by 30%',
+          successMetrics: [{ name: 'Order accuracy', targetValue: '95', unit: '%' }],
+          stakeholders: ['Operations', 'Finance'],
+        },
+        security: {
+          dataSensitivity: 'confidential',
+          complianceFrameworks: ['SOC 2'],
+          approvalGates: ['Before external API calls'],
+          guardrailNotes: 'No PII in demo data',
+          skipped: false,
+        },
         highestStepReached: 2,
         validationAttempted: true,
       };
@@ -64,6 +88,9 @@ describe('WizardPanel Types', () => {
       expect(state.systems).toHaveLength(2);
       expect(state.uploadedFile?.name).toBe('test.pdf');
       expect(state.uploadedFile?.data).toBeInstanceOf(Uint8Array);
+      expect(state.outcome.primaryOutcome).toBe('Reduce stockouts by 30%');
+      expect(state.outcome.successMetrics).toHaveLength(1);
+      expect(state.security.dataSensitivity).toBe('confidential');
     });
   });
 
@@ -131,12 +158,14 @@ describe('WizardPanel Types', () => {
   });
 
   describe('Constants', () => {
-    it('should define all 6 wizard steps with correct labels', () => {
-      expect(WIZARD_STEPS).toHaveLength(6);
+    it('should define all 8 wizard steps with correct labels', () => {
+      expect(WIZARD_STEPS).toHaveLength(8);
 
       const expectedLabels = [
         'Business Context',
         'AI Gap Filling',
+        'Outcomes',
+        'Security',
         'Agent Design',
         'Mock Data',
         'Demo Strategy',
@@ -195,10 +224,12 @@ describe('WizardPanel Types', () => {
     it('should define steps with correct numeric values', () => {
       expect(WizardStep.BusinessContext).toBe(1);
       expect(WizardStep.AIGapFilling).toBe(2);
-      expect(WizardStep.AgentDesign).toBe(3);
-      expect(WizardStep.MockData).toBe(4);
-      expect(WizardStep.DemoStrategy).toBe(5);
-      expect(WizardStep.Generate).toBe(6);
+      expect(WizardStep.OutcomeDefinition).toBe(3);
+      expect(WizardStep.Security).toBe(4);
+      expect(WizardStep.AgentDesign).toBe(5);
+      expect(WizardStep.MockData).toBe(6);
+      expect(WizardStep.DemoStrategy).toBe(7);
+      expect(WizardStep.Generate).toBe(8);
     });
   });
 });

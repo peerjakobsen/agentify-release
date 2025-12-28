@@ -18,6 +18,10 @@ import {
 import { resetClients } from './services/dynamoDbClient';
 import { resetBedrockClient } from './services/bedrockClient';
 import {
+  getBedrockConversationService,
+  resetBedrockConversationService,
+} from './services/bedrockConversationService';
+import {
   ConfigService,
   getConfigService,
   resetConfigService,
@@ -103,6 +107,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Subscribe to configuration changes for re-validation
   const configChangeSubscription = onConfigurationChange(handleVsCodeConfigChange);
   context.subscriptions.push(configChangeSubscription);
+
+  // Initialize BedrockConversationService with extension context
+  // This makes the service available for ideation features
+  getBedrockConversationService(context);
 
   // Check for Agentify project config and initialize accordingly
   await initializeForWorkspace(context);
@@ -855,6 +863,9 @@ export function deactivate(): void {
   resetClients();
   resetBedrockClient();
   resetDefaultCredentialProvider();
+
+  // Reset BedrockConversationService
+  resetBedrockConversationService();
 
   // Reset config service
   resetConfigService();

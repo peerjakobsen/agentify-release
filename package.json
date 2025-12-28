@@ -18,6 +18,11 @@
     "observability",
     "dynamodb"
   ],
+  "files": [
+    "dist/**",
+    "resources/**",
+    "resources/prompts/**"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "workspaceContains:.agentify/config.json",

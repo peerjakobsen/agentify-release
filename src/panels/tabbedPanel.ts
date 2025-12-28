@@ -1177,10 +1177,12 @@ function createDefaultDemoState(): DemoState {
 const WIZARD_STEPS = [
   { step: 1, label: 'Business Context' },
   { step: 2, label: 'AI Gap Filling' },
-  { step: 3, label: 'Agent Design' },
-  { step: 4, label: 'Mock Data' },
-  { step: 5, label: 'Demo Strategy' },
-  { step: 6, label: 'Generate' },
+  { step: 3, label: 'Outcomes' },
+  { step: 4, label: 'Security' },
+  { step: 5, label: 'Agent Design' },
+  { step: 6, label: 'Mock Data' },
+  { step: 7, label: 'Demo Strategy' },
+  { step: 8, label: 'Generate' },
 ];
 
 const INDUSTRY_OPTIONS = [

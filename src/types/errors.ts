@@ -21,6 +21,16 @@ export enum AgentifyErrorCode {
   AWS_CONNECTION_ERROR = 'AWS_CONNECTION_ERROR',
   /** Unknown error */
   UNKNOWN_ERROR = 'UNKNOWN_ERROR',
+  /** Bedrock API request was throttled - recoverable with retry */
+  BEDROCK_THROTTLED = 'BEDROCK_THROTTLED',
+  /** Bedrock access denied - user needs to enable Bedrock in AWS console */
+  BEDROCK_ACCESS_DENIED = 'BEDROCK_ACCESS_DENIED',
+  /** Bedrock model not available in the specified region */
+  BEDROCK_MODEL_NOT_AVAILABLE = 'BEDROCK_MODEL_NOT_AVAILABLE',
+  /** Network error connecting to Bedrock - recoverable with retry */
+  BEDROCK_NETWORK_ERROR = 'BEDROCK_NETWORK_ERROR',
+  /** Invalid request sent to Bedrock API - not recoverable */
+  BEDROCK_INVALID_REQUEST = 'BEDROCK_INVALID_REQUEST',
 }
 
 /**
@@ -140,5 +150,87 @@ export function createConfigInvalidError(errors: string[]): AgentifyError {
   return new AgentifyError(
     AgentifyErrorCode.CONFIG_INVALID,
     `Invalid configuration: ${errors.join(', ')}`
+  );
+}
+
+// ============================================================================
+// Bedrock Error Factory Functions
+// ============================================================================
+
+/**
+ * Creates a Bedrock Throttled error for rate limiting scenarios
+ * @param retryAfterMs Optional retry delay in milliseconds
+ * @param cause Optional underlying error
+ * @returns AgentifyError with BEDROCK_THROTTLED code
+ */
+export function createBedrockThrottledError(
+  retryAfterMs?: number,
+  cause?: Error
+): AgentifyError {
+  const retryInfo = retryAfterMs ? ` Retry after ${retryAfterMs}ms.` : '';
+  const message = `Bedrock API request was throttled.${retryInfo} The request will be retried automatically.`;
+
+  return new AgentifyError(AgentifyErrorCode.BEDROCK_THROTTLED, message, cause);
+}
+
+/**
+ * Creates a Bedrock Access Denied error with guidance to enable Bedrock
+ * @param cause Optional underlying error
+ * @returns AgentifyError with BEDROCK_ACCESS_DENIED code
+ */
+export function createBedrockAccessDeniedError(cause?: Error): AgentifyError {
+  return new AgentifyError(
+    AgentifyErrorCode.BEDROCK_ACCESS_DENIED,
+    'Access denied to Bedrock. Enable Bedrock access in AWS console and ensure your IAM role has the required permissions.',
+    cause
+  );
+}
+
+/**
+ * Creates a Bedrock Model Not Available error with model and region context
+ * @param modelId The model ID that is not available
+ * @param region The AWS region where the model was requested
+ * @param cause Optional underlying error
+ * @returns AgentifyError with BEDROCK_MODEL_NOT_AVAILABLE code
+ */
+export function createBedrockModelNotAvailableError(
+  modelId: string,
+  region: string,
+  cause?: Error
+): AgentifyError {
+  return new AgentifyError(
+    AgentifyErrorCode.BEDROCK_MODEL_NOT_AVAILABLE,
+    `Model '${modelId}' is not available in region '${region}'. Check the AWS Bedrock console for available models in your region.`,
+    cause
+  );
+}
+
+/**
+ * Creates a Bedrock Network error for connectivity issues
+ * @param cause Optional underlying error
+ * @returns AgentifyError with BEDROCK_NETWORK_ERROR code
+ */
+export function createBedrockNetworkError(cause?: Error): AgentifyError {
+  return new AgentifyError(
+    AgentifyErrorCode.BEDROCK_NETWORK_ERROR,
+    'Network error connecting to Bedrock. Please check your internet connection and try again.',
+    cause
+  );
+}
+
+/**
+ * Creates a Bedrock Invalid Request error for malformed requests
+ * @param details Details about why the request was invalid
+ * @param cause Optional underlying error
+ * @returns AgentifyError with BEDROCK_INVALID_REQUEST code
+ */
+export function createBedrockInvalidRequestError(
+  details: string,
+  cause?: Error
+): AgentifyError {
+  return new AgentifyError(
+    AgentifyErrorCode.BEDROCK_INVALID_REQUEST,
+    `Invalid Bedrock request: ${details}`,
+    cause
   );
 }

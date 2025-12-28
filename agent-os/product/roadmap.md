@@ -100,7 +100,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 
 13. [x] Ideation Wizard Panel & Business Objective Step — Create Ideation Wizard webview panel with multi-step wizard navigation framework (step indicator, next/back buttons, progress tracking), then build the first step with: (1) multi-line text input for business objective/problem statement, (2) industry vertical dropdown (Retail, FSI, Healthcare, Life Sciences, Manufacturing, Energy, Telecom, Public Sector, Media & Entertainment, Travel & Hospitality, Other) with conditional "Other industry" free-text field when "Other" is selected, (3) system checkboxes grouped by category — CRM (Salesforce, HubSpot, Dynamics), ERP (SAP S/4HANA, Oracle, NetSuite), Data (Databricks, Snowflake, Redshift), HR (Workday, SuccessFactors), Service (ServiceNow, Zendesk), (4) "Other systems" free-text field, (5) optional file upload for additional context (account plan, requirements doc — stored in memory, not persisted). Wizard state held in memory; file persistence added in item 22. `M`
 
-14. [ ] Claude Bedrock Integration — Implement Amazon Bedrock client service for Claude API calls:
+14. [x] Claude Bedrock Integration — Implement Amazon Bedrock client service for Claude API calls:
 
 **Client Setup:**
 - Use `@aws-sdk/client-bedrock-runtime` with credential chain from shared AWS services

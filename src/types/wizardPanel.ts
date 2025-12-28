@@ -6,20 +6,25 @@
 /**
  * Enum representing the wizard steps
  * Each step corresponds to a distinct phase in the agent ideation workflow
+ * Order matches roadmap items 13-23
  */
 export enum WizardStep {
-  /** Step 1: Capture business context and requirements */
+  /** Step 1: Capture business context and requirements (Roadmap Item 13) */
   BusinessContext = 1,
-  /** Step 2: AI-assisted gap filling and clarification */
+  /** Step 2: AI-assisted gap filling and clarification (Roadmap Item 15) */
   AIGapFilling = 2,
-  /** Step 3: Design agent architecture and workflows */
-  AgentDesign = 3,
-  /** Step 4: Generate mock data for testing */
-  MockData = 4,
-  /** Step 5: Define demo strategy and scenarios */
-  DemoStrategy = 5,
-  /** Step 6: Generate final agent workflow */
-  Generate = 6,
+  /** Step 3: Define measurable business outcomes (Roadmap Item 16) */
+  OutcomeDefinition = 3,
+  /** Step 4: Security and compliance configuration (Roadmap Item 17) - Optional */
+  Security = 4,
+  /** Step 5: Design agent architecture and workflows (Roadmap Items 18-20) */
+  AgentDesign = 5,
+  /** Step 6: Generate mock data for testing (Roadmap Item 21) */
+  MockData = 6,
+  /** Step 7: Define demo strategy and scenarios (Roadmap Item 23) */
+  DemoStrategy = 7,
+  /** Step 8: Generate final agent workflow */
+  Generate = 8,
 }
 
 /**
@@ -36,7 +41,7 @@ export interface WizardStepConfig {
 
 /**
  * Wizard steps configuration array with labels for display
- * Order matches the WizardStep enum values
+ * Order matches the WizardStep enum values and roadmap items 13-23
  */
 export const WIZARD_STEPS: WizardStepConfig[] = [
   {
@@ -48,6 +53,16 @@ export const WIZARD_STEPS: WizardStepConfig[] = [
     step: WizardStep.AIGapFilling,
     label: 'AI Gap Filling',
     description: 'AI-assisted clarification and gap filling',
+  },
+  {
+    step: WizardStep.OutcomeDefinition,
+    label: 'Outcomes',
+    description: 'Define measurable business outcomes and KPIs',
+  },
+  {
+    step: WizardStep.Security,
+    label: 'Security',
+    description: 'Configure compliance and approval gates',
   },
   {
     step: WizardStep.AgentDesign,
@@ -136,16 +151,126 @@ export interface UploadedFile {
   data: Uint8Array;
 }
 
+// ============================================================================
+// Step 3: Outcome Definition Types (Roadmap Item 16)
+// ============================================================================
+
+/**
+ * Success metric definition
+ * Represents a measurable KPI for the demo
+ */
+export interface SuccessMetric {
+  /** Metric name (e.g., "Order accuracy") */
+  name: string;
+  /** Target value (e.g., "95") */
+  targetValue: string;
+  /** Unit of measurement (e.g., "%", "hours", "count") */
+  unit: string;
+}
+
+/**
+ * Stakeholder options for outcome definition
+ */
+export const STAKEHOLDER_OPTIONS: string[] = [
+  'Operations',
+  'Finance',
+  'Supply Chain',
+  'Customer Service',
+  'Executive',
+];
+
+/**
+ * Outcome definition state for Step 3
+ */
+export interface OutcomeDefinitionState {
+  /** Primary outcome statement describing the business result */
+  primaryOutcome: string;
+  /** Array of success metrics/KPIs */
+  successMetrics: SuccessMetric[];
+  /** Selected stakeholders who benefit */
+  stakeholders: string[];
+}
+
+// ============================================================================
+// Step 4: Security & Guardrails Types (Roadmap Item 17)
+// ============================================================================
+
+/**
+ * Data sensitivity classification levels
+ */
+export type DataSensitivity = 'public' | 'internal' | 'confidential' | 'restricted';
+
+/**
+ * Data sensitivity options with descriptions
+ */
+export const DATA_SENSITIVITY_OPTIONS: Array<{ value: DataSensitivity; label: string; description: string }> = [
+  { value: 'public', label: 'Public', description: 'Data that can be freely shared' },
+  { value: 'internal', label: 'Internal', description: 'Data for internal use only' },
+  { value: 'confidential', label: 'Confidential', description: 'Sensitive business data' },
+  { value: 'restricted', label: 'Restricted', description: 'Highly sensitive, regulated data' },
+];
+
+/**
+ * Compliance framework options
+ */
+export const COMPLIANCE_FRAMEWORKS: string[] = [
+  'SOC 2',
+  'HIPAA',
+  'PCI-DSS',
+  'GDPR',
+  'FedRAMP',
+];
+
+/**
+ * Human approval gate options
+ */
+export const APPROVAL_GATE_OPTIONS: string[] = [
+  'Before external API calls',
+  'Before data modification',
+  'Before sending recommendations',
+  'Before financial transactions',
+];
+
+/**
+ * Industry-specific compliance defaults
+ */
+export const INDUSTRY_COMPLIANCE_DEFAULTS: Record<string, string[]> = {
+  'Healthcare': ['HIPAA'],
+  'Life Sciences': ['HIPAA'],
+  'FSI': ['PCI-DSS', 'SOC 2'],
+  'Public Sector': ['FedRAMP'],
+};
+
+/**
+ * Security and guardrails state for Step 4
+ */
+export interface SecurityState {
+  /** Data sensitivity classification */
+  dataSensitivity: DataSensitivity;
+  /** Selected compliance frameworks */
+  complianceFrameworks: string[];
+  /** Selected human approval gates */
+  approvalGates: string[];
+  /** Optional guardrail notes/constraints */
+  guardrailNotes: string;
+  /** Whether this step was skipped */
+  skipped: boolean;
+}
+
 /**
  * Wizard state interface
  * Holds all form data and navigation state for the ideation wizard
  */
 export interface WizardState {
   /**
-   * Current step number (1-6)
+   * Current step number (1-8)
    * @default 1
    */
   currentStep: number;
+
+  // -------------------------------------------------------------------------
+  // Step 1: Business Context
+  // -------------------------------------------------------------------------
 
   /**
    * Business objective/problem statement text
@@ -183,6 +308,30 @@ export interface WizardState {
    */
   uploadedFile?: UploadedFile;
 
+  // -------------------------------------------------------------------------
+  // Step 3: Outcome Definition (Roadmap Item 16)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Outcome definition state
+   * Contains primary outcome, success metrics, and stakeholders
+   */
+  outcome: OutcomeDefinitionState;
+
+  // -------------------------------------------------------------------------
+  // Step 4: Security & Guardrails (Roadmap Item 17)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Security and guardrails state
+   * Contains data sensitivity, compliance, approval gates, and notes
+   */
+  security: SecurityState;
+
+  // -------------------------------------------------------------------------
+  // Navigation State
+  // -------------------------------------------------------------------------
+
   /**
    * Highest step that has been visited/completed
    * Used to determine which steps can be navigated to directly
@@ -200,7 +349,13 @@ export interface WizardState {
 /**
  * Type of validation error field
  */
-export type WizardValidationErrorType = 'businessObjective' | 'industry' | 'systems' | 'file';
+export type WizardValidationErrorType =
+  | 'businessObjective'
+  | 'industry'
+  | 'systems'
+  | 'file'
+  | 'primaryOutcome'
+  | 'successMetrics';
 
 /**
  * Severity level for validation errors
@@ -306,12 +461,28 @@ export interface WizardStateSyncMessage {
 export function createDefaultWizardState(): WizardState {
   return {
     currentStep: 1,
+    // Step 1: Business Context
     businessObjective: '',
     industry: '',
     customIndustry: undefined,
     systems: [],
     customSystems: undefined,
     uploadedFile: undefined,
+    // Step 3: Outcome Definition
+    outcome: {
+      primaryOutcome: '',
+      successMetrics: [],
+      stakeholders: [],
+    },
+    // Step 4: Security & Guardrails
+    security: {
+      dataSensitivity: 'internal',
+      complianceFrameworks: [],
+      approvalGates: [],
+      guardrailNotes: '',
+      skipped: false,
+    },
+    // Navigation
     highestStepReached: 1,
     validationAttempted: false,
   };

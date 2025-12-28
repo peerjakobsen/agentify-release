@@ -16,6 +16,11 @@ export {
   createTableNotFoundError,
   createConfigNotFoundError,
   createConfigInvalidError,
+  createBedrockThrottledError,
+  createBedrockAccessDeniedError,
+  createBedrockModelNotAvailableError,
+  createBedrockNetworkError,
+  createBedrockInvalidRequestError,
 } from './errors';
 
 // ============================================================================
@@ -44,6 +49,7 @@ export type {
   OrchestrationPattern,
   WorkflowConfig,
   AwsConfig,
+  BedrockConfig,
   AgentifyConfig,
   ConfigValidationResult,
 } from './config';

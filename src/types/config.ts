@@ -170,6 +170,19 @@ export interface AwsConfig {
 }
 
 /**
+ * Bedrock configuration for Claude API integration
+ * Controls the model used for ideation assistance
+ */
+export interface BedrockConfig {
+  /**
+   * Bedrock model ID for Claude API calls
+   * When omitted, defaults to `global.anthropic.claude-sonnet-4-5-20250929-v1:0` (Sonnet for cost efficiency)
+   * @example "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+   */
+  modelId?: string;
+}
+
+/**
  * Configuration for observability features
  */
 export interface ObservabilityConfig {
@@ -212,6 +225,12 @@ export interface AgentifyConfig {
    * Optional - when omitted, AWS SDK uses default credential resolution
    */
   aws?: AwsConfig;
+
+  /**
+   * Bedrock configuration for Claude API integration
+   * Optional - when omitted, uses default model (Sonnet)
+   */
+  bedrock?: BedrockConfig;
 
   /**
    * Observability configuration (X-Ray, tracing)
@@ -335,6 +354,23 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
           errors.push('Invalid "aws.profile" field - must be a string when provided');
         } else if (aws.profile.trim() === '') {
           errors.push('Invalid "aws.profile" field - must be a non-empty string when provided');
+        }
+      }
+    }
+  }
+
+  // Validate optional bedrock section (backward compatible - section can be omitted)
+  if (cfg.bedrock !== undefined) {
+    if (typeof cfg.bedrock !== 'object' || cfg.bedrock === null) {
+      errors.push('Invalid "bedrock" field - must be an object when provided');
+    } else {
+      const bedrock = cfg.bedrock as Record<string, unknown>;
+      // Validate bedrock.modelId when provided (optional field)
+      if (bedrock.modelId !== undefined) {
+        if (typeof bedrock.modelId !== 'string') {
+          errors.push('Invalid "bedrock.modelId" field - must be a string when provided');
+        } else if (bedrock.modelId.trim() === '') {
+          errors.push('Invalid "bedrock.modelId" field - must be a non-empty string when provided');
         }
       }
     }
