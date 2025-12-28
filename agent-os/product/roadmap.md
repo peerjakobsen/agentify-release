@@ -362,10 +362,10 @@ This step is optional — "Skip" button available with sensible defaults applied
 - Checklist with real-time status updates:
   - [ ] Validate wizard inputs
   - [ ] Generate steering files (→ Phase 4, Item 28)
-  - [ ] Install Agentify Power (→ Phase 4, Item 33)
   - [ ] Ready for Kiro
 - Each item shows spinner while in progress, checkmark on success, X on failure
 - Error details expandable if any step fails
+- Note: Agentify Power is installed during project initialization, not here
 
 **Actions:**
 - "Generate" button — triggers the generation sequence
@@ -378,7 +378,8 @@ This step is optional — "Skip" button available with sensible defaults applied
 - If not in Kiro IDE, show message directing user to open project in Kiro
 
 **Dependencies:**
-- Requires Phase 4 Items 28, 33, 34 to be implemented for full functionality
+- Requires Phase 4 Item 28 (steering generation) and Item 34 (Kiro trigger) for full functionality
+- Agentify Power (Items 29-33) is installed at project init, not here
 - Can show placeholder/disabled state until Phase 4 is complete `M`
 
 ## Phase 3: Visual Polish
@@ -481,7 +482,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 - If `.kiro/steering/` exists, prompt: "Overwrite existing steering files?"
 - Option to backup existing files to `.kiro/steering.backup/` `M`
 
-29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks:
+29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
 
 **Power Structure:**
 ```
@@ -587,7 +588,7 @@ Check:
 Suggest improvements for realistic mock behavior.
 `````S`
 
-33. [ ] Power Installation Integration — Update steering generation (Item 28) to install Agentify Power:
+33. [ ] Power Installation Integration — **Extend Project Initialization (Item 4)** to install Agentify Power during "Agentify: Initialize Project" command:
 
 **Installation Flow:**
 1. After writing steering files, check if Agentify Power installed
