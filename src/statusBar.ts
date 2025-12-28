@@ -141,6 +141,20 @@ export class StatusBarManager {
         description: 'Opens terminal with aws sso login command',
         detail: this.profileName ? `Profile: ${this.profileName}` : 'Uses default profile',
       });
+      items.push({
+        label: '$(refresh) Re-check Credentials',
+        description: 'Check if credentials are now valid',
+        detail: 'Use after completing SSO login in terminal',
+      });
+    }
+
+    // Show re-check option for AWS errors too
+    if (this.currentState === 'aws-error') {
+      items.push({
+        label: '$(refresh) Re-check Credentials',
+        description: 'Re-validate AWS credentials',
+        detail: 'Clears cache and checks credentials again',
+      });
     }
 
     // Show panel options when ready
@@ -195,6 +209,8 @@ export class StatusBarManager {
       vscode.commands.executeCommand('agentify.initializeProject');
     } else if (label.includes('Run AWS SSO Login')) {
       this.openSsoLoginTerminal();
+    } else if (label.includes('Re-check Credentials')) {
+      vscode.commands.executeCommand('agentify.refreshCredentials');
     } else if (label.includes('Demo Viewer')) {
       vscode.commands.executeCommand('agentify.openDemoViewer');
     } else if (label.includes('Ideation Wizard')) {

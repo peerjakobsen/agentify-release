@@ -133,6 +133,68 @@ export interface LogPanelState {
   isAtBottom: boolean;
 }
 
+// ============================================================================
+// Outcome Panel Types
+// ============================================================================
+
+/**
+ * Status of the outcome panel display
+ */
+export type OutcomePanelStatus = 'hidden' | 'success' | 'error';
+
+/**
+ * State of the outcome panel
+ * Follows the same pattern as LogPanelState
+ */
+export interface OutcomePanelState {
+  /**
+   * Current status of the outcome panel
+   * - 'hidden': Panel is not visible (initial state, or cleared for new run)
+   * - 'success': Workflow completed successfully, displaying result
+   * - 'error': Workflow encountered an error, displaying error message
+   */
+  status: OutcomePanelStatus;
+
+  /**
+   * The workflow result content (only present when status is 'success')
+   * Can be a markdown string or a structured data object
+   */
+  result?: string | Record<string, unknown>;
+
+  /**
+   * Data sources consulted during workflow execution
+   * e.g., ['SAP S/4HANA', 'Databricks', 'Weather API']
+   */
+  sources?: string[];
+
+  /**
+   * Error message to display (only present when status is 'error')
+   */
+  errorMessage?: string;
+
+  /**
+   * Error code for the error (only present when status is 'error')
+   */
+  errorCode?: string;
+
+  /**
+   * Whether the truncated content is currently expanded
+   */
+  isExpanded: boolean;
+}
+
+/**
+ * Default outcome panel state
+ */
+export const DEFAULT_OUTCOME_PANEL_STATE: OutcomePanelState = {
+  status: 'hidden',
+  isExpanded: false,
+};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
 /**
  * Default filter state
  */
@@ -171,6 +233,25 @@ export const PAYLOAD_TRUNCATION_PREVIEW_LINES = 10;
  * Scroll threshold in pixels for auto-scroll detection
  */
 export const SCROLL_BOTTOM_THRESHOLD = 50;
+
+/**
+ * Line threshold for JSON content truncation in outcome panel
+ */
+export const OUTCOME_JSON_TRUNCATION_THRESHOLD = 30;
+
+/**
+ * Number of lines to show initially for truncated JSON in outcome panel
+ */
+export const OUTCOME_JSON_PREVIEW_LINES = 20;
+
+/**
+ * Line threshold for markdown/text content truncation in outcome panel
+ */
+export const OUTCOME_MARKDOWN_TRUNCATION_THRESHOLD = 100;
+
+// ============================================================================
+// Message Types
+// ============================================================================
 
 /**
  * Messages from webview to extension for log interactions

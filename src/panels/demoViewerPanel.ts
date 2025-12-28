@@ -28,12 +28,19 @@ import type {
   LogEntry,
   LogFilterState,
   LogPanelState,
+  OutcomePanelState,
 } from '../types/logPanel';
 import {
   DEFAULT_LOG_PANEL_STATE,
   DEFAULT_FILTER_STATE,
+  DEFAULT_OUTCOME_PANEL_STATE,
   MAX_LOG_ENTRIES,
 } from '../types/logPanel';
+import {
+  generateOutcomePanelHtml,
+  generateOutcomePanelCss,
+  generateOutcomePanelJs,
+} from '../utils/outcomePanelHtmlGenerator';
 
 /**
  * View ID for the Demo Viewer panel
@@ -109,6 +116,12 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
    * Log state is NOT persisted across IDE restart (stored in instance, not workspaceState)
    */
   private _logPanelState: LogPanelState = { ...DEFAULT_LOG_PANEL_STATE };
+
+  /**
+   * Outcome panel state for displaying workflow results
+   * Shows success/failure status, rendered content, and data sources
+   */
+  private _outcomePanelState: OutcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
 
   /**
    * Creates a new DemoViewerPanelProvider
@@ -406,6 +419,91 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Set outcome panel to success state with result and sources
+   * Called when workflow_complete event is received
+   *
+   * @param result The workflow result (string or object)
+   * @param sources Optional array of data sources used
+   * @param syncToWebview Whether to sync state to webview (default: true)
+   */
+  public setOutcomeSuccess(
+    result: string | Record<string, unknown> | undefined,
+    sources?: string[],
+    syncToWebview = true
+  ): void {
+    this._outcomePanelState = {
+      status: 'success',
+      result,
+      sources,
+      isExpanded: false,
+    };
+
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Set outcome panel to error state with error message
+   * Called when workflow_error event is received
+   *
+   * @param errorMessage The error message to display
+   * @param errorCode Optional error code
+   * @param syncToWebview Whether to sync state to webview (default: true)
+   */
+  public setOutcomeError(
+    errorMessage: string,
+    errorCode?: string,
+    syncToWebview = true
+  ): void {
+    this._outcomePanelState = {
+      status: 'error',
+      errorMessage,
+      errorCode,
+      isExpanded: false,
+    };
+
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Clear outcome panel (hide it)
+   * Called when starting a new workflow run
+   *
+   * @param syncToWebview Whether to sync state to webview (default: true)
+   */
+  public clearOutcomePanel(syncToWebview = true): void {
+    this._outcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
+
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Toggle the expanded state of the outcome panel result
+   * Used for showing/hiding truncated content
+   *
+   * @param syncToWebview Whether to sync state to webview (default: true)
+   */
+  public toggleOutcomeExpanded(syncToWebview = true): void {
+    this._outcomePanelState.isExpanded = !this._outcomePanelState.isExpanded;
+
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Get the current outcome panel state
+   */
+  public get outcomePanelState(): OutcomePanelState {
+    return this._outcomePanelState;
+  }
+
+  /**
    * Synchronize state to webview
    */
   private async syncStateToWebview(): Promise<void> {
@@ -437,6 +535,10 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       totalLogEntries: this._logPanelState.entries.length,
       // Workflow running state for auto-scroll behavior
       isWorkflowRunning: this.isWorkflowRunning(),
+      // Outcome panel state
+      outcomePanelState: this._outcomePanelState,
+      // Pre-rendered outcome panel HTML for dynamic updates
+      outcomePanelHtml: generateOutcomePanelHtml(this._outcomePanelState),
     });
   }
 
@@ -620,6 +722,11 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     // Generate log section JS
     const logSectionJs = generateLogSectionJs();
 
+    // Generate outcome panel HTML, CSS, and JS
+    const outcomePanelHtml = generateOutcomePanelHtml(this._outcomePanelState);
+    const outcomePanelCss = generateOutcomePanelCss();
+    const outcomePanelJs = generateOutcomePanelJs();
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -801,6 +908,9 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
 
     /* Log Section CSS */
     ${logSectionCss}
+
+    /* Outcome Panel CSS */
+    ${outcomePanelCss}
   </style>
 </head>
 <body>
@@ -874,10 +984,8 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
   <!-- Execution Log Section -->
   ${logSectionHtml}
 
-  <!-- Outcome Panel Placeholder Section -->
-  <div class="placeholder-section" id="outcomePanelPlaceholder">
-    Outcome Panel (Coming Soon)
-  </div>
+  <!-- Outcome Panel Section -->
+  <div id="outcomePanelContainer">${outcomePanelHtml}</div>
 
   <script>
     const vscode = acquireVsCodeApi();
@@ -988,6 +1096,14 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       // Update log section if entries changed
       if (state.logEntries !== undefined) {
         updateLogSection(state);
+      }
+
+      // Update outcome panel if HTML provided
+      if (state.outcomePanelHtml !== undefined) {
+        const outcomePanelContainer = document.getElementById('outcomePanelContainer');
+        if (outcomePanelContainer) {
+          outcomePanelContainer.innerHTML = state.outcomePanelHtml;
+        }
       }
     }
 
@@ -1210,6 +1326,9 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
 
     // Log section JavaScript handlers
     ${logSectionJs}
+
+    // Outcome panel JavaScript handlers
+    ${outcomePanelJs}
   </script>
 </body>
 </html>`;
@@ -1287,6 +1406,11 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
         // User clicked scroll to bottom button - re-enable auto-scroll
         this._logPanelState.isAtBottom = true;
         this._logPanelState.autoScrollEnabled = true;
+        break;
+
+      // Outcome panel message handlers
+      case 'outcomePanelToggleExpand':
+        this.toggleOutcomeExpanded();
         break;
 
       default:
@@ -1370,6 +1494,9 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     this._logPanelState.autoScrollEnabled = true;
     this._logPanelState.isAtBottom = true;
     this._logPanelState.isCollapsed = true; // Reset to collapsed, will auto-expand on first event
+
+    // Clear outcome panel for new run (hide immediately)
+    this._outcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
 
     // Start timer and sync
     this.startTimer();

@@ -65,6 +65,7 @@ export type {
   NodeStreamEvent,
   WorkflowCompletionStatus,
   WorkflowCompleteEvent,
+  WorkflowErrorEvent,
   StdoutEvent,
   ToolCallStatus,
   ToolCallEvent,
@@ -81,6 +82,7 @@ export {
   isNodeStopEvent,
   isNodeStreamEvent,
   isWorkflowCompleteEvent,
+  isWorkflowErrorEvent,
   isToolCallEvent,
   isAgentSpanEvent,
   isStdoutEvent,
@@ -157,3 +159,32 @@ export type {
   InputPanelMessage,
   InputPanelStateMessage,
 } from './inputPanel';
+
+// ============================================================================
+// Log Panel Types
+// ============================================================================
+export type {
+  LogEventType,
+  EventTypeFilterCategory,
+  LogEntryStatus,
+  LogEntry,
+  LogFilterState,
+  LogPanelState,
+  OutcomePanelStatus,
+  OutcomePanelState,
+  LogPanelMessage,
+  LogPanelStateMessage,
+} from './logPanel';
+
+export {
+  DEFAULT_FILTER_STATE,
+  DEFAULT_LOG_PANEL_STATE,
+  DEFAULT_OUTCOME_PANEL_STATE,
+  MAX_LOG_ENTRIES,
+  PAYLOAD_TRUNCATION_THRESHOLD,
+  PAYLOAD_TRUNCATION_PREVIEW_LINES,
+  SCROLL_BOTTOM_THRESHOLD,
+  OUTCOME_JSON_TRUNCATION_THRESHOLD,
+  OUTCOME_JSON_PREVIEW_LINES,
+  OUTCOME_MARKDOWN_TRUNCATION_THRESHOLD,
+} from './logPanel';

@@ -14,9 +14,9 @@
 
 6. [x] Execution Log Panel — Create chronological log panel displaying events from DynamoDB with timestamps, event types, agent names, and expandable payload details `M`
 
-7. [ ] Outcome Panel — Build outcome display section in Demo Viewer (below Execution Log) showing: (1) success/failure status with ✅/❌ icon from `workflow_complete` or `workflow_error` stdout events, (2) workflow result rendered as markdown when result is a string, with formatted JSON fallback (syntax highlighting, collapsible) for structured objects, (3) "Sources" line listing data sources used if provided in outcome payload, (4) copy-to-clipboard button for result content. Panel starts hidden/collapsed until first workflow completes, clears immediately when new run starts (not waiting for new outcome). Error state displays error message prominently without stack trace — keep it clean for demo audiences. Does NOT duplicate execution duration (already shown in Input Panel timer). `S`
+7. [x] Outcome Panel — Build outcome display section in Demo Viewer (below Execution Log) showing: (1) success/failure status with ✅/❌ icon from `workflow_complete` or `workflow_error` stdout events, (2) workflow result rendered as markdown when result is a string, with formatted JSON fallback (syntax highlighting, collapsible) for structured objects, (3) "Sources" line listing data sources used if provided in outcome payload, (4) copy-to-clipboard button for result content. Panel starts hidden/collapsed until first workflow completes, clears immediately when new run starts (not waiting for new outcome). Error state displays error message prominently without stack trace — keep it clean for demo audiences. Does NOT duplicate execution duration (already shown in Input Panel timer). `S`
 
-8. [ ] DynamoDB Polling Engine — Implement 500ms polling interval for DynamoDB events with graceful error handling, connection retry, and cleanup on panel close `S`
+8. [ ] DynamoDB Polling Service — Implement polling service for workflow events: (1) poll `infrastructure.dynamodb.tableName` every 500ms using AWS SDK DocumentClient, (2) query by `workflow_id` (partition key) with `timestamp` (sort key) greater than last-polled timestamp to fetch only new events, (3) start polling when `handleRunWorkflow()` generates a workflow_id, (4) stop polling on `workflow_complete`/`workflow_error` event, panel dispose, or new workflow run, (5) exponential backoff on errors (1s, 2s, 4s, max 30s) with automatic recovery, (6) emit events to subscribers (for merging with stdout stream), (7) track seen event IDs for deduplication. Service is separate from panel lifecycle — panel subscribes to events, service manages AWS calls. `M`
 
 9. [ ] Observability Steering Documentation — Update `.kiro/steering/agentify-integration.md` with complete event emission patterns for Kiro-generated code: CLI argument contract (`--prompt`, `--workflow-id`, `--trace-id`), Strands `StrandsTelemetry` setup, `stream_async()` event mapping, stdout JSON line format, DynamoDB write patterns, and hybrid identity (workflow_id + OTEL trace_id) usage. This steering file guides Kiro's code generation. `S`
 
@@ -60,49 +60,55 @@
 
 27. [ ] Wizard State Persistence — Implement workspace storage for wizard progress so users can resume incomplete ideation sessions `S`
 
-## Phase 4: Kiro Integration
+## Phase 4: Kiro Integration & Enforcement
 
 28. [ ] Core Steering Files Generation — Generate `product.md` (business objective context), `tech.md` (Strands SDK, Python, selected orchestration pattern), `structure.md` (standard agentic project layout) from wizard context `M`
 
 29. [ ] Context Steering Files Generation — Generate `customer-context.md` (industry, strategic priorities), `integration-landscape.md` (systems, data sources, mock definitions), `security-policies.md` (compliance, approval gates), `demo-strategy.md` (key moments, narrative, mock data approach) from ideation outputs `M`
 
-30. [ ] MCP Configuration Output — Create MCP server configuration JSON from agent design and system integrations defined in wizard `M`
+30. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state: `product.md` (business objective as product description), `tech.md` (AgentCore, Strands SDK, Python, DynamoDB stack), `structure.md` (standard agentic project layout), `customer-context.md` (industry, objective, priorities), `integration-landscape.md` (systems, mock definitions), `security-policies.md` (guardrails, approval gates), `demo-strategy.md` (key moments, narrative, mock data approach), `agentify-integration.md` (event emission patterns, CLI contract). `M`
 
-31. [ ] Hooks Generation — Generate Kiro hooks configuration for automatic decorator injection into generated agent code `M`
+31. [ ] Agentify Power Package — Create Kiro Power that bundles: (1) `POWER.md` steering file with agentic workflow best practices, event emission patterns, and CLI contract requirements, (2) enforcement hooks for code validation. Power activates when keywords like "agent", "workflow", "Strands", "orchestrator", or "demo" are mentioned. Structure: `agentify-power/POWER.md`, `agentify-power/hooks/*.kiro.hook`. Power can be installed via Kiro's power import from the extension's bundled directory or published to community powers. `M`
 
-32. [ ] Kiro Spec Trigger — Implement seamless handoff that opens Kiro spec mode with generated artifacts pre-loaded `S`
+32. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook` that triggers on `fileSaved` for `agents/*.py` pattern: validates event emission patterns match `agentify-integration.md` contract, checks for proper `emit_event()` calls in agent functions, suggests missing observability code. Hook prompt references steering file for expected patterns. `S`
 
-33. [ ] Decorator Auto-Injection — Create Kiro hook that automatically adds observability decorators to all generated agent functions `M`
+33. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook` that triggers on `fileSaved` for `agents/main.py`: validates CLI argument parsing includes `--prompt`, `--workflow-id`, `--trace-id` parameters, checks for proper `argparse` setup, validates environment variable reading for `AGENTIFY_TABLE_NAME` and `AGENTIFY_TABLE_REGION`. `S`
+
+34. [ ] Mock Tool Pattern Hook — Create `mock-tool-pattern.kiro.hook` that triggers on `fileCreated` for `tools/*.py` pattern: ensures new tool files include Strands `@tool` decorator, validates mock data structure matches industry context from `integration-landscape.md`, suggests realistic mock response shapes. `S`
+
+35. [ ] Power Installation Integration — Update Ideation Wizard's steering generation (Item 30) to also install/activate the Agentify Power when writing steering files, ensuring hooks are active before Kiro begins code generation. Add power manifest to `.kiro/powers/agentify/` or register via Kiro's power import mechanism. `S`
+
+36. [ ] Kiro Spec Trigger — Implement seamless handoff that: (1) ensures Agentify Power is installed/activated, (2) validates all steering files are complete, (3) opens Kiro spec mode with generated artifacts pre-loaded, (4) displays confirmation that enforcement hooks are active. Gracefully degrades in VS Code with message directing user to Kiro. `S`
 
 ## Phase 5: Templates and Patterns
 
-34. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
+37. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
 
-35. [ ] Retail Industry Template — Create agent patterns for common retail scenarios: inventory optimization, customer service, demand forecasting `M`
+38. [ ] Retail Industry Template — Create agent patterns for common retail scenarios: inventory optimization, customer service, demand forecasting `M`
 
-36. [ ] FSI Industry Template — Create agent patterns for financial services: fraud detection, customer onboarding, risk assessment `M`
+39. [ ] FSI Industry Template — Create agent patterns for financial services: fraud detection, customer onboarding, risk assessment `M`
 
-37. [ ] Healthcare Industry Template — Create agent patterns for healthcare: patient scheduling, claims processing, clinical decision support `M`
+40. [ ] Healthcare Industry Template — Create agent patterns for healthcare: patient scheduling, claims processing, clinical decision support `M`
 
-38. [ ] Manufacturing Industry Template — Create agent patterns for manufacturing: predictive maintenance, quality control, supply chain optimization `M`
+41. [ ] Manufacturing Industry Template — Create agent patterns for manufacturing: predictive maintenance, quality control, supply chain optimization `M`
 
-39. [ ] Value Map Template Framework — Build storage and loading system for value map templates with metadata schema including recommended orchestration pattern `M`
+42. [ ] Value Map Template Framework — Build storage and loading system for value map templates with metadata schema including recommended orchestration pattern `M`
 
-40. [ ] Common Value Map Templates — Create templates for common value maps, each with suggested agent teams and recommended Strands pattern: Cost Reduction (typically Workflow for deterministic optimization pipeline), Revenue Growth (typically Graph for conditional customer journey routing), Operational Efficiency (typically Workflow for parallel automation tasks), Customer Experience (typically Swarm for collaborative issue resolution), Risk Mitigation (typically Graph for decision trees with approval gates) `L`
+43. [ ] Common Value Map Templates — Create templates for common value maps, each with suggested agent teams and recommended Strands pattern: Cost Reduction (typically Workflow for deterministic optimization pipeline), Revenue Growth (typically Graph for conditional customer journey routing), Operational Efficiency (typically Workflow for parallel automation tasks), Customer Experience (typically Swarm for collaborative issue resolution), Risk Mitigation (typically Graph for decision trees with approval gates) `L`
 
-41. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
+44. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
 
 ## Phase 6: Enterprise Features
 
-42. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
+45. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
 
-43. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
+46. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
 
-44. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
+47. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
 
-45. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
+48. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
 
-46. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
+49. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
 
 ---
 
@@ -125,6 +131,9 @@
 - Phase 2 AI features require Bedrock integration from earlier items
 - Phase 4 Kiro integration depends on wizard outputs from Phase 2-3
 - Phase 5-6 are enhancement phases that can be prioritized based on customer feedback
+- **Agentify Power**: Bundles steering guidance and enforcement hooks into a Kiro Power package that activates on-demand during agent development
+- **Enforcement Hooks**: Automatically validate generated code follows Agentify patterns (event emission, CLI contract, mock tool structure) as files are saved
+- Hooks reference steering files for validation rules, creating a closed loop between documentation and enforcement
 
 ## Technical References
 
@@ -133,6 +142,8 @@
 - Strands Observability/Traces: https://strandsagents.com/latest/documentation/docs/user-guide/observability-evaluation/traces/
 - OpenTelemetry Context Propagation: https://opentelemetry.io/docs/concepts/context-propagation/
 - W3C Trace Context (traceparent header): https://www.w3.org/TR/trace-context/
+- Kiro Powers: https://kiro.dev/powers/ and https://kiro.dev/docs/powers/
+- Kiro Hooks: https://kiro.dev/docs/hooks/ and https://kiro.dev/docs/hooks/types/
 - Three orchestration patterns supported:
   - **Graph**: Deterministic structure with LLM-driven path selection, supports cycles, conditional edges
   - **Swarm**: Autonomous agent collaboration with emergent handoffs, supports cycles, shared context

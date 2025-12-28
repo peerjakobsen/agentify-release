@@ -116,7 +116,7 @@ export interface NodeStreamEvent extends BaseEvent {
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'cancelled';
 
 /**
- * Event indicating the entire workflow has completed
+ * Event indicating the entire workflow has completed successfully
  */
 export interface WorkflowCompleteEvent extends BaseEvent {
   /** Event type discriminator */
@@ -127,6 +127,24 @@ export interface WorkflowCompleteEvent extends BaseEvent {
   execution_time_ms: number;
   /** Array of node IDs in execution order */
   execution_order: string[];
+  /** Workflow output result - markdown string or structured data object */
+  result?: string | Record<string, unknown>;
+  /** Data sources consulted during workflow execution (e.g., 'SAP S/4HANA', 'Databricks') */
+  sources?: string[];
+}
+
+/**
+ * Event indicating the workflow encountered an error
+ */
+export interface WorkflowErrorEvent extends BaseEvent {
+  /** Event type discriminator */
+  type: 'workflow_error';
+  /** Human-readable error description */
+  error_message: string;
+  /** Optional machine-readable error code */
+  error_code?: string;
+  /** Execution time in milliseconds (if available before error) */
+  execution_time_ms?: number;
 }
 
 /**
@@ -137,7 +155,8 @@ export type StdoutEvent =
   | NodeStartEvent
   | NodeStopEvent
   | NodeStreamEvent
-  | WorkflowCompleteEvent;
+  | WorkflowCompleteEvent
+  | WorkflowErrorEvent;
 
 // ============================================================================
 // DynamoDB Events (Tool Call Tracking)
@@ -255,6 +274,13 @@ export function isNodeStreamEvent(event: AgentifyEvent): event is NodeStreamEven
  */
 export function isWorkflowCompleteEvent(event: AgentifyEvent): event is WorkflowCompleteEvent {
   return 'type' in event && event.type === 'workflow_complete';
+}
+
+/**
+ * Type guard for WorkflowErrorEvent
+ */
+export function isWorkflowErrorEvent(event: AgentifyEvent): event is WorkflowErrorEvent {
+  return 'type' in event && event.type === 'workflow_error' && 'error_message' in event;
 }
 
 /**

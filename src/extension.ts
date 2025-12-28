@@ -142,6 +142,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
     handleLoadDemoEvents
   );
   context.subscriptions.push(loadDemoEventsCmd);
+
+  // Register refresh credentials command
+  const refreshCredentialsCmd = vscode.commands.registerCommand(
+    'agentify.refreshCredentials',
+    handleRefreshCredentials
+  );
+  context.subscriptions.push(refreshCredentialsCmd);
 }
 
 /**
@@ -505,6 +512,51 @@ async function handleShowStatus(): Promise<void> {
 }
 
 /**
+ * Command handler: Refresh Credentials
+ * Clears credential caches, re-validates, and updates status bar
+ */
+async function handleRefreshCredentials(): Promise<void> {
+  // Show progress while checking
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Checking AWS credentials...',
+      cancellable: false,
+    },
+    async () => {
+      // Reset all credential caches
+      resetDefaultCredentialProvider();
+      resetClients();
+      resetBedrockClient();
+
+      // Re-initialize profile from config (crucial - new provider needs profile set)
+      await initializeProfileFromConfig();
+
+      // Re-validate credentials and update status
+      const credentialStatus = await validateCredentialsOnActivation();
+
+      if (credentialStatus === 'ready') {
+        // Credentials are now valid - also validate table access
+        await validateAndUpdateStatus();
+      } else {
+        // Still have credential issues
+        statusBarManager?.updateStatus(credentialStatus);
+
+        if (credentialStatus === 'sso-expired') {
+          vscode.window.showWarningMessage(
+            'AWS SSO token still expired. Please complete the SSO login in the terminal.'
+          );
+        } else {
+          vscode.window.showWarningMessage(
+            'AWS credentials still invalid. Please check your configuration.'
+          );
+        }
+      }
+    }
+  );
+}
+
+/**
  * Command handler: Load Demo Events
  * Injects sample log entries for UI testing
  */
@@ -735,7 +787,34 @@ async function handleLoadDemoEvents(): Promise<void> {
     demoViewerProvider.addLogEntry(event);
   }
 
-  vscode.window.showInformationMessage(`Loaded ${sampleEvents.length} demo events into Execution Log`);
+  // Set demo outcome panel with sample result
+  const sampleResult = `## Inventory Optimization Report
+
+Based on analysis of current stock levels and demand forecasts:
+
+### Key Findings
+- **SKU-2847**: Stock levels critically low (12 units remaining)
+- **SKU-1923**: Overstock detected (340 units, 45 days supply)
+- **SKU-5521**: Demand spike predicted for next week (+180%)
+
+### Recommended Actions
+1. Place urgent reorder for SKU-2847 (recommended: 500 units)
+2. Run promotion on SKU-1923 to reduce overstock
+3. Pre-position SKU-5521 inventory in regional warehouses
+
+### Financial Impact
+- Projected savings: **$47,200** over next quarter
+- Stockout prevention value: **$12,800**`;
+
+  const sampleSources = [
+    'SAP S/4HANA Inventory',
+    'Databricks Demand Forecast',
+    'Weather API',
+  ];
+
+  demoViewerProvider.setOutcomeSuccess(sampleResult, sampleSources);
+
+  vscode.window.showInformationMessage(`Loaded ${sampleEvents.length} demo events into Execution Log + Outcome Panel`);
 }
 
 /**
