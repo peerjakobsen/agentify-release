@@ -40,6 +40,10 @@ import {
   IdeationWizardPanelProvider,
   IDEATION_WIZARD_VIEW_ID,
 } from './panels/ideationWizardPanel';
+import {
+  TabbedPanelProvider,
+  TABBED_PANEL_VIEW_ID,
+} from './panels/tabbedPanel';
 import { TableValidationErrorType } from './messages/tableErrors';
 import { handleInitializeProject as initializeProjectHandler } from './commands/initializeProject';
 import type { AgentifyConfig } from './types';
@@ -60,6 +64,7 @@ let statusBarManager: StatusBarManager | null = null;
  */
 let demoViewerProvider: DemoViewerPanelProvider | null = null;
 let ideationWizardProvider: IdeationWizardPanelProvider | null = null;
+let tabbedPanelProvider: TabbedPanelProvider | null = null;
 
 /**
  * Config service instance
@@ -344,21 +349,18 @@ function handleValidationError(errorType: TableValidationErrorType, message: str
  * Register panel providers for the Activity Bar
  */
 function registerPanelProviders(context: vscode.ExtensionContext): void {
-  // Create Demo Viewer provider
-  demoViewerProvider = new DemoViewerPanelProvider(context.extensionUri);
-  const demoViewerRegistration = vscode.window.registerWebviewViewProvider(
-    DEMO_VIEWER_VIEW_ID,
-    demoViewerProvider
+  // Create Tabbed Panel provider (unified UI with tabs)
+  tabbedPanelProvider = new TabbedPanelProvider(context.extensionUri, context);
+  const tabbedPanelRegistration = vscode.window.registerWebviewViewProvider(
+    TABBED_PANEL_VIEW_ID,
+    tabbedPanelProvider
   );
-  context.subscriptions.push(demoViewerRegistration);
+  context.subscriptions.push(tabbedPanelRegistration);
 
-  // Create Ideation Wizard provider
+  // Keep legacy providers for backwards compatibility with existing code
+  // These are not registered as views but may be used by other services
+  demoViewerProvider = new DemoViewerPanelProvider(context.extensionUri, context);
   ideationWizardProvider = new IdeationWizardPanelProvider(context.extensionUri);
-  const ideationWizardRegistration = vscode.window.registerWebviewViewProvider(
-    IDEATION_WIZARD_VIEW_ID,
-    ideationWizardProvider
-  );
-  context.subscriptions.push(ideationWizardRegistration);
 }
 
 /**
@@ -440,12 +442,22 @@ async function handleInitializeProject(context: vscode.ExtensionContext): Promis
  * Updates the "Get Started" button visibility based on initialization state
  */
 async function refreshDemoViewerPanel(): Promise<void> {
+  // Refresh tabbed panel (new unified UI)
+  if (tabbedPanelProvider) {
+    try {
+      await tabbedPanelProvider.refresh();
+      console.log('[Agentify] Tabbed panel refreshed');
+    } catch (error) {
+      console.warn('[Agentify] Failed to refresh tabbed panel:', error);
+    }
+  }
+
+  // Also refresh legacy provider if used elsewhere
   if (demoViewerProvider) {
     try {
       await demoViewerProvider.refresh();
-      console.log('[Agentify] Demo Viewer panel refreshed');
     } catch (error) {
-      console.warn('[Agentify] Failed to refresh Demo Viewer panel:', error);
+      // Ignore - legacy provider may not be active
     }
   }
 }
@@ -454,12 +466,12 @@ async function refreshDemoViewerPanel(): Promise<void> {
  * Refresh the Ideation Wizard panel after initialization
  */
 async function refreshIdeationWizardPanel(): Promise<void> {
+  // Tabbed panel handles both - already refreshed in refreshDemoViewerPanel
   if (ideationWizardProvider) {
     try {
       await ideationWizardProvider.refresh();
-      console.log('[Agentify] Ideation Wizard panel refreshed');
     } catch (error) {
-      console.warn('[Agentify] Failed to refresh Ideation Wizard panel:', error);
+      // Ignore - legacy provider may not be active
     }
   }
 }
@@ -481,6 +493,14 @@ export function getIdeationWizardProvider(): IdeationWizardPanelProvider | null 
 }
 
 /**
+ * Get the Tabbed Panel provider
+ * Exposed for testing and external refresh triggers
+ */
+export function getTabbedPanelProvider(): TabbedPanelProvider | null {
+  return tabbedPanelProvider;
+}
+
+/**
  * Get the status bar manager
  * Exposed for testing
  */
@@ -492,16 +512,22 @@ export function getStatusBarManager(): StatusBarManager | null {
  * Command handler: Open Demo Viewer
  */
 async function handleOpenDemoViewer(): Promise<void> {
-  // Focus the Demo Viewer panel
-  await vscode.commands.executeCommand(`${DEMO_VIEWER_VIEW_ID}.focus`);
+  // Focus the tabbed panel and switch to Demo tab
+  await vscode.commands.executeCommand(`${TABBED_PANEL_VIEW_ID}.focus`);
+  if (tabbedPanelProvider) {
+    tabbedPanelProvider.setActiveTab('demo');
+  }
 }
 
 /**
  * Command handler: Open Ideation Wizard
  */
 async function handleOpenIdeationWizard(): Promise<void> {
-  // Focus the Ideation Wizard panel
-  await vscode.commands.executeCommand(`${IDEATION_WIZARD_VIEW_ID}.focus`);
+  // Focus the tabbed panel and switch to Ideation tab
+  await vscode.commands.executeCommand(`${TABBED_PANEL_VIEW_ID}.focus`);
+  if (tabbedPanelProvider) {
+    tabbedPanelProvider.setActiveTab('ideation');
+  }
 }
 
 /**
@@ -837,6 +863,8 @@ export function deactivate(): void {
   statusBarManager = null;
 
   // Reset panel providers
+  tabbedPanelProvider?.dispose();
+  tabbedPanelProvider = null;
   demoViewerProvider = null;
   ideationWizardProvider = null;
 

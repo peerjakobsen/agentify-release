@@ -38,13 +38,8 @@
       "agentify": [
         {
           "type": "webview",
-          "id": "agentify.ideationWizard",
-          "name": "Ideation Wizard"
-        },
-        {
-          "type": "webview",
-          "id": "agentify.demoViewer",
-          "name": "Demo Viewer"
+          "id": "agentify.tabbedPanel",
+          "name": "Agentify"
         }
       ]
     },
