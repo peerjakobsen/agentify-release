@@ -218,7 +218,7 @@ export class StdoutEventParser {
 }
 
 /**
- * Creates a stdout event handler function for use with WorkflowExecutor
+ * Creates a stdout event handler function for use with WorkflowTriggerService
  * Returns a function that processes stdout data and calls the callback for each event
  *
  * @param onEvent - Callback for each parsed event

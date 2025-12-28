@@ -8,8 +8,10 @@
 import * as vscode from 'vscode';
 import { getConfigService } from '../services/configService';
 import { getInputPanelValidationService } from '../services/inputPanelValidation';
-import { WorkflowExecutor } from '../services/workflowExecutor';
-import { generateWorkflowId, generateTraceId } from '../utils/idGenerator';
+import {
+  getWorkflowTriggerService,
+  type ProcessState,
+} from '../services/workflowTriggerService';
 import { formatTime } from '../utils/timerFormatter';
 import { getNextState } from '../utils/inputPanelStateMachine';
 import {
@@ -106,9 +108,9 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
   private _promptText = '';
 
   /**
-   * Workflow executor instance
+   * Event subscription disposables for WorkflowTriggerService
    */
-  private _workflowExecutor: WorkflowExecutor | null = null;
+  private _serviceSubscriptions: vscode.Disposable[] = [];
 
   /**
    * Log panel state (stored in instance, not workspace state)
@@ -184,22 +186,78 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     // Listen for config changes to update the view
     this.subscribeToConfigChanges();
 
-    // Initialize workflow executor if configured
-    this.initializeWorkflowExecutor();
+    // Subscribe to WorkflowTriggerService events
+    this.subscribeToWorkflowService();
   }
 
   /**
-   * Initialize the workflow executor
+   * Subscribe to WorkflowTriggerService events
    */
-  private initializeWorkflowExecutor(): void {
-    const configService = getConfigService();
-    const workspaceFolders = vscode.workspace.workspaceFolders;
+  private subscribeToWorkflowService(): void {
+    const service = getWorkflowTriggerService();
 
-    if (configService && workspaceFolders && workspaceFolders.length > 0) {
-      this._workflowExecutor = new WorkflowExecutor(
-        configService,
-        workspaceFolders[0].uri.fsPath
-      );
+    // Subscribe to process state changes
+    this._serviceSubscriptions.push(
+      service.onProcessStateChange((state: ProcessState) => {
+        this.handleProcessStateChange(state);
+      })
+    );
+
+    // Subscribe to process exit
+    this._serviceSubscriptions.push(
+      service.onProcessExit(({ code }) => {
+        this.handleProcessExit(code);
+      })
+    );
+
+    // Subscribe to stderr for error display
+    this._serviceSubscriptions.push(
+      service.onStderr((data: string) => {
+        console.error('[Workflow stderr]', data);
+      })
+    );
+  }
+
+  /**
+   * Handle process state change from WorkflowTriggerService
+   */
+  private handleProcessStateChange(state: ProcessState): void {
+    switch (state) {
+      case 'running':
+        // State already transitioned in handleRunWorkflow
+        break;
+      case 'completed':
+        this._currentState = InputPanelStateEnum.Completed;
+        if (this._currentExecution) {
+          this._currentExecution.status = 'completed';
+          this._currentExecution.endTime = Date.now();
+          this._elapsedMs = this._currentExecution.endTime - (this._currentExecution.startTime || Date.now());
+        }
+        this.stopTimer();
+        this.syncStateToWebview();
+        break;
+      case 'failed':
+      case 'killed':
+        this._currentState = InputPanelStateEnum.Error;
+        if (this._currentExecution) {
+          this._currentExecution.status = 'error';
+          this._currentExecution.endTime = Date.now();
+          this._elapsedMs = this._currentExecution.endTime - (this._currentExecution.startTime || Date.now());
+        }
+        this.stopTimer();
+        this.syncStateToWebview();
+        break;
+    }
+  }
+
+  /**
+   * Handle process exit from WorkflowTriggerService
+   */
+  private handleProcessExit(code: number | null): void {
+    // Final state handling done in handleProcessStateChange
+    // This is for any additional cleanup if needed
+    if (code !== 0 && code !== null) {
+      console.log(`[Workflow] Process exited with code: ${code}`);
     }
   }
 
@@ -1454,9 +1512,10 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Handle run workflow command
+   * Uses WorkflowTriggerService for subprocess execution with event-driven state updates
    */
   private async handleRunWorkflow(prompt: string): Promise<void> {
-    if (!prompt.trim() || !this._workflowExecutor) {
+    if (!prompt.trim()) {
       return;
     }
 
@@ -1471,22 +1530,6 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Generate IDs
-    const workflowId = generateWorkflowId();
-    const traceId = generateTraceId();
-
-    // Create execution record
-    this._currentExecution = {
-      workflowId,
-      traceId,
-      startTime: Date.now(),
-      endTime: null,
-      status: null,
-    };
-
-    this._currentState = nextState;
-    this.persistLastWorkflowId(workflowId);
-
     // Clear log entries for new run and reset filters to defaults
     // Also reset log section to collapsed state (will auto-expand on first event)
     this._logPanelState.entries = [];
@@ -1498,55 +1541,46 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     // Clear outcome panel for new run (hide immediately)
     this._outcomePanelState = { ...DEFAULT_OUTCOME_PANEL_STATE };
 
-    // Start timer and sync
-    this.startTimer();
-    this.syncStateToWebview();
-
     try {
-      // Execute workflow
-      const execution = await this._workflowExecutor.execute(
-        prompt,
+      // Start workflow via service - returns generated IDs
+      const service = getWorkflowTriggerService();
+      const { workflowId, traceId } = await service.start(prompt);
+
+      // Create execution record with IDs from service
+      this._currentExecution = {
         workflowId,
         traceId,
-        {
-          onComplete: (exec) => {
-            this._currentExecution = exec;
-            this._currentState = InputPanelStateEnum.Completed;
-            this.stopTimer();
-            this.syncStateToWebview();
-          },
-          onError: (exec) => {
-            this._currentExecution = exec;
-            this._currentState = InputPanelStateEnum.Error;
-            this.stopTimer();
-            this.syncStateToWebview();
-          },
-        }
-      );
+        startTime: Date.now(),
+        endTime: null,
+        status: null,
+      };
 
-      // Update final state
-      this._currentExecution = execution;
-      this._currentState = execution.status === 'completed'
-        ? InputPanelStateEnum.Completed
-        : InputPanelStateEnum.Error;
+      this._currentState = nextState;
+      this.persistLastWorkflowId(workflowId);
 
-      // Calculate final elapsed time
-      if (execution.endTime && execution.startTime) {
-        this._elapsedMs = execution.endTime - execution.startTime;
-      }
-
-      this.stopTimer();
+      // Start timer and sync
+      this.startTimer();
       this.syncStateToWebview();
+
+      // State updates (completed/failed/killed) are handled via event subscriptions
+      // in handleProcessStateChange()
     } catch (error) {
-      // Handle unexpected errors
+      // Handle validation errors or spawn failures
       this._currentState = InputPanelStateEnum.Error;
-      if (this._currentExecution) {
-        this._currentExecution.status = 'error';
-        this._currentExecution.error = error instanceof Error ? error.message : 'Unknown error';
-        this._currentExecution.endTime = Date.now();
-      }
-      this.stopTimer();
+      this._currentExecution = {
+        workflowId: '',
+        traceId: '',
+        startTime: Date.now(),
+        endTime: Date.now(),
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
       this.syncStateToWebview();
+
+      // Show error message to user
+      vscode.window.showErrorMessage(
+        `Workflow failed to start: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -1669,8 +1703,10 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       this._configChangeDisposable.dispose();
     }
 
-    if (this._workflowExecutor) {
-      this._workflowExecutor.dispose();
+    // Dispose service event subscriptions (do NOT dispose singleton service itself)
+    for (const subscription of this._serviceSubscriptions) {
+      subscription.dispose();
     }
+    this._serviceSubscriptions = [];
   }
 }

@@ -49,65 +49,543 @@
 
 This steering file is the source of truth for Kiro's code generation — all generated agents must follow these patterns. `M`
 
-10. [ ] Workflow Trigger Service — Build subprocess execution service that: (1) generates `workflow_id` (wf-{8-char-uuid}) and OTEL-compatible `trace_id` (32-char hex), (2) spawns `python {entryScript}` with CLI args from config, (3) passes `AGENTIFY_TABLE_NAME` and `AGENTIFY_TABLE_REGION` env vars, (4) captures stdout for real-time event streaming, (5) handles process lifecycle (start, running, exit, error, kill on reset). Entry script path read from `.agentify/config.json` workflow.entryScript field. `M`
+10. [x] Workflow Trigger Service — Extract subprocess execution logic from `DemoViewerPanel.handleRunWorkflow()` into a dedicated service with clean separation:
 
-11. [ ] stdout Event Streaming — Parse real-time JSON line events from subprocess stdout following the schema defined in `agentify-integration.md`: `graph_structure` (topology at start), `node_start`/`node_stream`/`node_stop` (mapped from Strands `multiagent_*` events), `tool_call`/`tool_result`, and `workflow_complete`/`workflow_error`. Each event includes `workflow_id`, `trace_id`, `timestamp`, `event_type`, and `payload`. `M`
+**ID Generation:**
+- `workflow_id`: `wf-{8-char-uuid}` (e.g., `wf-a1b2c3d4`)
+- `trace_id`: 32-char hex string, OTEL-compatible (e.g., `80e1afed08e019fc1110464cfa66635c`)
 
-12. [ ] Merged Event Stream Service — Combine stdout events (real-time graph updates) with DynamoDB events (tool calls, persistent history) into unified event stream for Demo Viewer panels `S`
+**Subprocess Spawning:**
+- Command: `{workflow.pythonPath} {workflow.entryScript}` from `.agentify/config.json`
+- CLI args: `--prompt`, `--workflow-id`, `--trace-id`
+- Env vars: `AGENTIFY_TABLE_NAME` (from `infrastructure.dynamodb.tableName`), `AGENTIFY_TABLE_REGION` (from `infrastructure.dynamodb.region`)
+- Working directory: workspace root
+
+**Event Emission (vscode.EventEmitter pattern):**
+- `onStdoutLine: Event<string>` — raw stdout lines (item 11 parses these)
+- `onStderr: Event<string>` — stderr output for error display
+- `onProcessStateChange: Event<ProcessState>` — `idle` | `running` | `completed` | `failed` | `killed`
+- `onProcessExit: Event<{code: number | null, signal: string | null}>`
+
+**Process Lifecycle:**
+- `start(prompt: string): {workflowId, traceId}` — spawns process, returns IDs
+- `kill(): void` — terminates current process (for reset/new run)
+- `getState(): ProcessState` — current process state
+- Only one workflow at a time — calling `start()` while running kills previous process
+
+**Integration:**
+- Singleton service (like `DynamoDbPollingService`)
+- `DemoViewerPanel.handleRunWorkflow()` calls this service instead of spawning directly
+- Panel subscribes to events for UI updates
+
+This service handles raw subprocess I/O; stdout JSON parsing is handled by item 11. `M`
+
+11. [ ] stdout Event Streaming & Panel Integration — Parse real-time JSON line events from `WorkflowTriggerService.onStdoutLine` following the schema in `agentify-integration.md`: `graph_structure`, `node_start`/`node_stream`/`node_stop`, `tool_call`/`tool_result`, `workflow_complete`/`workflow_error`. Create `StdoutEventParser` service that:
+
+**Parsing:**
+- Subscribes to `WorkflowTriggerService.onStdoutLine`
+- Parses JSON, validates against event schema
+- Emits typed `StdoutEvent` via `vscode.EventEmitter`
+- Handles malformed JSON gracefully (log warning, skip)
+
+**Panel Integration:**
+- `DemoViewerPanel` subscribes to both `StdoutEventParser.onEvent` and `DynamoDbPollingService.onEvent`
+- Events collected into single array, sorted by timestamp for Execution Log display
+- `workflow_complete`/`workflow_error` events trigger Outcome Panel update
+- `graph_structure`/`node_*` events reserved for Phase 3 Agent Graph visualization
+
+No separate merge service needed — panel handles trivial array combination. `M`
 
 ## Phase 2: AI-Assisted Ideation
 
-13. [ ] Ideation Wizard Panel — Add Ideation Wizard webview panel to the Agentify extension with multi-step wizard UI, leveraging shared AWS services and configuration `S`
+13. [ ] Ideation Wizard Panel & Business Objective Step — Create Ideation Wizard webview panel with multi-step wizard navigation framework (step indicator, next/back buttons, progress tracking), then build the first step with: (1) multi-line text input for business objective/problem statement, (2) industry vertical dropdown (Retail, FSI, Healthcare, Manufacturing, Energy, Telecom, Public Sector), (3) system checkboxes grouped by category — CRM (Salesforce, HubSpot, Dynamics), ERP (SAP S/4HANA, Oracle, NetSuite), Data (Databricks, Snowflake, Redshift), HR (Workday, SuccessFactors), Service (ServiceNow, Zendesk), (4) "Other systems" free-text field, (5) optional file upload for additional context (account plan, requirements doc — stored in memory, not persisted). Wizard state held in memory; file persistence added in item 22. `M`
 
-14. [ ] Business Objective Input UI — Build first wizard step with: (1) multi-line text input for business objective/problem statement, (2) industry vertical dropdown, (3) system checkboxes (SAP, Salesforce, Databricks, etc.), (4) optional file upload for additional context (account plan, requirements doc). Claude uses this context to propose agent designs. `M`
+14. [ ] Claude Bedrock Integration — Implement Amazon Bedrock client service for Claude API calls:
 
-15. [ ] Claude Bedrock Integration — Implement Amazon Bedrock client for Claude API calls with conversation context management and streaming response handling `M`
+**Client Setup:**
+- Use `@aws-sdk/client-bedrock-runtime` with credential chain from shared AWS services
+- Model: `anthropic.claude-3-sonnet-20240229-v1:0` (configurable in `.agentify/config.json`)
+- Region from `infrastructure.dynamodb.region` (same as DynamoDB)
 
-16. [ ] AI Gap-Filling Conversation — Create conversational UI where Claude proposes industry-typical configurations based on selected systems and industry, with user refinement capability `L`
+**Conversation Management:**
+- `BedrockConversationService` singleton with `vscode.EventEmitter` pattern
+- Maintain conversation history as `{role: 'user' | 'assistant', content: string}[]`
+- System prompt loaded from bundled `prompts/ideation-assistant.md`
+- `sendMessage(userMessage: string): AsyncIterable<string>` — streaming response
+- `resetConversation(): void` — clear history for new ideation session
 
-17. [ ] Outcome Definition Step — Build wizard step for defining measurable business outcomes, success criteria, and KPIs that map to the business objective `S`
+**Streaming to Webview:**
+- Use Bedrock's `InvokeModelWithResponseStreamCommand`
+- Parse SSE chunks, emit tokens via `onToken: Event<string>`
+- Emit `onComplete: Event<string>` with full response
+- Handle `ThrottlingException` with exponential backoff (1s, 2s, 4s, max 30s)
 
-18. [ ] Security & Guardrails Step — Build wizard step for compliance considerations, human approval gate placement, and data sensitivity classification `S`
+**Error Handling:**
+- `onError: Event<BedrockError>` for UI display
+- Graceful handling of model access errors (user may not have Bedrock enabled) `M`
 
-19. [ ] Agent Design Phase — Create wizard step where Claude proposes agent team composition with roles, responsibilities, and recommends optimal Strands orchestration pattern (Graph for conditional routing, Swarm for autonomous collaboration, Workflow for deterministic pipelines) based on the business objective complexity and coordination requirements `L`
+15. [ ] AI Gap-Filling Conversation — Create wizard step 2 as a conversational UI where Claude analyzes the business objective and system selections, then proposes industry-typical assumptions:
 
-20. [ ] Agent Design Refinement — Add UI for user to accept, modify, or reject proposed agents and adjust orchestration flow `M`
+**Conversation Flow:**
+1. On step entry, auto-send context summary to Claude: "User's objective: {objective}. Industry: {industry}. Known systems: {systems}."
+2. Claude responds with structured proposal: "Based on your {industry} context, here's what I'm assuming about your environment..." with specific module/integration assumptions
+3. User can accept all, or reply with corrections: "Actually we use SAP IBP, not APO"
+4. Claude acknowledges and refines: "Got it, updating to SAP IBP for demand planning..."
+5. Conversation continues until user clicks "Confirm & Continue"
 
-21. [ ] Orchestration Pattern Selection — Interactive UI for selecting between Strands Graph, Swarm, or Workflow patterns with AI-assisted recommendation explaining tradeoffs for the specific business objective scenario, visual preview of how agents will coordinate under each pattern, and pattern-specific configuration (Graph: edge conditions, Swarm: handoff rules, Workflow: task dependencies) `M`
+**UI Pattern:**
+- Chat-style interface with Claude messages (left-aligned) and user messages (right-aligned)
+- Claude messages include "Accept Assumptions" button for quick confirmation
+- Editable text input for user refinements
+- Streaming token display as Claude responds
+- "Regenerate" button to get fresh proposal
 
-22. [ ] Mock Data Strategy — Implement AI-generated mock data shapes based on industry context and selected systems for realistic demo scenarios `M`
+**State Output:**
+- `confirmedAssumptions: {system: string, modules: string[], integrations: string[]}[]`
+- Stored in wizard state for downstream steps `L`
+
+16. [ ] Outcome Definition Step — Build wizard step 3 for defining measurable business outcomes that the demo will showcase:
+
+**Fields:**
+- Primary outcome statement (text input): "What business result should this workflow achieve?" — e.g., "Reduce fresh produce stockouts by 30%"
+- Success metrics (repeatable field group): metric name + target value + unit — e.g., "Order accuracy" / "95" / "%"
+- Stakeholders (multi-select + custom): Who benefits? (Operations, Finance, Supply Chain, Customer Service, Executive)
+
+**AI Assistance:**
+- "Suggest Metrics" button sends context to Claude, receives 3-5 suggested KPIs based on industry/objective
+- User can accept/modify suggestions
+
+**Validation:**
+- Primary outcome required
+- At least one success metric recommended (warning, not blocking) `S`
+
+17. [ ] Security & Guardrails Step — Build wizard step 4 for compliance and approval gate configuration:
+
+**Data Sensitivity Classification:**
+- Radio buttons: Public, Internal, Confidential, Restricted
+- Helper text explaining each level
+- Default: Internal
+
+**Compliance Frameworks (checkboxes):**
+- SOC 2, HIPAA, PCI-DSS, GDPR, FedRAMP, None/Not specified
+- Industry-aware defaults (Healthcare → HIPAA pre-checked, FSI → PCI-DSS + SOC 2)
+
+**Human Approval Gates:**
+- Checkbox list of workflow stages where human approval may be required
+- Options: "Before external API calls", "Before data modification", "Before sending recommendations", "Before financial transactions"
+- Default: None (fully automated demo)
+
+**Guardrail Notes (optional text area):**
+- Free-form notes for additional constraints
+- Example placeholder: "No PII in demo data, mask account numbers..."
+
+This step is optional — "Skip" button available with sensible defaults applied. `S`
+
+18. [ ] Agent Design Phase — Create wizard step 5 where Claude proposes agent team composition based on all previous inputs:
+
+**Auto-Proposal on Step Entry:**
+- Send full wizard context to Claude with structured prompt requesting agent team design
+- Claude responds with JSON-structured proposal (parsed for UI display):
+```json
+{
+  "agents": [
+    {"id": "planner", "name": "Planning Agent", "role": "Analyzes demand signals and inventory levels", "tools": ["sap_inventory", "demand_forecast"]},
+    {"id": "recommender", "name": "Recommendation Agent", "role": "Generates replenishment orders", "tools": ["order_generator"]}
+  ],
+  "orchestration": {
+    "pattern": "graph",
+    "reasoning": "Graph pattern recommended because workflow has conditional logic based on inventory thresholds..."
+  },
+  "edges": [
+    {"from": "planner", "to": "recommender", "condition": "inventory_analyzed"}
+  ]
+}
+```
+
+**Display:**
+- Card grid showing each proposed agent with name, role, tools
+- Orchestration pattern badge with "Why this pattern?" expandable explanation
+- Visual flow diagram (simple, not interactive yet — Phase 3 does full visualization)
+
+**Actions:**
+- "Accept & Continue" — proceed with proposal as-is
+- "Let me adjust..." — transitions to Agent Design Refinement (item 19) `L`
+
+19. [ ] Agent Design Refinement — Enable user modification of Claude's proposed agent team when "Let me adjust..." is selected:
+
+**Agent Card Editing:**
+- Each agent displayed as editable card
+- Editable fields: Name (text), Role description (textarea), Tools (tag input with suggestions)
+- "Remove Agent" button (with confirmation if agent has edges)
+- "Add Agent" button opens blank card template
+
+**Orchestration Adjustment:**
+- Dropdown to change pattern (Graph/Swarm/Workflow) — triggers item 20 for detailed config
+- Simple edge list editor: source agent → target agent (add/remove edges)
+- Validation: warn if orphan agents (no incoming/outgoing edges), warn if entry point missing
+
+**AI Assistance:**
+- "Ask Claude" button for each agent: "Suggest tools for this agent" / "Improve role description"
+- "Validate Design" button: Claude reviews full design, suggests improvements
+
+**Save:**
+- "Confirm Design" saves to wizard state and proceeds to next step `M`
+
+20. [ ] Orchestration Pattern Selection — When user changes orchestration pattern in item 19, show pattern-specific configuration modal:
+
+**Pattern Selection UI:**
+- Three large cards (Graph, Swarm, Workflow) with icons and one-line descriptions
+- Current selection highlighted
+- Claude's recommendation badge on suggested pattern
+
+**Pattern Descriptions:**
+- **Graph**: "Deterministic structure, LLM picks path at runtime. Best for: conditional workflows, approval gates, decision trees."
+- **Swarm**: "Agents autonomously hand off to each other. Best for: complex problem-solving, collaborative analysis, emergent behavior."
+- **Workflow**: "Fixed DAG with parallel execution. Best for: predictable pipelines, batch processing, strict ordering."
+
+**Pattern-Specific Configuration:**
+- **Graph**: Edge condition editor — for each edge, define condition label (e.g., "if high_priority", "if needs_review")
+- **Swarm**: Handoff rules — max handoffs (number), allowed handoff pairs (agent A ↔ agent B)
+- **Workflow**: Task dependencies — parallel groups, sequential ordering
+
+**Visual Preview:**
+- Simple diagram showing how agents connect under selected pattern
+- Updates live as configuration changes `M`
+
+21. [ ] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
+
+**Auto-Generation on Step Entry:**
+- For each tool identified in agent design, Claude proposes mock data shape:
+```json
+{
+  "tool": "sap_inventory",
+  "system": "SAP S/4HANA",
+  "operation": "get_stock_levels",
+  "mockRequest": {"warehouse_id": "string", "sku_list": "string[]"},
+  "mockResponse": {"sku": "string", "quantity": "number", "location": "string"},
+  "sampleData": [
+    {"sku": "TOMATO-001", "quantity": 150, "location": "Produce-A3"}
+  ]
+}
+```
+
+**Display & Editing:**
+- Accordion for each tool with mock definition
+- JSON editor for request/response schemas (with syntax highlighting)
+- Sample data table with add/edit/delete rows
+- "Use customer terminology" toggle: when ON, Claude regenerates with industry-specific naming from wizard context
+
+**Bulk Actions:**
+- "Regenerate All" — fresh mock data proposal from Claude
+- "Import Sample Data" — upload CSV/JSON to populate sample data tables
+
+**Validation:**
+- Warn if any tool missing mock definition
+- Warn if sample data empty (demo won't be realistic)
+
+**Output:**
+- Mock definitions stored in wizard state
+- Used in Phase 4 steering file generation (`integration-landscape.md`) `M`
+
+22. [ ] Wizard State Persistence — Implement workspace storage for wizard progress so users can resume incomplete ideation sessions:
+
+**Storage:**
+- Save wizard state to `.agentify/wizard-state.json` on each step completion
+- State includes: current step, all field values, conversation history, agent design, mock data config
+- Exclude uploaded files (too large) — store file metadata only with "re-upload required" flag
+
+**Resume Flow:**
+- On Ideation Wizard open, check for existing `wizard-state.json`
+- If found and less than 7 days old: prompt "Resume previous session?" with preview of business objective
+- "Resume" → restore state, navigate to last completed step
+- "Start Fresh" → delete state file, begin at step 1
+
+**Auto-Save:**
+- Debounced save (500ms after last change) within each step
+- Explicit save on "Next" button click
+
+**Clear State:**
+- "Reset Wizard" command clears state file and restarts
+- State automatically cleared when steering files successfully generated (Phase 4) `S`
+
+23. [ ] Demo Design Step — Build wizard step 7 for capturing demo presentation strategy:
+
+**Key "Aha Moments" (repeatable field group):**
+- Moment title: "What should impress the audience?" — e.g., "Real-time SAP inventory sync"
+- When it occurs: dropdown selecting which agent/tool triggers this moment
+- What to say: suggested talking point for presenter
+
+**Demo Persona:**
+- Persona name (text): e.g., "Maria, Regional Inventory Manager"
+- Persona role (text): e.g., "Reviews morning replenishment recommendations for 12 stores"
+- Persona pain point (text): e.g., "Currently spends 2 hours manually checking stock levels"
+- AI assist: "Generate Persona" button creates persona based on industry/objective context
+
+**Narrative Flow:**
+- Ordered list of demo scenes (drag-to-reorder)
+- Each scene: title, description, which agents are highlighted
+- "Generate Narrative" button: Claude proposes scene sequence based on agent design
+
+**Output:**
+- Stored in wizard state for `demo-strategy.md` generation in Phase 4 `M`
 
 ## Phase 3: Visual Polish
 
-23. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts: Graph (DAG with conditional edges), Swarm (peer-to-peer), Workflow (parallel execution lanes) `L`
+24. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
 
-24. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions as agents activate, complete, and hand off work `M`
+**Node Components:**
+- Custom React Flow node for each agent
+- Status indicator: gray (pending), blue pulse (running), green (completed), red (failed)
+- Agent name and role displayed
+- Tool call count badge
 
-25. [ ] Enhanced Log Formatting — Add collapsible sections, syntax highlighting for payloads, and filtering by agent name or event type `M`
+**Edge Styling:**
+- Animated dashes during active data flow
+- Edge labels for Graph pattern conditions
+- Bidirectional arrows for Swarm handoffs
 
-26. [ ] Demo Design Phase — Create wizard step for capturing key "aha moments", demo persona definition, and narrative flow sequencing `M`
+**Layout Algorithms:**
+- **Graph**: Dagre top-to-bottom DAG layout with conditional edge routing
+- **Swarm**: Force-directed peer-to-peer layout (circular for small graphs)
+- **Workflow**: ELKjs layered layout with parallel execution lanes
 
-27. [ ] Wizard State Persistence — Implement workspace storage for wizard progress so users can resume incomplete ideation sessions `S`
+**Initialization:**
+- Read `graph_structure` event from stdout to build initial topology
+- Fall back to agent design from `.agentify/config.json` if no event received
+
+**Interaction:**
+- Click node to highlight in Execution Log
+- Zoom/pan controls
+- "Fit to view" button `L`
+
+25. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions:
+
+**Event Handling:**
+- `node_start` → transition node to "running" state with blue pulse animation
+- `node_stream` → show streaming indicator on node (optional: token count)
+- `node_stop` → transition to "completed" (green) or "failed" (red) based on status
+- `handoff` → animate edge between source and target nodes
+
+**Transitions:**
+- CSS transitions for color changes (300ms ease)
+- Edge animation: dashed line "flow" effect during active transfer
+- Completion ripple effect on node finish
+
+**Timing:**
+- Debounce rapid updates (batch within 50ms window)
+- Queue animations to prevent visual chaos during parallel execution
+
+**State Sync:**
+- Graph state synced with Execution Log scroll position
+- Clicking log entry highlights corresponding node `M`
+
+26. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
+
+**Collapsible Sections:**
+- Group events by agent (collapsible agent sections)
+- Tool calls collapsed by default, expandable to show input/output
+- "Expand All" / "Collapse All" toolbar buttons
+
+**Syntax Highlighting:**
+- JSON payloads with syntax highlighting (use existing `tokenizeJson()`)
+- SQL queries highlighted if detected in tool input
+- Markdown rendering for text content
+
+**Filtering:**
+- Filter dropdown: "All Events", "Agent Events Only", "Tool Calls Only", "Errors Only"
+- Agent filter: multi-select to show only specific agents
+- Search box: text search across event content
+
+**Performance:**
+- Virtual scrolling for large event lists (>100 events)
+- Lazy render expanded payload content `M`
 
 ## Phase 4: Kiro Integration & Enforcement
 
-28. [ ] Core Steering Files Generation — Generate `product.md` (business objective context), `tech.md` (Strands SDK, Python, selected orchestration pattern), `structure.md` (standard agentic project layout) from wizard context `M`
+27. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
 
-29. [ ] Context Steering Files Generation — Generate `customer-context.md` (industry, strategic priorities), `integration-landscape.md` (systems, data sources, mock definitions), `security-policies.md` (compliance, approval gates), `demo-strategy.md` (key moments, narrative, mock data approach) from ideation outputs `M`
+**Files Generated:**
 
-30. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state: `product.md` (business objective as product description), `tech.md` (AgentCore, Strands SDK, Python, DynamoDB stack), `structure.md` (standard agentic project layout), `customer-context.md` (industry, objective, priorities), `integration-landscape.md` (systems, mock definitions), `security-policies.md` (guardrails, approval gates), `demo-strategy.md` (key moments, narrative, mock data approach), `agentify-integration.md` (event emission patterns, CLI contract). `M`
+| File | Source | Content |
+|------|--------|---------|
+| `product.md` | Item 13, 16 | Business objective as product description, success metrics, stakeholders |
+| `tech.md` | Item 18, 20 | Strands SDK, Python 3.11+, selected orchestration pattern, DynamoDB for events |
+| `structure.md` | Static template | Standard agentic project layout (`agents/`, `tools/`, `mocks/`, etc.) |
+| `customer-context.md` | Item 13, 15 | Industry, confirmed system assumptions, strategic priorities |
+| `integration-landscape.md` | Item 15, 21 | Systems, data sources, mock definitions with sample data |
+| `security-policies.md` | Item 17 | Data classification, compliance frameworks, approval gates, guardrails |
+| `demo-strategy.md` | Item 23 | Key aha moments, demo persona, narrative flow sequence |
+| `agentify-integration.md` | Static + Item 18 | Event emission patterns, CLI contract, agent IDs from design |
 
-31. [ ] Agentify Power Package — Create Kiro Power that bundles: (1) `POWER.md` steering file with agentic workflow best practices, event emission patterns, and CLI contract requirements, (2) enforcement hooks for code validation. Power activates when keywords like "agent", "workflow", "Strands", "orchestrator", or "demo" are mentioned. Structure: `agentify-power/POWER.md`, `agentify-power/hooks/*.kiro.hook`. Power can be installed via Kiro's power import from the extension's bundled directory or published to community powers. `M`
+**Generation Flow:**
+1. Validate all required wizard steps completed
+2. Show preview of files to be generated
+3. User confirms "Generate"
+4. Write files to `.kiro/steering/`
+5. Clear wizard state (item 22) on success
+6. Show success notification with "Open in Kiro" button
 
-32. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook` that triggers on `fileSaved` for `agents/*.py` pattern: validates event emission patterns match `agentify-integration.md` contract, checks for proper `emit_event()` calls in agent functions, suggests missing observability code. Hook prompt references steering file for expected patterns. `S`
+**Conflict Handling:**
+- If `.kiro/steering/` exists, prompt: "Overwrite existing steering files?"
+- Option to backup existing files to `.kiro/steering.backup/` `M`
 
-33. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook` that triggers on `fileSaved` for `agents/main.py`: validates CLI argument parsing includes `--prompt`, `--workflow-id`, `--trace-id` parameters, checks for proper `argparse` setup, validates environment variable reading for `AGENTIFY_TABLE_NAME` and `AGENTIFY_TABLE_REGION`. `S`
+28. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks:
 
-34. [ ] Mock Tool Pattern Hook — Create `mock-tool-pattern.kiro.hook` that triggers on `fileCreated` for `tools/*.py` pattern: ensures new tool files include Strands `@tool` decorator, validates mock data structure matches industry context from `integration-landscape.md`, suggests realistic mock response shapes. `S`
+**Power Structure:**
+```
+agentify-power/
+├── POWER.md              # Steering for agentic workflow development
+└── hooks/
+    ├── observability-enforcer.kiro.hook
+    ├── cli-contract-validator.kiro.hook
+    └── mock-tool-pattern.kiro.hook
+```
 
-35. [ ] Power Installation Integration — Update Ideation Wizard's steering generation (Item 30) to also install/activate the Agentify Power when writing steering files, ensuring hooks are active before Kiro begins code generation. Add power manifest to `.kiro/powers/agentify/` or register via Kiro's power import mechanism. `S`
+**POWER.md Content:**
+- Best practices for Strands agent development
+- Event emission patterns (reference `agentify-integration.md`)
+- CLI contract requirements
+- Mock tool implementation guidelines
+- Common pitfalls and solutions
 
-36. [ ] Kiro Spec Trigger — Implement seamless handoff that: (1) ensures Agentify Power is installed/activated, (2) validates all steering files are complete, (3) opens Kiro spec mode with generated artifacts pre-loaded, (4) displays confirmation that enforcement hooks are active. Gracefully degrades in VS Code with message directing user to Kiro. `S`
+**Activation Keywords:**
+- "agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent"
+
+**Distribution:**
+- Bundled with Agentify extension in `resources/agentify-power/`
+- Can be published to Kiro community powers for standalone use `M`
+
+29. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook`:
+
+**Trigger:**
+- Event: `fileSaved`
+- Pattern: `agents/*.py`
+
+**Validation Rules:**
+- Check for `emit_stdout_event()` or equivalent calls in agent functions
+- Verify `workflow_id` and `trace_id` passed to all event emissions
+- Check `graph_structure` emitted before `node_start` events
+- Verify terminal event (`workflow_complete` or `workflow_error`) emitted
+
+**Hook Prompt:**
+```
+Review this agent file for Agentify observability compliance.
+Reference: .kiro/steering/agentify-integration.md
+
+Check:
+1. All agent functions emit node_start/node_stop events
+2. Tool calls emit tool_call events to DynamoDB
+3. workflow_id and trace_id included in all events
+4. Terminal event emitted on completion/error
+
+Suggest fixes for any missing observability code.
+```
+
+**Output:**
+- Inline suggestions for missing event emissions
+- Warning if no observability code detected `S`
+
+30. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
+
+**Trigger:**
+- Event: `fileSaved`
+- Pattern: `agents/main.py`
+
+**Validation Rules:**
+- Check `argparse` setup exists
+- Verify `--prompt` argument defined and required
+- Verify `--workflow-id` argument defined and required
+- Verify `--trace-id` argument defined and required
+- Check `os.environ.get('AGENTIFY_TABLE_NAME')` present
+- Check `os.environ.get('AGENTIFY_TABLE_REGION')` present
+
+**Hook Prompt:**
+Validate this main.py entry point against Agentify CLI contract.
+Reference: .kiro/steering/agentify-integration.md Section 1
+Required CLI arguments: --prompt, --workflow-id, --trace-id
+Required env vars: AGENTIFY_TABLE_NAME, AGENTIFY_TABLE_REGION
+Flag any missing arguments or environment variable reads.
+Suggest argparse setup if not present.
+`````S`
+
+31. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook:
+
+Trigger:
+
+Event: fileCreated
+Pattern: tools/*.py
+
+Validation Rules:
+
+Check for Strands @tool decorator on functions
+Verify function has docstring (used by Strands for tool description)
+Check return type annotation present
+Validate mock data structure if integration-landscape.md exists
+
+Hook Prompt:
+Review this new tool file for Strands SDK compliance.
+Reference: .kiro/steering/integration-landscape.md for expected mock data shapes
+
+Check:
+1. @tool decorator present on tool functions
+2. Docstring describes what the tool does
+3. Type hints on parameters and return value
+4. Mock response matches schema in integration-landscape.md
+
+Suggest improvements for realistic mock behavior.
+`````S`
+
+32. [ ] Power Installation Integration — Update steering generation (Item 27) to install Agentify Power:
+
+**Installation Flow:**
+1. After writing steering files, check if Agentify Power installed
+2. If not installed, copy from `resources/agentify-power/` to `.kiro/powers/agentify/`
+3. Register power in `.kiro/powers/manifest.json`
+
+**Power Manifest:**
+```json
+{
+  "powers": [
+    {
+      "name": "agentify",
+      "path": "./agentify",
+      "activationKeywords": ["agent", "workflow", "Strands", "orchestrator", "demo"]
+    }
+  ]
+}
+```
+
+**Verification:**
+- Validate hooks are syntactically correct
+- Show notification: "Agentify Power installed - enforcement hooks active" `S`
+
+33. [ ] Kiro Spec Trigger — Implement seamless handoff from Ideation Wizard to Kiro spec mode:
+
+**Pre-Flight Checks:**
+1. Verify all steering files exist in `.kiro/steering/`
+2. Verify Agentify Power installed (item 32)
+3. Verify `.agentify/config.json` exists with valid DynamoDB config
+
+**Trigger Flow:**
+1. User clicks "Generate Code with Kiro" button in wizard
+2. Run pre-flight checks, show errors if any fail
+3. Build initial prompt from wizard context:
+```
+   Create a multi-agent workflow based on the steering files in .kiro/steering/.
+   
+   Business objective: {from product.md}
+   Orchestration pattern: {from tech.md}
+   Agents: {from agent design}
+   
+   Start with agents/main.py following the CLI contract in agentify-integration.md.
+```
+4. Execute Kiro command: `kiro.startSpecFlow` with prompt
+5. Show confirmation: "Kiro spec mode started. Enforcement hooks are active."
+
+**VS Code Fallback:**
+- Detect if running in VS Code (not Kiro) via `vscode.env.appName`
+- Show message: "Code generation requires Kiro IDE. Steering files have been generated in .kiro/steering/. Open this project in Kiro to continue."
+- Offer "Learn More" link to Kiro download page `S`
 
 ## Phase 5: Templates and Patterns
 

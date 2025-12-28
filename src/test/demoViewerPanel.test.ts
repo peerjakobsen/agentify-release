@@ -102,19 +102,27 @@ vi.mock('../services/inputPanelValidation', () => ({
   }),
 }));
 
-// Mock workflow executor
-vi.mock('../services/workflowExecutor', () => ({
-  WorkflowExecutor: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+// Mock WorkflowTriggerService
+const mockOnStdoutLine = vi.fn().mockReturnValue({ dispose: vi.fn() });
+const mockOnStderr = vi.fn().mockReturnValue({ dispose: vi.fn() });
+const mockOnProcessStateChange = vi.fn().mockReturnValue({ dispose: vi.fn() });
+const mockOnProcessExit = vi.fn().mockReturnValue({ dispose: vi.fn() });
+
+vi.mock('../services/workflowTriggerService', () => ({
+  getWorkflowTriggerService: () => ({
+    start: vi.fn().mockResolvedValue({
       workflowId: 'wf-12345678',
       traceId: 'abcd1234abcd1234abcd1234abcd1234',
-      startTime: Date.now(),
-      endTime: Date.now() + 1000,
-      status: 'completed',
     }),
+    kill: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn().mockReturnValue('idle'),
+    onStdoutLine: mockOnStdoutLine,
+    onStderr: mockOnStderr,
+    onProcessStateChange: mockOnProcessStateChange,
+    onProcessExit: mockOnProcessExit,
     dispose: vi.fn(),
-    isRunning: vi.fn().mockReturnValue(false),
-  })),
+  }),
+  resetWorkflowTriggerService: vi.fn(),
 }));
 
 // Import vscode after mocking
