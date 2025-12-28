@@ -86,6 +86,12 @@ export class ConfigService {
 
     try {
       const content = await vscode.workspace.fs.readFile(configUri);
+      // Handle case where content is undefined/null (mock environments)
+      if (!content) {
+        this.cachedConfig = null;
+        this.configLoaded = true;
+        return null;
+      }
       const json = JSON.parse(Buffer.from(content).toString('utf-8'));
       this.cachedConfig = json as AgentifyConfig;
       this.configLoaded = true;

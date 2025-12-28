@@ -143,6 +143,16 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Refresh the panel content
+   * Call this after initialization state changes externally
+   */
+  public async refresh(): Promise<void> {
+    if (this._view) {
+      this._view.webview.html = this.getHtmlContent();
+    }
+  }
+
+  /**
    * Reveal the panel in the sidebar
    */
   public reveal(): void {

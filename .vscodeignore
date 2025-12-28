@@ -1,0 +1,37 @@
+# Source files (compiled to dist/)
+src/**
+*.ts
+tsconfig.json
+
+# Test files
+**/*.test.ts
+**/*.test.js
+**/test/**
+
+# Development files
+.vscode/**
+.git/**
+.gitignore
+node_modules/**
+
+# Agent OS / Specs
+agent-os/**
+
+# Documentation (keep README)
+docs/**
+
+# Build artifacts we don't need
+*.map
+*.d.ts
+
+# Config files
+.eslintrc*
+.prettierrc*
+vitest.config.*
+
+# Keep these (not ignored):
+# - dist/          (compiled extension)
+# - infrastructure/ (CloudFormation templates)
+# - resources/     (icons, images)
+# - package.json
+# - README.md

@@ -1,13 +1,15 @@
 import { DescribeTableCommand, TableStatus } from '@aws-sdk/client-dynamodb';
-import { getDynamoDbClient } from './dynamoDbClient';
-import { getTableName } from '../config/dynamoDbConfig';
+import { getDynamoDbClientAsync } from './dynamoDbClient';
+import { getTableNameAsync } from '../config/dynamoDbConfig';
 import {
   TableValidationError,
   TableValidationErrorType,
   getTableNotFoundMessage,
   getCredentialsNotConfiguredMessage,
+  getSsoTokenExpiredMessage,
   getTableNotActiveMessage,
 } from '../messages/tableErrors';
+import { getDefaultCredentialProvider } from './credentialProvider';
 
 /**
  * Result of table validation
@@ -26,8 +28,8 @@ export interface TableValidationResult {
  * @returns Validation result with table metadata or error details
  */
 export async function validateTableExists(tableName?: string): Promise<TableValidationResult> {
-  const targetTableName = tableName ?? getTableName();
-  const client = getDynamoDbClient();
+  const targetTableName = tableName ?? await getTableNameAsync();
+  const client = await getDynamoDbClientAsync();
 
   try {
     const command = new DescribeTableCommand({
@@ -83,6 +85,25 @@ export async function validateTableExists(tableName?: string): Promise<TableVali
           error: {
             type: TableValidationErrorType.TABLE_NOT_FOUND,
             message: getTableNotFoundMessage(targetTableName),
+          },
+        };
+      }
+
+      // SSO token expired - check BEFORE generic credential errors
+      const errorMessage = error.message.toLowerCase();
+      if (
+        errorName === 'TokenProviderError' ||
+        errorMessage.includes('token expired') ||
+        errorMessage.includes('sso session') ||
+        errorMessage.includes('the sso session')
+      ) {
+        const profile = getDefaultCredentialProvider().getProfile();
+        return {
+          isValid: false,
+          tableName: targetTableName,
+          error: {
+            type: TableValidationErrorType.SSO_TOKEN_EXPIRED,
+            message: getSsoTokenExpiredMessage(profile),
           },
         };
       }

@@ -5,6 +5,7 @@ export enum TableValidationErrorType {
   TABLE_NOT_FOUND = 'TABLE_NOT_FOUND',
   TABLE_NOT_ACTIVE = 'TABLE_NOT_ACTIVE',
   CREDENTIALS_NOT_CONFIGURED = 'CREDENTIALS_NOT_CONFIGURED',
+  SSO_TOKEN_EXPIRED = 'SSO_TOKEN_EXPIRED',
   ACCESS_DENIED = 'ACCESS_DENIED',
   UNKNOWN_ERROR = 'UNKNOWN_ERROR',
 }
@@ -38,6 +39,18 @@ To create the table, deploy the CloudFormation template:
     --region us-east-1
 
 Or open ${CLOUDFORMATION_TEMPLATE_PATH} and follow the deployment instructions.`;
+}
+
+/**
+ * Get user-facing error message when SSO token has expired
+ * @param profile Optional profile name
+ * @returns Formatted error message with SSO login guidance
+ */
+export function getSsoTokenExpiredMessage(profile?: string): string {
+  const profileArg = profile ? ` --profile ${profile}` : '';
+  return `AWS SSO session has expired.
+
+Run 'aws sso login${profileArg}' to refresh your credentials.`;
 }
 
 /**

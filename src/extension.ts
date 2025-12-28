@@ -41,6 +41,7 @@ import {
   IDEATION_WIZARD_VIEW_ID,
 } from './panels/ideationWizardPanel';
 import { TableValidationErrorType } from './messages/tableErrors';
+import { handleInitializeProject as initializeProjectHandler } from './commands/initializeProject';
 import type { AgentifyConfig } from './types';
 
 /**
@@ -109,7 +110,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   // Initialize Project command
   const initializeCmd = vscode.commands.registerCommand(
     'agentify.initializeProject',
-    handleInitializeProject
+    () => handleInitializeProject(context)
   );
   context.subscriptions.push(initializeCmd);
 
@@ -187,6 +188,7 @@ async function initializeProfileFromConfig(): Promise<void> {
   const profile = await getAwsProfile();
   const credentialProvider = getDefaultCredentialProvider();
   credentialProvider.setProfile(profile);
+  statusBarManager?.setProfile(profile);
   console.log('[Agentify] Profile initialized:', profile ?? 'default');
 }
 
@@ -265,6 +267,28 @@ async function validateAndUpdateStatus(): Promise<void> {
  */
 function handleValidationError(errorType: TableValidationErrorType, message: string): void {
   switch (errorType) {
+    case TableValidationErrorType.SSO_TOKEN_EXPIRED:
+      statusBarManager?.updateStatus('sso-expired');
+      vscode.window.showWarningMessage(
+        'Agentify: AWS SSO session expired. Click to refresh credentials.',
+        'Run SSO Login'
+      ).then((selection) => {
+        if (selection === 'Run SSO Login') {
+          // Open terminal with aws sso login command
+          const profile = statusBarManager?.getProfile();
+          const command = profile
+            ? `aws sso login --profile ${profile}`
+            : 'aws sso login';
+          const terminal = vscode.window.createTerminal({
+            name: 'AWS SSO Login',
+            hideFromUser: false,
+          });
+          terminal.show();
+          terminal.sendText(command);
+        }
+      });
+      break;
+
     case TableValidationErrorType.CREDENTIALS_NOT_CONFIGURED:
       statusBarManager?.updateStatus('aws-error');
       vscode.window.showErrorMessage(
@@ -349,6 +373,7 @@ async function handleAgentifyConfigChange(config: AgentifyConfig | null): Promis
     if (newProfile !== currentProfile) {
       console.log('[Agentify] Profile changed:', currentProfile, '->', newProfile ?? 'default');
       credentialProvider.setProfile(newProfile);
+      statusBarManager?.setProfile(newProfile);
       // setProfile automatically calls reset() when profile changes
 
       // Reset AWS clients to use new credentials
@@ -372,12 +397,80 @@ async function handleAgentifyConfigChange(config: AgentifyConfig | null): Promis
 
 /**
  * Command handler: Initialize Project
+ * Delegates to the initializeProject command module
+ * Handles post-initialization flow including Demo Viewer refresh and status bar update
  */
-async function handleInitializeProject(): Promise<void> {
-  // Stub implementation - will be implemented in Spec #4
-  vscode.window.showInformationMessage(
-    'Initialize Project command coming soon. This will set up Agentify in your workspace.'
-  );
+async function handleInitializeProject(context: vscode.ExtensionContext): Promise<void> {
+  // Execute initialization command
+  const result = await initializeProjectHandler(context);
+
+  // Handle post-initialization flow
+  if (result.success) {
+    // Trigger AWS services initialization if config was created
+    const configFiles = await vscode.workspace.findFiles('.agentify/config.json', null, 1);
+    if (configFiles.length > 0 && !awsServicesInitialized) {
+      await initializeWithConfig(context);
+    }
+
+    // Refresh Demo Viewer panel to update "Get Started" button visibility
+    await refreshDemoViewerPanel();
+
+    // Refresh Ideation Wizard panel
+    await refreshIdeationWizardPanel();
+  }
+}
+
+/**
+ * Refresh the Demo Viewer panel after initialization
+ * Updates the "Get Started" button visibility based on initialization state
+ */
+async function refreshDemoViewerPanel(): Promise<void> {
+  if (demoViewerProvider) {
+    try {
+      await demoViewerProvider.refresh();
+      console.log('[Agentify] Demo Viewer panel refreshed');
+    } catch (error) {
+      console.warn('[Agentify] Failed to refresh Demo Viewer panel:', error);
+    }
+  }
+}
+
+/**
+ * Refresh the Ideation Wizard panel after initialization
+ */
+async function refreshIdeationWizardPanel(): Promise<void> {
+  if (ideationWizardProvider) {
+    try {
+      await ideationWizardProvider.refresh();
+      console.log('[Agentify] Ideation Wizard panel refreshed');
+    } catch (error) {
+      console.warn('[Agentify] Failed to refresh Ideation Wizard panel:', error);
+    }
+  }
+}
+
+/**
+ * Get the Demo Viewer panel provider
+ * Exposed for testing and external refresh triggers
+ */
+export function getDemoViewerProvider(): DemoViewerPanelProvider | null {
+  return demoViewerProvider;
+}
+
+/**
+ * Get the Ideation Wizard panel provider
+ * Exposed for testing and external refresh triggers
+ */
+export function getIdeationWizardProvider(): IdeationWizardPanelProvider | null {
+  return ideationWizardProvider;
+}
+
+/**
+ * Get the status bar manager
+ * Exposed for testing
+ */
+export function getStatusBarManager(): StatusBarManager | null {
+  return statusBarManager;
 }
 
 /**
