@@ -1,0 +1,3 @@
+# Raw Idea
+
+Project Initialization Command — Add "Agentify: Initialize Project" command that: (1) checks AWS credentials via default credential chain, (2) validates DynamoDB table exists using tableValidator service, (3) if table missing, prompts user to deploy using bundled `infrastructure/dynamodb-table.yaml` template via CloudFormation SDK, (4) waits for stack CREATE_COMPLETE, (5) generates `.agentify/config.json` with table name, region, and stack name, (6) creates `.kiro/steering/agentify-integration.md` steering file. The CloudFormation template from spec #1 is packaged with the extension for automated deployment.

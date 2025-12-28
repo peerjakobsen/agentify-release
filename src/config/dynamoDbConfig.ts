@@ -27,12 +27,36 @@ type ConfigChangeListener = (config: DynamoDbConfiguration) => void;
 const listeners: ConfigChangeListener[] = [];
 
 /**
- * Get the configured DynamoDB table name
+ * Get the configured DynamoDB table name (sync - VS Code settings only)
  * @returns The table name from settings or the default value
  */
 export function getTableName(): string {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   return config.get<string>('dynamodb.tableName', DEFAULT_TABLE_NAME);
+}
+
+/**
+ * Get the configured DynamoDB table name with hierarchy:
+ * 1. .agentify/config.json (infrastructure.dynamodb.tableName)
+ * 2. VS Code settings (agentify.dynamodb.tableName)
+ * 3. Default table name constant
+ *
+ * @returns Promise resolving to the table name
+ */
+export async function getTableNameAsync(): Promise<string> {
+  // First, check config.json via ConfigService
+  const configService = getConfigService();
+  if (configService) {
+    const config = await configService.getConfig();
+    const configTableName = config?.infrastructure?.dynamodb?.tableName;
+    if (configTableName && configTableName.trim() !== '') {
+      return configTableName;
+    }
+  }
+
+  // Fall back to VS Code settings
+  const vsCodeConfig = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  return vsCodeConfig.get<string>('dynamodb.tableName', DEFAULT_TABLE_NAME);
 }
 
 /**
