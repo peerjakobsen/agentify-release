@@ -121,7 +121,7 @@ def fetch_inventory(sku: str):
 
 ### Strands Multi-Agent Patterns
 
-Generated demos will use one of three orchestration patterns based on value map requirements:
+Generated demos will use one of three orchestration patterns based on business objective requirements:
 
 **Graph Pattern** (strands.multiagent.GraphBuilder)
 - Deterministic structure with LLM-driven path selection
@@ -357,8 +357,9 @@ Kiro generates `agents/main.py` as the workflow entry point:
   "version": "1.0",
   "project": {
     "name": "string",
-    "valueMap": "string",
-    "industry": "string"
+    "businessObjective": "string",
+    "industry": "string",
+    "systems": ["string"]
   },
   "infrastructure": {
     "dynamodb": {
@@ -394,8 +395,9 @@ Kiro generates `agents/main.py` as the workflow entry point:
   "version": "1.0",
   "project": {
     "name": "retail-inventory-demo",
-    "valueMap": "Reduce stockouts in fresh produce",
-    "industry": "retail"
+    "businessObjective": "Reduce stockouts in fresh produce by implementing predictive replenishment",
+    "industry": "retail",
+    "systems": ["SAP", "Salesforce"]
   },
   "infrastructure": {
     "dynamodb": {

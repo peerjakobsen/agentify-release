@@ -157,8 +157,8 @@ python agents/main.py \
 │                    Ideation Wizard                                   │
 │                                                                      │
 │  Reads:  .agentify/config.json                                      │
-│  Writes: project.name, project.valueMap, project.industry           │
-│          workflow.orchestrationPattern                               │
+│  Writes: project.name, project.businessObjective, project.industry  │
+│          project.systems, workflow.orchestrationPattern              │
 │          Generates Kiro specs                                        │
 └─────────────────────────────────────────────────────────────────────┘
                                     │

@@ -98,7 +98,7 @@ This guide covers the development workflow, environment compatibility, and best 
 │  └── Execution log display                                      │
 │                                                                 │
 │  Ideation Wizard Panel                                          │
-│  ├── Account context ingestion                                  │
+│  ├── Business objective input                                   │
 │  ├── Claude conversation for gap-filling                        │
 │  ├── Agent design interface                                     │
 │  ├── Mock data strategy                                         │

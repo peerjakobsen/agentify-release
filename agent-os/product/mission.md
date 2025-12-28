@@ -85,8 +85,8 @@ This results in demos that showcase AWS's agentic AI capabilities and pave the p
 The Agentify extension provides two webview panels within a single installation:
 
 ### Ideation Wizard Panel (Design-Time)
-- **Account Context Ingestion:** Upload account plans, select value maps, choose industry verticals, and identify known customer systems
-- **AI-Assisted Gap Filling:** Claude proposes industry-typical configurations when specific customer details are unknown
+- **Business Objective Input:** Enter business objective/problem statement, select industry vertical, identify known customer systems (SAP, Salesforce, Databricks, etc.), and optionally upload context documents (account plans, requirements docs)
+- **AI-Assisted Gap Filling:** Claude uses provided context to propose agent designs and fills in industry-typical configurations when specific details are unknown
 - **Outcome Definition:** Define measurable business outcomes and success criteria that map to customer priorities
 - **Agent Design:** AI-proposed agent teams with appropriate orchestration patterns for the use case
 - **Mock Data Strategy:** Realistic mock data generation based on industry context for compelling demos

@@ -64,6 +64,10 @@
       {
         "command": "agentify.showStatus",
         "title": "Agentify: Show Status"
+      },
+      {
+        "command": "agentify.loadDemoEvents",
+        "title": "Agentify: Load Demo Events (Testing)"
       }
     ],
     "configuration": {

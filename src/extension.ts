@@ -43,6 +43,7 @@ import {
 import { TableValidationErrorType } from './messages/tableErrors';
 import { handleInitializeProject as initializeProjectHandler } from './commands/initializeProject';
 import type { AgentifyConfig } from './types';
+import type { LogEntry } from './types/logPanel';
 
 /**
  * Extension context for managing lifecycle
@@ -134,6 +135,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
     handleShowStatus
   );
   context.subscriptions.push(showStatusCmd);
+
+  // Load Demo Events command (for testing UI)
+  const loadDemoEventsCmd = vscode.commands.registerCommand(
+    'agentify.loadDemoEvents',
+    handleLoadDemoEvents
+  );
+  context.subscriptions.push(loadDemoEventsCmd);
 }
 
 /**
@@ -494,6 +502,240 @@ async function handleOpenIdeationWizard(): Promise<void> {
  */
 async function handleShowStatus(): Promise<void> {
   await statusBarManager?.showQuickPick();
+}
+
+/**
+ * Command handler: Load Demo Events
+ * Injects sample log entries for UI testing
+ */
+async function handleLoadDemoEvents(): Promise<void> {
+  if (!demoViewerProvider) {
+    vscode.window.showWarningMessage('Demo Viewer panel not available');
+    return;
+  }
+
+  // Generate sample events that simulate a realistic workflow
+  const baseTime = Date.now();
+  const sampleEvents: LogEntry[] = [
+    {
+      id: `demo-${baseTime}-1`,
+      timestamp: baseTime,
+      eventType: 'node_start',
+      agentName: 'orchestrator_agent',
+      summary: 'Agent started',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-2`,
+      timestamp: baseTime + 150,
+      eventType: 'tool_call',
+      agentName: 'orchestrator_agent',
+      summary: 'Tool: bedrock -> invoke_model',
+      payload: {
+        system: 'bedrock',
+        operation: 'invoke_model',
+        input: {
+          model_id: 'anthropic.claude-3-sonnet',
+          prompt: 'Analyze the user request and determine the next steps...',
+          max_tokens: 4096,
+        },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-3`,
+      timestamp: baseTime + 1200,
+      eventType: 'tool_result',
+      agentName: 'orchestrator_agent',
+      summary: 'Tool completed: bedrock -> invoke_model',
+      payload: {
+        system: 'bedrock',
+        operation: 'invoke_model',
+        output: {
+          response: 'I will help you with that request. Let me delegate to the researcher agent...',
+          usage: { input_tokens: 156, output_tokens: 89 },
+        },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+    },
+    {
+      id: `demo-${baseTime}-4`,
+      timestamp: baseTime + 1250,
+      eventType: 'node_stop',
+      agentName: 'orchestrator_agent',
+      summary: 'Agent completed (1.2s)',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+      durationMs: 1250,
+    },
+    {
+      id: `demo-${baseTime}-5`,
+      timestamp: baseTime + 1300,
+      eventType: 'node_start',
+      agentName: 'researcher_agent',
+      summary: 'Agent started',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-6`,
+      timestamp: baseTime + 1450,
+      eventType: 'tool_call',
+      agentName: 'researcher_agent',
+      summary: 'Tool: filesystem -> read_file',
+      payload: {
+        system: 'filesystem',
+        operation: 'read_file',
+        input: { path: '/src/config/settings.json' },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-7`,
+      timestamp: baseTime + 1520,
+      eventType: 'tool_result',
+      agentName: 'researcher_agent',
+      summary: 'Tool completed: filesystem -> read_file',
+      payload: {
+        system: 'filesystem',
+        operation: 'read_file',
+        output: {
+          content: '{\n  "appName": "MyApp",\n  "version": "1.0.0",\n  "features": {\n    "darkMode": true,\n    "notifications": true\n  }\n}',
+          bytes: 142,
+        },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+    },
+    {
+      id: `demo-${baseTime}-8`,
+      timestamp: baseTime + 1600,
+      eventType: 'tool_call',
+      agentName: 'researcher_agent',
+      summary: 'Tool: web -> fetch_url',
+      payload: {
+        system: 'web',
+        operation: 'fetch_url',
+        input: { url: 'https://api.example.com/data', method: 'GET' },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-9`,
+      timestamp: baseTime + 2800,
+      eventType: 'tool_result',
+      agentName: 'researcher_agent',
+      summary: 'Tool failed: Connection timeout',
+      payload: {
+        system: 'web',
+        operation: 'fetch_url',
+        error: 'Connection timeout after 1200ms',
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'error',
+      errorMessage: 'Connection timeout after 1200ms',
+    },
+    {
+      id: `demo-${baseTime}-10`,
+      timestamp: baseTime + 2900,
+      eventType: 'node_stop',
+      agentName: 'researcher_agent',
+      summary: 'Agent completed (1.6s)',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+      durationMs: 1600,
+    },
+    {
+      id: `demo-${baseTime}-11`,
+      timestamp: baseTime + 3000,
+      eventType: 'node_start',
+      agentName: 'writer_agent',
+      summary: 'Agent started',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-12`,
+      timestamp: baseTime + 3100,
+      eventType: 'tool_call',
+      agentName: 'writer_agent',
+      summary: 'Tool: bedrock -> invoke_model',
+      payload: {
+        system: 'bedrock',
+        operation: 'invoke_model',
+        input: {
+          model_id: 'anthropic.claude-3-sonnet',
+          prompt: 'Based on the research findings, generate a summary report...',
+        },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'neutral',
+    },
+    {
+      id: `demo-${baseTime}-13`,
+      timestamp: baseTime + 4500,
+      eventType: 'tool_result',
+      agentName: 'writer_agent',
+      summary: 'Tool completed: bedrock -> invoke_model',
+      payload: {
+        system: 'bedrock',
+        operation: 'invoke_model',
+        output: {
+          response: 'Here is your summary report:\n\n## Analysis Results\n\nThe application configuration shows...',
+          usage: { input_tokens: 892, output_tokens: 456 },
+        },
+      },
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+    },
+    {
+      id: `demo-${baseTime}-14`,
+      timestamp: baseTime + 4600,
+      eventType: 'node_stop',
+      agentName: 'writer_agent',
+      summary: 'Agent completed (1.6s)',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+      durationMs: 1600,
+    },
+    {
+      id: `demo-${baseTime}-15`,
+      timestamp: baseTime + 4700,
+      eventType: 'workflow_complete',
+      agentName: 'Workflow',
+      summary: 'Workflow completed (4.7s)',
+      isExpanded: false,
+      isTruncationExpanded: false,
+      status: 'success',
+      durationMs: 4700,
+    },
+  ];
+
+  // Add events to the log panel
+  for (const event of sampleEvents) {
+    demoViewerProvider.addLogEntry(event);
+  }
+
+  vscode.window.showInformationMessage(`Loaded ${sampleEvents.length} demo events into Execution Log`);
 }
 
 /**

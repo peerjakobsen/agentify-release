@@ -12,12 +12,28 @@ import { WorkflowExecutor } from '../services/workflowExecutor';
 import { generateWorkflowId, generateTraceId } from '../utils/idGenerator';
 import { formatTime } from '../utils/timerFormatter';
 import { getNextState } from '../utils/inputPanelStateMachine';
+import {
+  generateLogSectionHtml,
+  generateLogSectionCss,
+  generateLogSectionJs,
+} from '../utils/logPanelHtmlGenerator';
+import { applyFilters } from '../utils/logFilterUtils';
 import type {
   InputPanelState,
   ValidationState,
   WorkflowExecution,
 } from '../types/inputPanel';
 import { InputPanelState as InputPanelStateEnum } from '../types/inputPanel';
+import type {
+  LogEntry,
+  LogFilterState,
+  LogPanelState,
+} from '../types/logPanel';
+import {
+  DEFAULT_LOG_PANEL_STATE,
+  DEFAULT_FILTER_STATE,
+  MAX_LOG_ENTRIES,
+} from '../types/logPanel';
 
 /**
  * View ID for the Demo Viewer panel
@@ -86,6 +102,13 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
    * Workflow executor instance
    */
   private _workflowExecutor: WorkflowExecutor | null = null;
+
+  /**
+   * Log panel state (stored in instance, not workspace state)
+   * Per spec: Store events array in DemoViewerPanelProvider instance state
+   * Log state is NOT persisted across IDE restart (stored in instance, not workspaceState)
+   */
+  private _logPanelState: LogPanelState = { ...DEFAULT_LOG_PANEL_STATE };
 
   /**
    * Creates a new DemoViewerPanelProvider
@@ -277,6 +300,112 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Extract unique agent names from log entries
+   */
+  private extractUniqueAgentNames(): string[] {
+    const names = new Set<string>();
+    for (const entry of this._logPanelState.entries) {
+      if (entry.agentName && entry.agentName !== 'Workflow') {
+        names.add(entry.agentName);
+      }
+    }
+    return Array.from(names).sort();
+  }
+
+  /**
+   * Get filtered log entries based on current filter state
+   */
+  private getFilteredLogEntries(): LogEntry[] {
+    return applyFilters(this._logPanelState.entries, this._logPanelState.filters);
+  }
+
+  /**
+   * Check if workflow is currently running
+   */
+  private isWorkflowRunning(): boolean {
+    return this._currentState === InputPanelStateEnum.Running;
+  }
+
+  /**
+   * Add a log entry to the panel
+   * Enforces the maximum 500 entries limit by dropping oldest events when exceeded
+   * Auto-expands the log section when the first event arrives
+   *
+   * @param entry The log entry to add
+   * @param syncToWebview Whether to sync state to webview after adding (default: true)
+   */
+  public addLogEntry(entry: LogEntry, syncToWebview = true): void {
+    // Auto-expand on first event if section is collapsed
+    if (this._logPanelState.isCollapsed && this._logPanelState.entries.length === 0) {
+      this._logPanelState.isCollapsed = false;
+    }
+
+    // Add entry to the entries array
+    this._logPanelState.entries.push(entry);
+
+    // Enforce maximum 500 events limit - drop oldest when exceeded
+    while (this._logPanelState.entries.length > MAX_LOG_ENTRIES) {
+      this._logPanelState.entries.shift();
+    }
+
+    // Sync state to webview if requested
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Add multiple log entries at once (more efficient for batch operations)
+   * Enforces the maximum 500 entries limit by dropping oldest events when exceeded
+   * Auto-expands the log section when the first event arrives
+   *
+   * @param entries Array of log entries to add
+   * @param syncToWebview Whether to sync state to webview after adding (default: true)
+   */
+  public addLogEntries(entries: LogEntry[], syncToWebview = true): void {
+    if (entries.length === 0) {
+      return;
+    }
+
+    // Auto-expand on first event if section is collapsed
+    if (this._logPanelState.isCollapsed && this._logPanelState.entries.length === 0) {
+      this._logPanelState.isCollapsed = false;
+    }
+
+    // Add all entries
+    this._logPanelState.entries.push(...entries);
+
+    // Enforce maximum 500 events limit - drop oldest when exceeded
+    if (this._logPanelState.entries.length > MAX_LOG_ENTRIES) {
+      const overflow = this._logPanelState.entries.length - MAX_LOG_ENTRIES;
+      this._logPanelState.entries.splice(0, overflow);
+    }
+
+    // Sync state to webview if requested
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Clear all log entries
+   * Called when a new workflow run starts
+   *
+   * @param syncToWebview Whether to sync state to webview after clearing (default: true)
+   */
+  public clearLogEntries(syncToWebview = true): void {
+    this._logPanelState.entries = [];
+    this._logPanelState.filters = { ...DEFAULT_FILTER_STATE };
+    this._logPanelState.autoScrollEnabled = true;
+    this._logPanelState.isAtBottom = true;
+    // Note: isCollapsed is NOT reset here - section stays collapsed until first event arrives
+
+    if (syncToWebview) {
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
    * Synchronize state to webview
    */
   private async syncStateToWebview(): Promise<void> {
@@ -285,6 +414,9 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const xrayUrl = await this.getXrayUrl();
+
+    // Apply filters to entries before sending to webview
+    const filteredEntries = this.getFilteredLogEntries();
 
     this._view.webview.postMessage({
       type: 'stateSync',
@@ -295,6 +427,16 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
       timerDisplay: this.getTimerDisplay(),
       validationErrors: this._validationState.errors,
       xrayUrl,
+      // Log panel state - send filtered entries
+      logEntries: filteredEntries,
+      logFilters: this._logPanelState.filters,
+      logIsCollapsed: this._logPanelState.isCollapsed,
+      logAutoScrollEnabled: this._logPanelState.autoScrollEnabled,
+      uniqueAgentNames: this.extractUniqueAgentNames(),
+      // Include total entry count for reference
+      totalLogEntries: this._logPanelState.entries.length,
+      // Workflow running state for auto-scroll behavior
+      isWorkflowRunning: this.isWorkflowRunning(),
     });
   }
 
@@ -460,6 +602,23 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     const workflowId = this._currentExecution?.workflowId || '';
     const traceId = this._currentExecution?.traceId || '';
     const timerDisplay = this.getTimerDisplay();
+
+    // Apply filters before generating HTML
+    const filteredEntries = this.getFilteredLogEntries();
+
+    // Generate log section HTML with filtered entries
+    const logSectionHtml = generateLogSectionHtml({
+      entries: filteredEntries,
+      isCollapsed: this._logPanelState.isCollapsed,
+      uniqueAgentNames: this.extractUniqueAgentNames(),
+      filters: this._logPanelState.filters,
+    });
+
+    // Generate log section CSS
+    const logSectionCss = generateLogSectionCss();
+
+    // Generate log section JS
+    const logSectionJs = generateLogSectionJs();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -639,9 +798,13 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+
+    /* Log Section CSS */
+    ${logSectionCss}
   </style>
 </head>
 <body>
+  <!-- Input Panel Section -->
   <div class="input-panel">
     <div>
       <div class="section-label">Prompt</div>
@@ -703,9 +866,29 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
+  <!-- Agent Graph Placeholder Section -->
+  <div class="placeholder-section" id="agentGraphPlaceholder">
+    Agent Graph (Coming Soon)
+  </div>
+
+  <!-- Execution Log Section -->
+  ${logSectionHtml}
+
+  <!-- Outcome Panel Placeholder Section -->
+  <div class="placeholder-section" id="outcomePanelPlaceholder">
+    Outcome Panel (Coming Soon)
+  </div>
+
   <script>
     const vscode = acquireVsCodeApi();
     let debounceTimer = null;
+
+    // Constants for payload truncation
+    const PAYLOAD_TRUNCATION_THRESHOLD = 20;
+    const PAYLOAD_TRUNCATION_PREVIEW_LINES = 10;
+
+    // Track previous entry count for auto-scroll trigger
+    let previousEntryCount = 0;
 
     // Initialize textarea with persisted value
     const promptTextarea = document.getElementById('promptTextarea');
@@ -801,7 +984,232 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
 
       // Update textarea state
       promptTextarea.disabled = isRunning;
+
+      // Update log section if entries changed
+      if (state.logEntries !== undefined) {
+        updateLogSection(state);
+      }
     }
+
+    function updateLogSection(state) {
+      const logSection = document.getElementById('executionLogSection');
+      if (!logSection) return;
+
+      // Check if this is a new workflow run (entry count reset to 0 or decreased)
+      const currentEntryCount = state.logEntries ? state.logEntries.length : 0;
+      const isNewRun = currentEntryCount === 0 || currentEntryCount < previousEntryCount;
+      const hasNewEntries = currentEntryCount > previousEntryCount;
+
+      // Reset auto-scroll state on new run
+      if (isNewRun && window.logAutoScroll) {
+        window.logAutoScroll.resetAutoScrollState();
+      }
+
+      // Update collapsed state
+      if (state.logIsCollapsed) {
+        logSection.classList.add('collapsed');
+      } else {
+        logSection.classList.remove('collapsed');
+      }
+
+      // Update collapse indicator
+      const indicator = logSection.querySelector('.collapse-indicator');
+      if (indicator) {
+        indicator.innerHTML = state.logIsCollapsed ? '&#9658;' : '&#9660;';
+      }
+
+      // Update event type filter selection
+      const eventTypeFilter = document.getElementById('eventTypeFilter');
+      if (eventTypeFilter && state.logFilters) {
+        eventTypeFilter.value = state.logFilters.eventTypeFilter || 'all';
+      }
+
+      // Update agent name filter options and selection
+      const agentFilter = document.getElementById('agentNameFilter');
+      if (agentFilter && state.uniqueAgentNames) {
+        const currentValue = state.logFilters?.agentNameFilter || 'all';
+        agentFilter.innerHTML = '<option value="all">All Agents</option>' +
+          state.uniqueAgentNames.map(name =>
+            '<option value="' + escapeHtml(name) + '"' + (currentValue === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>'
+          ).join('');
+        // Ensure the current filter value is selected
+        agentFilter.value = currentValue;
+      }
+
+      // Update log entries container - entries are already filtered by extension
+      const entriesContainer = document.getElementById('logEntriesContainer');
+      if (entriesContainer && state.logEntries) {
+        if (state.logEntries.length === 0) {
+          // Check if there are total entries but no filtered entries
+          const hasEntriesButFiltered = state.totalLogEntries > 0;
+          entriesContainer.innerHTML = hasEntriesButFiltered
+            ? '<div class="log-entries-empty">No matching events</div>'
+            : '<div class="log-entries-empty">No events to display</div>';
+        } else {
+          entriesContainer.innerHTML = state.logEntries.map(entry => generateLogEntryHtml(entry)).join('');
+        }
+
+        // Auto-scroll to bottom if workflow is running and has new entries
+        if (hasNewEntries && window.logAutoScroll) {
+          window.logAutoScroll.autoScrollIfNeeded(
+            state.logAutoScrollEnabled,
+            state.isWorkflowRunning
+          );
+        }
+      }
+
+      // Update previous entry count for next comparison
+      previousEntryCount = currentEntryCount;
+    }
+
+    function generateLogEntryHtml(entry) {
+      const timestamp = formatLogTimestamp(entry.timestamp);
+      const icon = getEventIcon(entry.eventType, entry.status);
+      const statusClass = 'status-' + entry.status;
+      const hasPayload = entry.payload && Object.keys(entry.payload).length > 0;
+      const expandBtn = hasPayload
+        ? '<button class="log-entry-expand-btn" data-entry-id="' + escapeHtml(entry.id) + '">' + (entry.isExpanded ? '[-]' : '[+]') + '</button>'
+        : '';
+
+      // Generate payload expansion container if expanded
+      let payloadHtml = '';
+      if (hasPayload && entry.isExpanded) {
+        payloadHtml = '<div class="log-entry-payload" data-entry-id="' + escapeHtml(entry.id) + '">' +
+          generatePayloadHtml(entry.payload, entry.isTruncationExpanded, entry.id) +
+          '</div>';
+      }
+
+      return '<div class="log-entry-wrapper" data-entry-id="' + escapeHtml(entry.id) + '">' +
+        '<div class="log-entry ' + statusClass + '" data-entry-id="' + escapeHtml(entry.id) + '">' +
+        '<span class="log-entry-timestamp">' + timestamp + '</span>' +
+        '<span class="log-entry-icon ' + statusClass + '">' + icon + '</span>' +
+        '<span class="log-entry-agent">' + escapeHtml(entry.agentName) + '</span>' +
+        '<span class="log-entry-summary">' + escapeHtml(entry.summary) + '</span>' +
+        expandBtn +
+        '</div>' +
+        payloadHtml +
+        '</div>';
+    }
+
+    function generatePayloadHtml(payload, isTruncationExpanded, entryId) {
+      const jsonString = JSON.stringify(payload, null, 2);
+      const lines = jsonString.split('\\n');
+      const needsTruncation = lines.length > PAYLOAD_TRUNCATION_THRESHOLD;
+
+      if (!needsTruncation || isTruncationExpanded) {
+        // Show full payload with syntax highlighting
+        const highlighted = tokenizeJson(jsonString);
+        return '<pre class="payload-content">' + highlighted + '</pre>';
+      }
+
+      // Show truncated payload with "Show more" link
+      const truncatedLines = lines.slice(0, PAYLOAD_TRUNCATION_PREVIEW_LINES);
+      const remainingLines = lines.length - PAYLOAD_TRUNCATION_PREVIEW_LINES;
+      const truncated = truncatedLines.join('\\n');
+      const highlighted = tokenizeJson(truncated);
+
+      return '<pre class="payload-content payload-truncated">' + highlighted + '</pre>' +
+        '<button class="payload-show-more" data-entry-id="' + escapeHtml(entryId) + '">' +
+        'Show more... (' + remainingLines + ' more lines)' +
+        '</button>';
+    }
+
+    function tokenizeJson(jsonString) {
+      // Patterns to match JSON tokens (order matters: keys before strings)
+      const patterns = [
+        { type: 'key', regex: /"([^"\\\\]|\\\\.)*"\\s*(?=:)/g },
+        { type: 'string', regex: /"([^"\\\\]|\\\\.)*"/g },
+        { type: 'number', regex: /-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?/g },
+        { type: 'boolean', regex: /\\b(true|false)\\b/g },
+        { type: 'null', regex: /\\bnull\\b/g },
+      ];
+
+      // Create a map of positions to tokens
+      const tokens = [];
+
+      for (const { type, regex } of patterns) {
+        let match;
+        const regexClone = new RegExp(regex.source, regex.flags);
+        while ((match = regexClone.exec(jsonString)) !== null) {
+          // Check if this position is already covered by another token
+          const isOverlapping = tokens.some(
+            t => match.index < t.end && match.index + match[0].length > t.start
+          );
+          if (!isOverlapping) {
+            tokens.push({
+              start: match.index,
+              end: match.index + match[0].length,
+              type: type,
+              text: match[0],
+            });
+          }
+        }
+      }
+
+      // Sort tokens by position
+      tokens.sort((a, b) => a.start - b.start);
+
+      // Build highlighted HTML
+      let result = '';
+      let lastIndex = 0;
+
+      for (const token of tokens) {
+        // Add any non-token text before this token
+        if (token.start > lastIndex) {
+          result += escapeHtml(jsonString.slice(lastIndex, token.start));
+        }
+        // Add the highlighted token
+        result += '<span class="json-' + token.type + '">' + escapeHtml(token.text) + '</span>';
+        lastIndex = token.end;
+      }
+
+      // Add any remaining text after the last token
+      if (lastIndex < jsonString.length) {
+        result += escapeHtml(jsonString.slice(lastIndex));
+      }
+
+      return result;
+    }
+
+    function formatLogTimestamp(timestamp) {
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) return '--:--:--.---';
+      const h = String(date.getHours()).padStart(2, '0');
+      const m = String(date.getMinutes()).padStart(2, '0');
+      const s = String(date.getSeconds()).padStart(2, '0');
+      const ms = String(date.getMilliseconds()).padStart(3, '0');
+      return h + ':' + m + ':' + s + '.' + ms;
+    }
+
+    function getEventIcon(eventType, status) {
+      switch (eventType) {
+        case 'node_start':
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2v12l10-6L4 2z"/></svg>';
+        case 'node_stop':
+          if (status === 'error') {
+            return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>';
+          }
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>';
+        case 'tool_call':
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11.92 5.28a.75.75 0 01.04 1.06l-.04.04-1.5 1.5 2.28 2.28a.75.75 0 01-1.06 1.06l-2.28-2.28-4.5 4.5a.75.75 0 01-1.06-1.06l4.5-4.5-1.5-1.5a.75.75 0 01.04-1.1l.02-.01.04-.03 2.5-2.5a3.25 3.25 0 014.52 4.52l-.02.02z"/></svg>';
+        case 'tool_result':
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8.22 2.97a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06l2.97-2.97H3.75a.75.75 0 010-1.5h7.44L8.22 4.03a.75.75 0 010-1.06z"/></svg>';
+        case 'workflow_complete':
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2.5a.5.5 0 01.5-.5h9a.5.5 0 01.4.8L10.5 6l2.4 3.2a.5.5 0 01-.4.8H4v4a.5.5 0 01-1 0v-11z"/></svg>';
+        case 'workflow_error':
+          return '<svg class="log-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM7 4.75a.75.75 0 011.5 0v3.5a.75.75 0 01-1.5 0v-3.5zm.75 6.5a1 1 0 100-2 1 1 0 000 2z"/></svg>';
+        default:
+          return '';
+      }
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Log section JavaScript handlers
+    ${logSectionJs}
   </script>
 </body>
 </html>`;
@@ -812,7 +1220,18 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
    * @param message The message from the webview
    */
   private async handleMessage(message: unknown): Promise<void> {
-    const msg = message as { command?: string; prompt?: string; text?: string; idType?: string };
+    const msg = message as {
+      command?: string;
+      prompt?: string;
+      text?: string;
+      idType?: string;
+      isCollapsed?: boolean;
+      filterType?: string;
+      value?: string;
+      entryId?: string;
+      isAtBottom?: boolean;
+      userScrolledUp?: boolean;
+    };
 
     switch (msg.command) {
       case 'initializeProject':
@@ -839,8 +1258,73 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
         this.persistPromptText(msg.text || '');
         break;
 
+      // Log section message handlers
+      case 'logSectionToggle':
+        this._logPanelState.isCollapsed = msg.isCollapsed ?? this._logPanelState.isCollapsed;
+        break;
+
+      case 'logFilterChange':
+        this.handleLogFilterChange(msg.filterType || '', msg.value || '');
+        break;
+
+      case 'logEntryToggle':
+        this.handleLogEntryToggle(msg.entryId || '');
+        break;
+
+      case 'logPayloadShowMore':
+        this.handleLogPayloadShowMore(msg.entryId || '');
+        break;
+
+      case 'logScrollPosition':
+        this._logPanelState.isAtBottom = msg.isAtBottom ?? true;
+        // Disable auto-scroll when user scrolls up manually
+        if (msg.userScrolledUp) {
+          this._logPanelState.autoScrollEnabled = false;
+        }
+        break;
+
+      case 'logScrollToBottom':
+        // User clicked scroll to bottom button - re-enable auto-scroll
+        this._logPanelState.isAtBottom = true;
+        this._logPanelState.autoScrollEnabled = true;
+        break;
+
       default:
         console.log('[DemoViewer] Received message:', message);
+    }
+  }
+
+  /**
+   * Handle log filter change
+   */
+  private handleLogFilterChange(filterType: string, value: string): void {
+    if (filterType === 'eventType') {
+      this._logPanelState.filters.eventTypeFilter = value as LogFilterState['eventTypeFilter'];
+    } else if (filterType === 'agentName') {
+      this._logPanelState.filters.agentNameFilter = value === 'all' ? null : value;
+    }
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle log entry expand/collapse toggle
+   */
+  private handleLogEntryToggle(entryId: string): void {
+    const entry = this._logPanelState.entries.find(e => e.id === entryId);
+    if (entry) {
+      entry.isExpanded = !entry.isExpanded;
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Handle payload "Show more" click to expand truncated payload
+   */
+  private handleLogPayloadShowMore(entryId: string): void {
+    const entry = this._logPanelState.entries.find(e => e.id === entryId);
+    if (entry) {
+      entry.isTruncationExpanded = true;
+      this.syncStateToWebview();
     }
   }
 
@@ -878,6 +1362,14 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
 
     this._currentState = nextState;
     this.persistLastWorkflowId(workflowId);
+
+    // Clear log entries for new run and reset filters to defaults
+    // Also reset log section to collapsed state (will auto-expand on first event)
+    this._logPanelState.entries = [];
+    this._logPanelState.filters = { ...DEFAULT_FILTER_STATE };
+    this._logPanelState.autoScrollEnabled = true;
+    this._logPanelState.isAtBottom = true;
+    this._logPanelState.isCollapsed = true; // Reset to collapsed, will auto-expand on first event
 
     // Start timer and sync
     this.startTimer();
@@ -1010,6 +1502,13 @@ export class DemoViewerPanelProvider implements vscode.WebviewViewProvider {
    */
   public get validationState(): ValidationState {
     return this._validationState;
+  }
+
+  /**
+   * Get the current log panel state
+   */
+  public get logPanelState(): LogPanelState {
+    return this._logPanelState;
   }
 
   /**
