@@ -16,9 +16,38 @@
 
 7. [x] Outcome Panel — Build outcome display section in Demo Viewer (below Execution Log) showing: (1) success/failure status with ✅/❌ icon from `workflow_complete` or `workflow_error` stdout events, (2) workflow result rendered as markdown when result is a string, with formatted JSON fallback (syntax highlighting, collapsible) for structured objects, (3) "Sources" line listing data sources used if provided in outcome payload, (4) copy-to-clipboard button for result content. Panel starts hidden/collapsed until first workflow completes, clears immediately when new run starts (not waiting for new outcome). Error state displays error message prominently without stack trace — keep it clean for demo audiences. Does NOT duplicate execution duration (already shown in Input Panel timer). `S`
 
-8. [ ] DynamoDB Polling Service — Implement polling service for workflow events: (1) poll `infrastructure.dynamodb.tableName` every 500ms using AWS SDK DocumentClient, (2) query by `workflow_id` (partition key) with `timestamp` (sort key) greater than last-polled timestamp to fetch only new events, (3) start polling when `handleRunWorkflow()` generates a workflow_id, (4) stop polling on `workflow_complete`/`workflow_error` event, panel dispose, or new workflow run, (5) exponential backoff on errors (1s, 2s, 4s, max 30s) with automatic recovery, (6) emit events to subscribers (for merging with stdout stream), (7) track seen event IDs for deduplication. Service is separate from panel lifecycle — panel subscribes to events, service manages AWS calls. `M`
+8. [x] DynamoDB Polling Service — Implement polling service for workflow events: (1) poll `infrastructure.dynamodb.tableName` every 500ms using AWS SDK DocumentClient, (2) query by `workflow_id` (partition key) with `timestamp` (sort key) greater than last-polled timestamp to fetch only new events, (3) start polling when `handleRunWorkflow()` generates a workflow_id, (4) stop polling on `workflow_complete`/`workflow_error` event, panel dispose, or new workflow run, (5) exponential backoff on errors (1s, 2s, 4s, max 30s) with automatic recovery, (6) emit events to subscribers (for merging with stdout stream), (7) track seen event IDs for deduplication. Service is separate from panel lifecycle — panel subscribes to events, service manages AWS calls. `M`
 
-9. [ ] Observability Steering Documentation — Update `.kiro/steering/agentify-integration.md` with complete event emission patterns for Kiro-generated code: CLI argument contract (`--prompt`, `--workflow-id`, `--trace-id`), Strands `StrandsTelemetry` setup, `stream_async()` event mapping, stdout JSON line format, DynamoDB write patterns, and hybrid identity (workflow_id + OTEL trace_id) usage. This steering file guides Kiro's code generation. `S`
+9. [ ] Observability Steering Documentation — Expand `.kiro/steering/agentify-integration.md` (created in item 4) with complete implementation guidance for Kiro-generated agent code:
+
+**CLI Contract:**
+- `agents/main.py` must accept `--prompt`, `--workflow-id`, `--trace-id` via argparse
+- Read `AGENTIFY_TABLE_NAME` and `AGENTIFY_TABLE_REGION` environment variables
+- Example argparse setup code snippet
+
+**Hybrid Identity Pattern:**
+- `workflow_id`: Short ID (wf-{8-char}) for UI display and DynamoDB partition key
+- `trace_id`: 32-char hex OTEL trace ID for X-Ray correlation
+- Both IDs included in every emitted event
+
+**stdout Event Streaming (real-time, for graph visualization):**
+- JSON Lines format (one JSON object per line to stdout)
+- Event types: `graph_structure` (topology at start), `node_start`/`node_stream`/`node_stop` (agent lifecycle), `workflow_complete`/`workflow_error` (terminal)
+- Schema: `{"workflow_id": "...", "trace_id": "...", "timestamp": 1234567890, "event_type": "...", "payload": {...}}`
+- Example: mapping Strands `stream_async()` callbacks to stdout events
+
+**DynamoDB Event Persistence (for tool calls and history):**
+- Event types: `tool_call`, `tool_result`, `agent_start`, `agent_end`, `handoff`
+- Write to table from `AGENTIFY_TABLE_NAME` env var using boto3
+- Include TTL field for automatic cleanup
+- Example: `emit_event()` helper function pattern
+
+**Strands SDK Integration:**
+- `StrandsTelemetry` setup for OTEL trace propagation
+- `stream_async()` event callback mapping to stdout JSON lines
+- Agent decorator patterns for consistent event emission
+
+This steering file is the source of truth for Kiro's code generation — all generated agents must follow these patterns. `M`
 
 10. [ ] Workflow Trigger Service — Build subprocess execution service that: (1) generates `workflow_id` (wf-{8-char-uuid}) and OTEL-compatible `trace_id` (32-char hex), (2) spawns `python {entryScript}` with CLI args from config, (3) passes `AGENTIFY_TABLE_NAME` and `AGENTIFY_TABLE_REGION` env vars, (4) captures stdout for real-time event streaming, (5) handles process lifecycle (start, running, exit, error, kill on reset). Entry script path read from `.agentify/config.json` workflow.entryScript field. `M`
 
