@@ -170,6 +170,18 @@ export interface AwsConfig {
 }
 
 /**
+ * Configuration for observability features
+ */
+export interface ObservabilityConfig {
+  /**
+   * AWS X-Ray console URL template
+   * Supports {region} and {trace_id} placeholders
+   * @example "https://{region}.console.aws.amazon.com/xray/home?region={region}#/traces/{trace_id}"
+   */
+  xrayConsoleUrl?: string;
+}
+
+/**
  * Root configuration for an Agentify project
  * Stored in .agentify/config.json
  */
@@ -200,6 +212,12 @@ export interface AgentifyConfig {
    * Optional - when omitted, AWS SDK uses default credential resolution
    */
   aws?: AwsConfig;
+
+  /**
+   * Observability configuration (X-Ray, tracing)
+   * Optional - when omitted, observability features are disabled
+   */
+  observability?: ObservabilityConfig;
 }
 
 /**

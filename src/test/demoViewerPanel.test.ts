@@ -1,10 +1,13 @@
 /**
- * Tests for Demo Viewer Panel Integration (Task Group 5)
+ * Tests for Demo Viewer Panel Integration (Task Groups 4 and 5)
  *
  * These tests validate the Demo Viewer panel integration including:
  * - "Get Started" button visibility when project not initialized
  * - Button click triggers agentify.initializeProject command
  * - Button hidden when project is initialized
+ * - Input panel message handling
+ * - State persistence
+ * - Validation error display
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -14,6 +17,9 @@ let mockIsInitialized = false;
 let mockWebviewHtml = '';
 let mockReceivedMessages: unknown[] = [];
 let mockCommandExecuted = '';
+let mockClipboardText = '';
+let mockWorkspaceState: Map<string, unknown> = new Map();
+let mockValidationState = { isValid: true, errors: [] as { type: string; message: string }[] };
 
 // Mock vscode module
 vi.mock('vscode', () => ({
@@ -45,6 +51,7 @@ vi.mock('vscode', () => ({
     joinPath: (uri: { fsPath: string }, ...segments: string[]) => ({
       fsPath: [uri.fsPath, ...segments].join('/'),
     }),
+    parse: (url: string) => ({ toString: () => url }),
   },
   RelativePattern: vi.fn(),
   Disposable: vi.fn().mockImplementation((fn) => ({ dispose: fn })),
@@ -54,6 +61,15 @@ vi.mock('vscode', () => ({
       return Promise.resolve();
     }),
   },
+  env: {
+    clipboard: {
+      writeText: vi.fn().mockImplementation((text: string) => {
+        mockClipboardText = text;
+        return Promise.resolve();
+      }),
+    },
+    openExternal: vi.fn().mockResolvedValue(true),
+  },
 }));
 
 // Mock config service
@@ -61,12 +77,44 @@ vi.mock('../services/configService', () => ({
   getConfigService: () => ({
     isInitialized: vi.fn().mockImplementation(() => Promise.resolve(mockIsInitialized)),
     onConfigChanged: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    getConfig: vi.fn().mockResolvedValue({
+      workflow: { entryScript: 'agents/main.py', pythonPath: 'python3' },
+      infrastructure: { dynamodb: { tableName: 'test-table', region: 'us-east-1' } },
+    }),
   }),
   ConfigService: vi.fn().mockImplementation(() => ({
     isInitialized: vi.fn().mockImplementation(() => Promise.resolve(mockIsInitialized)),
     onConfigChanged: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    getConfig: vi.fn().mockResolvedValue({
+      workflow: { entryScript: 'agents/main.py', pythonPath: 'python3' },
+      infrastructure: { dynamodb: { tableName: 'test-table', region: 'us-east-1' } },
+    }),
   })),
   CONFIG_FILE_PATH: '.agentify/config.json',
+}));
+
+// Mock input panel validation service
+vi.mock('../services/inputPanelValidation', () => ({
+  getInputPanelValidationService: () => ({
+    validateAll: vi.fn().mockImplementation(() => Promise.resolve(mockValidationState)),
+    invalidateCache: vi.fn(),
+    dispose: vi.fn(),
+  }),
+}));
+
+// Mock workflow executor
+vi.mock('../services/workflowExecutor', () => ({
+  WorkflowExecutor: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({
+      workflowId: 'wf-12345678',
+      traceId: 'abcd1234abcd1234abcd1234abcd1234',
+      startTime: Date.now(),
+      endTime: Date.now() + 1000,
+      status: 'completed',
+    }),
+    dispose: vi.fn(),
+    isRunning: vi.fn().mockReturnValue(false),
+  })),
 }));
 
 // Import vscode after mocking
@@ -105,6 +153,21 @@ function createMockWebviewView() {
   return webviewView as vscode.WebviewView;
 }
 
+// Helper to create mock extension context
+function createMockExtensionContext() {
+  return {
+    workspaceState: {
+      get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
+        return mockWorkspaceState.get(key) ?? defaultValue;
+      }),
+      update: vi.fn().mockImplementation((key: string, value: unknown) => {
+        mockWorkspaceState.set(key, value);
+        return Promise.resolve();
+      }),
+    },
+  } as unknown as vscode.ExtensionContext;
+}
+
 describe('Demo Viewer Panel - Get Started Button', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -112,6 +175,9 @@ describe('Demo Viewer Panel - Get Started Button', () => {
     mockWebviewHtml = '';
     mockReceivedMessages = [];
     mockCommandExecuted = '';
+    mockClipboardText = '';
+    mockWorkspaceState = new Map();
+    mockValidationState = { isValid: true, errors: [] };
   });
 
   // Test 5.1.1: "Get Started" button appears when project not initialized
@@ -172,8 +238,7 @@ describe('Demo Viewer Panel - Get Started Button', () => {
     );
 
     // Verify HTML does NOT contain "Get Started" button in uninitialized container
-    // It should show the ready state content instead
-    expect(mockWebviewHtml).toContain('ready');
+    // It should show the input panel content instead
     expect(mockWebviewHtml).not.toContain('class="get-started-section"');
   });
 });
@@ -181,5 +246,192 @@ describe('Demo Viewer Panel - Get Started Button', () => {
 describe('Demo Viewer Panel - View ID', () => {
   it('should have correct view ID constant', () => {
     expect(DEMO_VIEWER_VIEW_ID).toBe('agentify.demoViewer');
+  });
+});
+
+describe('Demo Viewer Panel - Input Panel Content', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsInitialized = true;
+    mockWebviewHtml = '';
+    mockReceivedMessages = [];
+    mockCommandExecuted = '';
+    mockClipboardText = '';
+    mockWorkspaceState = new Map();
+    mockValidationState = { isValid: true, errors: [] };
+  });
+
+  it('should show input panel when project is initialized', async () => {
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const provider = new DemoViewerPanelProvider(extensionUri);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Verify HTML contains input panel elements
+    expect(mockWebviewHtml).toContain('promptTextarea');
+    expect(mockWebviewHtml).toContain('runWorkflow');
+    expect(mockWebviewHtml).toContain('Run Workflow');
+  });
+
+  it('should show timer display in initial state', async () => {
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const provider = new DemoViewerPanelProvider(extensionUri);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Verify timer display shows initial state
+    expect(mockWebviewHtml).toContain('timerDisplay');
+    expect(mockWebviewHtml).toContain('--:--');
+  });
+});
+
+describe('Demo Viewer Panel - State Persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsInitialized = true;
+    mockWebviewHtml = '';
+    mockReceivedMessages = [];
+    mockWorkspaceState = new Map();
+    mockValidationState = { isValid: true, errors: [] };
+  });
+
+  it('should persist prompt text when promptChanged message received', async () => {
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const mockContext = createMockExtensionContext();
+    const provider = new DemoViewerPanelProvider(extensionUri, mockContext);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Simulate prompt change message
+    const messageHandler = mockReceivedMessages[0] as (message: unknown) => void;
+    if (messageHandler) {
+      await messageHandler({ command: 'promptChanged', text: 'Test prompt' });
+    }
+
+    // Verify workspace state was updated
+    expect(mockContext.workspaceState.update).toHaveBeenCalledWith(
+      'agentify.demoViewer.promptText',
+      'Test prompt'
+    );
+  });
+
+  it('should load persisted prompt text on panel resolve', async () => {
+    mockWorkspaceState.set('agentify.demoViewer.promptText', 'Persisted prompt');
+
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const mockContext = createMockExtensionContext();
+    const provider = new DemoViewerPanelProvider(extensionUri, mockContext);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Verify persisted prompt was loaded
+    expect(mockContext.workspaceState.get).toHaveBeenCalledWith(
+      'agentify.demoViewer.promptText',
+      ''
+    );
+  });
+});
+
+describe('Demo Viewer Panel - Validation Error Display', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsInitialized = true;
+    mockWebviewHtml = '';
+    mockReceivedMessages = [];
+    mockValidationState = { isValid: true, errors: [] };
+  });
+
+  it('should disable run button when validation errors exist', async () => {
+    mockValidationState = {
+      isValid: false,
+      errors: [{ type: 'entryScript', message: 'Entry script not found' }],
+    };
+
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const provider = new DemoViewerPanelProvider(extensionUri);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Check that validation state reflects errors
+    expect(provider.validationState.isValid).toBe(false);
+    expect(provider.validationState.errors).toHaveLength(1);
+  });
+
+  it('should show validation banner with error messages', async () => {
+    mockValidationState = {
+      isValid: false,
+      errors: [{ type: 'awsCredentials', message: 'AWS credentials not configured' }],
+    };
+
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const provider = new DemoViewerPanelProvider(extensionUri);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Verify HTML contains validation error message
+    expect(mockWebviewHtml).toContain('AWS credentials not configured');
+    expect(mockWebviewHtml).toContain('validation-banner');
+  });
+});
+
+describe('Demo Viewer Panel - Message Handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsInitialized = true;
+    mockWebviewHtml = '';
+    mockReceivedMessages = [];
+    mockClipboardText = '';
+    mockValidationState = { isValid: true, errors: [] };
+  });
+
+  it('should handle resetPanel message', async () => {
+    const extensionUri = vscode.Uri.file('/test/extension');
+    const provider = new DemoViewerPanelProvider(extensionUri);
+    const mockView = createMockWebviewView();
+
+    await provider.resolveWebviewView(
+      mockView,
+      {} as vscode.WebviewViewResolveContext,
+      { isCancellationRequested: false } as vscode.CancellationToken
+    );
+
+    // Simulate reset message
+    const messageHandler = mockReceivedMessages[0] as (message: unknown) => void;
+    if (messageHandler) {
+      await messageHandler({ command: 'resetPanel' });
+    }
+
+    // Verify state was reset
+    expect(provider.currentState).toBe('ready');
   });
 });

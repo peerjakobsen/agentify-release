@@ -141,3 +141,19 @@ export {
   createErrorMessage,
   createClearMessage,
 } from './messages';
+
+// ============================================================================
+// Input Panel Types
+// ============================================================================
+export {
+  InputPanelState,
+} from './inputPanel';
+
+export type {
+  ValidationError,
+  ValidationState,
+  WorkflowExecutionStatus,
+  WorkflowExecution,
+  InputPanelMessage,
+  InputPanelStateMessage,
+} from './inputPanel';
