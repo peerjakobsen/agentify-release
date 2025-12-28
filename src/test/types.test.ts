@@ -221,13 +221,9 @@ describe('Config schema validation', () => {
       },
     },
     workflow: {
+      entryScript: 'agents/main.py',
+      pythonPath: '.venv/bin/python',
       orchestrationPattern: 'graph',
-      triggerType: 'local',
-      triggerConfig: {
-        type: 'local',
-        entryScript: 'agents/main.py',
-        pythonPath: '.venv/bin/python',
-      },
       agents: [{ id: 'agent-1', name: 'Agent 1', role: 'Test role' }],
       edges: [],
     },
@@ -273,13 +269,22 @@ describe('Config schema validation', () => {
     expect(result.errors.some((e) => e.includes('orchestrationPattern'))).toBe(true);
   });
 
-  it('should detect invalid trigger type', () => {
-    const invalid = {
+  it('should accept valid workflow with entryScript and pythonPath', () => {
+    const result = validateConfigSchema(validConfig);
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should accept workflow without optional entryScript', () => {
+    const configWithoutEntry = {
       ...validConfig,
-      workflow: { ...validConfig.workflow, triggerType: 'invalid' },
+      workflow: {
+        orchestrationPattern: 'graph',
+        agents: [],
+        edges: [],
+      },
     };
-    const result = validateConfigSchema(invalid);
-    expect(result.isValid).toBe(false);
-    expect(result.errors.some((e) => e.includes('triggerType'))).toBe(true);
+    const result = validateConfigSchema(configWithoutEntry);
+    expect(result.isValid).toBe(true);
   });
 });

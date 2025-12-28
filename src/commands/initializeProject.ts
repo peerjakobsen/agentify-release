@@ -361,13 +361,9 @@ async function generateConfig(
       },
     },
     workflow: {
+      entryScript: 'agents/main.py',
+      pythonPath: '.venv/bin/python',
       orchestrationPattern: 'graph',
-      triggerType: 'local',
-      triggerConfig: {
-        type: 'local',
-        entryScript: 'agents/main.py',
-        pythonPath: '.venv/bin/python',
-      },
       agents: [],
       edges: [],
     },

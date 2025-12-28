@@ -24,13 +24,9 @@ const validBaseConfig: AgentifyConfig = {
     },
   },
   workflow: {
+    entryScript: 'agents/main.py',
+    pythonPath: '.venv/bin/python',
     orchestrationPattern: 'graph',
-    triggerType: 'local',
-    triggerConfig: {
-      type: 'local',
-      entryScript: 'agents/main.py',
-      pythonPath: '.venv/bin/python',
-    },
     agents: [{ id: 'agent-1', name: 'Agent 1', role: 'Test role' }],
     edges: [],
   },

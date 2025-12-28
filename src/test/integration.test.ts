@@ -270,13 +270,9 @@ describe('Config Service Integration', () => {
         },
       },
       workflow: {
+        entryScript: 'main.py',
+        pythonPath: 'python3',
         orchestrationPattern: 'graph',
-        triggerType: 'local',
-        triggerConfig: {
-          type: 'local',
-          entryScript: 'main.py',
-          pythonPath: 'python3',
-        },
         agents: [],
         edges: [],
       },

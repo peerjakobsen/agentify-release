@@ -19,20 +19,17 @@ export {
 } from './errors';
 
 // ============================================================================
-// Trigger Types
+// Workflow Execution Types
 // ============================================================================
 export type {
-  TriggerType,
-  LocalTriggerConfig,
-  AgentCoreTriggerConfig,
-  HttpTriggerConfig,
-  TriggerConfig,
+  WorkflowConfig as WorkflowExecutionConfig,
+  AgentDefinition as WorkflowAgentDefinition,
+  EdgeDefinition as WorkflowEdgeDefinition,
 } from './triggers';
 
 export {
-  isLocalTriggerConfig,
-  isAgentCoreTriggerConfig,
-  isHttpTriggerConfig,
+  isValidWorkflowConfig,
+  getMissingConfigFields,
 } from './triggers';
 
 // ============================================================================

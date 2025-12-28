@@ -30,76 +30,236 @@ export const STEERING_FILE_PATH = `${STEERING_DIR_PATH}/${STEERING_FILE_NAME}`;
  */
 export const STEERING_FILE_CONTENT = `# Agentify Integration
 
-This project uses Agentify for AI agent workflow observability. Events from agent executions are stored in AWS DynamoDB for visualization and analysis.
+This project uses Agentify for AI agent workflow observability. The orchestration runs locally via \`agents/main.py\`, which calls agents deployed to Bedrock AgentCore via Strands SDK.
 
-## Event Storage Pattern
+## Architecture Overview
 
-Agentify stores workflow events in DynamoDB with the following structure:
-
-- **Table Name**: Configured in \`.agentify/config.json\` under \`infrastructure.dynamodb.tableName\`
-- **Partition Key**: \`sessionId\` - Groups events by workflow execution session
-- **Sort Key**: \`eventId\` - Unique identifier with timestamp prefix for ordering
-- **TTL**: Events expire after 7 days (configurable)
-
-## Python Observability Decorators
-
-When writing Python agent code, use the \`agentify_observability\` decorators to automatically emit events:
-
-\`\`\`python
-from agentify_observability import track_agent, track_step
-
-@track_agent('my-agent')
-def my_agent_function(input_data):
-    # Agent logic here
-    return result
-
-@track_step('preprocessing')
-def preprocess_data(data):
-    # Step logic here
-    return processed_data
+\`\`\`
+┌─────────────────┐     spawns      ┌─────────────────┐    Bedrock APIs    ┌─────────────────┐
+│   Demo Viewer   │────────────────►│  agents/main.py │───────────────────►│   AgentCore     │
+│   (VS Code)     │                 │  (local Python) │                    │   (AWS Cloud)   │
+└─────────────────┘                 └─────────────────┘                    └─────────────────┘
+        │                                   │
+        │◄──────────────────────────────────┤ stdout events (real-time)
+        │                                   │
+        └───────────────────────────────────┴──► DynamoDB (persistent events)
 \`\`\`
 
-### Available Decorators
+## Execution Identity (Hybrid Approach)
 
-- \`@track_agent(name)\` - Wraps an agent function to emit start/complete/error events
-- \`@track_step(name)\` - Wraps a processing step within an agent
-- \`@track_tool(name)\` - Wraps external tool invocations (API calls, file ops, etc.)
-- \`@track_decision(name)\` - Captures decision points with context
+Each workflow run has TWO identifiers:
+
+| Identifier | Format | Purpose |
+|------------|--------|---------|
+| \`workflow_id\` | \`wf-{8-char-uuid}\` | Short, human-readable. DynamoDB PK, UI display |
+| \`trace_id\` | 32-char hex (OTEL) | OpenTelemetry correlation. Links to CloudWatch X-Ray |
+
+## CLI Interface
+
+The Demo Viewer spawns \`main.py\` with these arguments:
+
+\`\`\`bash
+python agents/main.py \\
+  --prompt "Generate Q3 replenishment plan" \\
+  --workflow-id "wf-abc12345" \\
+  --trace-id "80e1afed08e019fc1110464cfa66635c"
+\`\`\`
+
+### Argument Parsing
+
+\`\`\`python
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Agentify Workflow Orchestrator')
+    parser.add_argument('--prompt', required=True, help='User prompt to process')
+    parser.add_argument('--workflow-id', required=True, help='Short workflow ID (wf-xxx)')
+    parser.add_argument('--trace-id', required=True, help='OTEL trace ID (32-char hex)')
+    return parser.parse_args()
+\`\`\`
+
+### Environment Variables
+
+The extension also passes these environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| \`AGENTIFY_TABLE_NAME\` | DynamoDB table name for events |
+| \`AGENTIFY_TABLE_REGION\` | AWS region for DynamoDB |
+
+## OpenTelemetry Integration
+
+Use Strands SDK's native \`StrandsTelemetry\` for tracing:
+
+\`\`\`python
+from strands import Agent
+from strands.telemetry import StrandsTelemetry
+
+# Initialize telemetry with trace_id from CLI
+telemetry = StrandsTelemetry(
+    service_name="agentify-workflow",
+    trace_id=args.trace_id  # From --trace-id CLI arg
+)
+
+# Create agent with telemetry
+agent = Agent(
+    model="bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
+    telemetry=telemetry
+)
+\`\`\`
+
+## Event Streaming (Dual-Mode)
+
+Events are emitted to TWO destinations:
+
+### 1. stdout (Real-Time for Demo Viewer)
+
+Print JSON lines to stdout for real-time graph visualization:
+
+\`\`\`python
+import json
+import sys
+from datetime import datetime
+
+def emit_event(event_type: str, payload: dict, workflow_id: str, trace_id: str):
+    event = {
+        "workflow_id": workflow_id,
+        "trace_id": trace_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "event_type": event_type,
+        "payload": payload
+    }
+    print(json.dumps(event), flush=True)
+\`\`\`
+
+### 2. DynamoDB (Persistent Storage)
+
+Write events to DynamoDB for historical replay:
+
+\`\`\`python
+import boto3
+import os
+import time
+
+dynamodb = boto3.resource('dynamodb', region_name=os.environ['AGENTIFY_TABLE_REGION'])
+table = dynamodb.Table(os.environ['AGENTIFY_TABLE_NAME'])
+
+def write_event(event_type: str, payload: dict, workflow_id: str, trace_id: str, agent_name: str = None):
+    table.put_item(Item={
+        'workflow_id': workflow_id,
+        'timestamp': int(time.time() * 1000),  # Epoch milliseconds
+        'trace_id': trace_id,
+        'event_type': event_type,
+        'agent_name': agent_name or 'orchestrator',
+        'payload': payload,
+        'ttl': int(time.time()) + (7 * 24 * 60 * 60)  # 7 days
+    })
+\`\`\`
 
 ## Event Types
 
-Events follow this schema pattern:
+| Event Type | Description | Source |
+|------------|-------------|--------|
+| \`graph_structure\` | Workflow topology at start | stdout only |
+| \`node_start\` | Agent/node beginning execution | Both |
+| \`node_stream\` | Streaming content from node | stdout only |
+| \`node_stop\` | Agent/node completed | Both |
+| \`tool_call\` | Tool invocation started | DynamoDB |
+| \`tool_result\` | Tool invocation completed | DynamoDB |
+| \`workflow_complete\` | Workflow finished successfully | Both |
+| \`workflow_error\` | Workflow failed with error | Both |
 
-\`\`\`json
-{
-  "sessionId": "session-uuid",
-  "eventId": "1703721600000-uuid",
-  "eventType": "agent_start|agent_complete|agent_error|step_*|tool_*|decision_*",
-  "agentName": "agent-identifier",
-  "timestamp": "ISO8601",
-  "data": {
-    "input": {},
-    "output": {},
-    "metadata": {}
-  }
-}
+## Strands stream_async Integration
+
+When using Strands multi-agent patterns with \`stream_async()\`:
+
+\`\`\`python
+from strands.multiagent import Graph
+
+async def run_workflow(prompt: str, workflow_id: str, trace_id: str):
+    graph = Graph(agents=[...], edges=[...])
+
+    # Emit graph structure first
+    emit_event("graph_structure", {
+        "nodes": [{"id": a.name, "role": a.role} for a in graph.agents],
+        "edges": [{"from": e.source, "to": e.target} for e in graph.edges]
+    }, workflow_id, trace_id)
+
+    # Stream events
+    async for event in graph.stream_async(prompt):
+        if event.type == "multiagent_node_start":
+            emit_event("node_start", {"node": event.node_name}, workflow_id, trace_id)
+        elif event.type == "multiagent_node_stream":
+            emit_event("node_stream", {"node": event.node_name, "chunk": event.content}, workflow_id, trace_id)
+        elif event.type == "multiagent_node_stop":
+            emit_event("node_stop", {"node": event.node_name, "output": event.output}, workflow_id, trace_id)
+        elif event.type == "multiagent_result":
+            emit_event("workflow_complete", {"result": event.result}, workflow_id, trace_id)
 \`\`\`
 
 ## Configuration Reference
 
 The \`.agentify/config.json\` file contains:
 
-- \`infrastructure.dynamodb\` - DynamoDB table connection details
-- \`workflow.orchestrationPattern\` - How agents are coordinated (graph, chain, etc.)
-- \`workflow.agents\` - List of agents in the workflow
-- \`workflow.edges\` - Connections between agents (for graph patterns)
+\`\`\`json
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "My Project",
+    "valueMap": "Cost Reduction",
+    "industry": "retail"
+  },
+  "infrastructure": {
+    "dynamodb": {
+      "tableName": "agentify-events-xxx",
+      "tableArn": "arn:aws:dynamodb:...",
+      "region": "us-east-1"
+    },
+    "stackName": "agentify-workflow-events-xxx"
+  },
+  "workflow": {
+    "entryScript": "agents/main.py",
+    "pythonPath": ".venv/bin/python",
+    "orchestrationPattern": "graph",
+    "agents": [
+      { "id": "planner", "name": "Planner Agent", "role": "planning" }
+    ],
+    "edges": [
+      { "from": "planner", "to": "executor" }
+    ]
+  },
+  "observability": {
+    "enableTracing": true,
+    "xrayConsoleUrl": "https://console.aws.amazon.com/xray/home?region={region}#/traces/{trace_id}"
+  },
+  "aws": {
+    "profile": "your-aws-profile"
+  }
+}
+\`\`\`
 
 ## Best Practices
 
-1. **Consistent Naming**: Use kebab-case for agent and step names
-2. **Meaningful Steps**: Break complex agents into observable steps
-3. **Error Context**: Include relevant context in error events
-4. **Session Isolation**: Each workflow run should use a unique sessionId
+1. **Emit graph_structure first**: Always emit the workflow topology before any node events
+2. **Use consistent IDs**: Pass workflow_id and trace_id to all event emissions
+3. **Flush stdout**: Always use \`flush=True\` when printing events for real-time streaming
+4. **Handle errors gracefully**: Emit \`workflow_error\` event before exiting on failure
+5. **Include timestamps**: Use ISO8601 format for stdout, epoch milliseconds for DynamoDB
+
+## Debugging
+
+View X-Ray traces:
+\`\`\`bash
+aws xray get-trace-summaries --start-time $(date -u -v-1H +%s) --end-time $(date -u +%s)
+\`\`\`
+
+Query DynamoDB events:
+\`\`\`bash
+aws dynamodb query \\
+  --table-name $AGENTIFY_TABLE_NAME \\
+  --key-condition-expression "workflow_id = :wf" \\
+  --expression-attribute-values '{":wf":{"S":"wf-abc12345"}}'
+\`\`\`
 `;
 
 /**

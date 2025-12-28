@@ -155,11 +155,12 @@ describe('Steering File Constants', () => {
 
   it('should have content with expected sections', () => {
     expect(STEERING_FILE_CONTENT).toContain('# Agentify Integration');
-    expect(STEERING_FILE_CONTENT).toContain('Event Storage Pattern');
-    expect(STEERING_FILE_CONTENT).toContain('Python Observability Decorators');
-    expect(STEERING_FILE_CONTENT).toContain('@track_agent');
+    expect(STEERING_FILE_CONTENT).toContain('Architecture Overview');
+    expect(STEERING_FILE_CONTENT).toContain('CLI Interface');
+    expect(STEERING_FILE_CONTENT).toContain('--workflow-id');
+    expect(STEERING_FILE_CONTENT).toContain('--trace-id');
     expect(STEERING_FILE_CONTENT).toContain('DynamoDB');
-    expect(STEERING_FILE_CONTENT).toContain('sessionId');
+    expect(STEERING_FILE_CONTENT).toContain('workflow_id');
   });
 });
 
