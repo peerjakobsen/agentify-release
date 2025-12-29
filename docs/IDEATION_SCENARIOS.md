@@ -738,6 +738,199 @@ SUBJ-003-C,2024-01-17,0,1
 
 ---
 
+## Scenario 4: Retail - Customer Feedback Analyzer (Simple)
+
+> **Note:** This is a simplified scenario ideal for quick demos and testing. It uses minimal agents and a single system integration.
+
+### Step 1: Business Context
+
+**Business Objective:**
+```
+Automate customer feedback analysis from support tickets to identify sentiment, categorize issues, and draft personalized responses. Our support team receives 500+ tickets daily and spends significant time reading, categorizing, and writing initial responses. We need an AI agent that can analyze incoming feedback, determine sentiment and urgency, and generate draft responses for agent review.
+```
+
+**Industry:** Retail
+
+**Systems to Integrate:**
+- Service: Zendesk
+
+**Custom Systems:**
+```
+None
+```
+
+**Additional Context (suggested file):** None required
+
+---
+
+### Step 2: AI Gap-Filling (Expected Assumptions)
+
+The AI should propose assumptions like:
+- **Zendesk:** Modules: Support, Guide. Integrations: Ticket retrieval, ticket updates, macro suggestions, customer history lookup
+
+**Sample Refinement Prompt:**
+```
+We use Zendesk Support Professional tier. Tickets come in via email and web form. We want to prioritize VIP customers based on their order history tag in Zendesk.
+```
+
+---
+
+### Step 3: Outcome Definition
+
+#### Phase 1: AI Suggestions (Read-Only Card)
+
+**Primary Outcome:**
+```
+Reduce average ticket first-response time while maintaining response quality and customer satisfaction.
+```
+
+**Suggested KPIs:**
+- First response time: 30 minutes
+- Customer satisfaction score: 90%
+- Ticket categorization accuracy: 95%
+
+**Suggested Stakeholders:**
+`Customer Service` `Operations`
+
+---
+
+**Sample Refinement Prompt:**
+```
+Target 15 minute first response time. Add agent productivity as a metric - we want each agent handling 20% more tickets.
+```
+
+---
+
+#### Phase 2: Accepted & Edited Values
+
+**Primary Outcome:**
+```
+Reduce average ticket first-response time to under 15 minutes while improving response quality and agent productivity.
+```
+
+**Success Metrics:**
+
+| Metric Name | Target Value | Unit |
+|-------------|--------------|------|
+| First response time | 15 | minutes |
+| Customer satisfaction score | 92 | % |
+| Ticket categorization accuracy | 95 | % |
+| Agent productivity improvement | 20 | % |
+
+**Stakeholders:**
+- [x] Customer Service
+- [x] Operations
+- [ ] Executive
+- [ ] IT
+
+---
+
+### Step 4: Security & Guardrails
+
+**Data Sensitivity:** Internal
+
+**Compliance Frameworks:**
+- [ ] SOC 2
+
+**Approval Gates:**
+- [x] Before sending recommendations
+- [ ] Before external API calls
+- [ ] Before data modification
+- [ ] Before financial transactions
+
+**Guardrail Notes:**
+```
+All AI-generated responses must be reviewed by a human agent before sending to customers. Do not include any customer PII in logs.
+```
+
+---
+
+### Step 5: Agent Design Proposal
+
+#### Phase 1: AI-Proposed Agent Team (Read-Only)
+
+| Agent | Role | Tools |
+|-------|------|-------|
+| **Sentiment Analyzer** | Analyze ticket content to determine sentiment and urgency | `zendesk_get_ticket`, `zendesk_get_customer_history` |
+| **Response Drafter** | Generate personalized draft response based on analysis | `zendesk_get_macros`, `zendesk_update_ticket` |
+
+**Orchestration Pattern:** `workflow`
+
+**Why this pattern?**
+```
+Feedback analysis follows a simple two-step sequence: first analyze the ticket sentiment and context, then draft an appropriate response. The workflow pattern ensures the response is always informed by the sentiment analysis.
+```
+
+**Flow Summary:**
+```
+Sentiment Analyzer → Response Drafter
+```
+
+---
+
+**Sample Adjustment Prompt:**
+```
+The design looks good as-is. No changes needed.
+```
+
+---
+
+#### Phase 2: Accepted & Edited Design
+
+**Edited Agents:**
+
+| Agent | Role | Tools | Edited |
+|-------|------|-------|--------|
+| **Sentiment Analyzer** | Analyze ticket content to determine sentiment and urgency | `zendesk_get_ticket`, `zendesk_get_customer_history` | — |
+| **Response Drafter** | Generate personalized draft response based on analysis | `zendesk_get_macros`, `zendesk_update_ticket` | — |
+
+**Orchestration Pattern:** `workflow` *(AI Suggested)*
+
+**Edge Configuration:**
+
+| From | To |
+|------|----|
+| Sentiment Analyzer | Response Drafter |
+
+**Validation Warnings:** None
+
+---
+
+### Step 6: Mock Data Strategy
+
+#### AI-Generated Mock Definitions
+
+| Tool | System | Mock Request | Mock Response |
+|------|--------|--------------|---------------|
+| `zendesk_get_ticket` | Zendesk | `{ "ticket_id": "string" }` | `{ "subject": "string", "description": "string", "priority": "string", "created_at": "string" }` |
+| `zendesk_get_customer_history` | Zendesk | `{ "customer_id": "string" }` | `{ "total_tickets": "number", "vip_status": "boolean", "last_contact": "string" }` |
+| `zendesk_get_macros` | Zendesk | `{ "category": "string" }` | `{ "macro_id": "string", "name": "string", "template": "string" }` |
+| `zendesk_update_ticket` | Zendesk | `{ "ticket_id": "string", "status": "string", "comment": "string" }` | `{ "success": "boolean", "updated_at": "string" }` |
+
+#### Sample Data (Accordion Expanded for `zendesk_get_ticket`)
+
+| subject | description | priority | created_at |
+|---------|-------------|----------|------------|
+| Order not received | I placed order #12345 a week ago and it still hasn't arrived. Very frustrated! | high | 2024-01-15T10:30:00Z |
+| Great product! | Just wanted to say the new headphones are amazing. Thanks! | low | 2024-01-15T11:00:00Z |
+| Return request | Need to return item, wrong size delivered | normal | 2024-01-15T11:30:00Z |
+
+---
+
+**Sample "Use Customer Terminology" Toggle:**
+
+*Before:*
+```json
+{ "subject": "Order issue", "priority": "high", "vip_status": true }
+```
+
+*After (Retail terminology):*
+```json
+{ "ticket_subject": "Order issue", "urgency_level": "escalated", "loyalty_tier": "gold" }
+```
+
+---
+
 ## Quick Reference: Field Mappings
 
 ### Industries Available
