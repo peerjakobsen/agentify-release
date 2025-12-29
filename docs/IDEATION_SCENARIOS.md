@@ -44,6 +44,36 @@ We use FIS Profile for core banking, not Fiserv DNA. The mainframe integration g
 
 ### Step 3: Outcome Definition
 
+#### Phase 1: AI Suggestions (Read-Only Card)
+
+The AI generates initial suggestions based on business context and confirmed assumptions:
+
+**Primary Outcome:**
+```
+Reduce commercial loan underwriting cycle time by 50% while maintaining decision quality and ensuring regulatory compliance.
+```
+
+**Suggested KPIs:**
+- Document processing time: 60 minutes
+- Risk assessment accuracy: 90%
+- Compliance check completion: 100%
+
+**Suggested Stakeholders:**
+`Finance` `Operations` `Legal` `Risk Management`
+
+---
+
+**Sample Refinement Prompt:**
+```
+Make the cycle time reduction more aggressive - we're targeting 60%. Add metrics for false positive rate on fraud flags and loan officer productivity. Also add Executive as a stakeholder since they're sponsoring this initiative.
+```
+
+---
+
+#### Phase 2: Accepted & Edited Values
+
+After clicking "Accept Suggestions" and applying refinements:
+
 **Primary Outcome:**
 ```
 Reduce commercial loan underwriting cycle time by 60% while maintaining or improving decision quality and regulatory compliance accuracy.
@@ -131,6 +161,36 @@ We're using Siemens S7-1500 PLCs across all production lines. The agent needs to
 
 ### Step 3: Outcome Definition
 
+#### Phase 1: AI Suggestions (Read-Only Card)
+
+The AI generates initial suggestions based on business context and confirmed assumptions:
+
+**Primary Outcome:**
+```
+Reduce unplanned production downtime through AI-driven predictive maintenance while optimizing maintenance costs.
+```
+
+**Suggested KPIs:**
+- Unplanned downtime reduction: 50%
+- Prediction accuracy (failures): 80%
+- Mean time to repair: 4 hours
+
+**Suggested Stakeholders:**
+`Operations` `IT` `Supply Chain`
+
+---
+
+**Sample Refinement Prompt:**
+```
+We're targeting 70% downtime reduction based on our OEE analysis. Add metrics for spare parts inventory turns and maintenance cost per unit. Mean time to repair should be 2 hours max. Also include Finance since they're tracking the ROI.
+```
+
+---
+
+#### Phase 2: Accepted & Edited Values
+
+After clicking "Accept Suggestions" and applying refinements:
+
 **Primary Outcome:**
 ```
 Reduce unplanned production downtime by 70% through AI-driven predictive maintenance while optimizing maintenance labor and spare parts costs.
@@ -215,6 +275,36 @@ We need to ensure the agent can handle both FDA and EMA submission formats. The 
 ---
 
 ### Step 3: Outcome Definition
+
+#### Phase 1: AI Suggestions (Read-Only Card)
+
+The AI generates initial suggestions based on business context and confirmed assumptions:
+
+**Primary Outcome:**
+```
+Accelerate NDA/BLA submission preparation while improving document quality and ensuring regulatory compliance.
+```
+
+**Suggested KPIs:**
+- Submission prep time: 120 hours
+- Document consistency score: 95%
+- First-pass acceptance rate: 90%
+
+**Suggested Stakeholders:**
+`Operations` `Legal` `IT` `Regulatory Affairs`
+
+---
+
+**Sample Refinement Prompt:**
+```
+Target 50% reduction in prep time (down to 100 hours). Add cross-reference accuracy as a metric - we need 99.5% minimum. Include deficiency letter reduction since that's a key executive metric. Add Clinical Operations, Medical Writing, and Quality Assurance as stakeholders - they're critical for this workflow.
+```
+
+---
+
+#### Phase 2: Accepted & Edited Values
+
+After clicking "Accept Suggestions" and applying refinements:
 
 **Primary Outcome:**
 ```

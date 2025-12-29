@@ -257,8 +257,20 @@ export interface OutcomeSuggestions {
 }
 
 /**
+ * Tracking which sections have been refined via conversational refinement
+ */
+export interface RefinedSectionsState {
+  /** Whether outcome was refined from original AI suggestion */
+  outcome: boolean;
+  /** Whether KPIs were refined from original AI suggestion */
+  kpis: boolean;
+  /** Whether stakeholders were refined from original AI suggestion */
+  stakeholders: boolean;
+}
+
+/**
  * Outcome definition state for Step 3
- * Includes AI loading state and user edit tracking for regeneration logic
+ * Includes AI loading state, user edit tracking, and two-phase flow state
  */
 export interface OutcomeDefinitionState {
   /** Primary outcome statement describing the business result */
@@ -279,6 +291,12 @@ export interface OutcomeDefinitionState {
   stakeholdersEdited: boolean;
   /** AI-suggested stakeholders outside the static STAKEHOLDER_OPTIONS list */
   customStakeholders: string[];
+  /** Whether AI suggestions have been accepted (Phase 1 -> Phase 2 transition) */
+  suggestionsAccepted: boolean;
+  /** Hash of Step 2 confirmed assumptions for change detection */
+  step2AssumptionsHash?: string;
+  /** Tracking which sections have been refined via conversation */
+  refinedSections: RefinedSectionsState;
 }
 
 // ============================================================================
@@ -555,6 +573,13 @@ export const WIZARD_COMMANDS = {
   REGENERATE_OUTCOME_SUGGESTIONS: 'regenerateOutcomeSuggestions',
   /** Dismiss the outcome loading error message */
   DISMISS_OUTCOME_ERROR: 'dismissOutcomeError',
+  // Step 3: Outcome Refinement commands (Roadmap Item 16.5)
+  /** Send a refinement message in the outcome conversation */
+  SEND_OUTCOME_REFINEMENT: 'sendOutcomeRefinement',
+  /** Accept AI suggestions and transition to Phase 2 */
+  ACCEPT_OUTCOME_SUGGESTIONS: 'acceptOutcomeSuggestions',
+  /** Reset outcome suggestions and return to Phase 1 */
+  RESET_OUTCOME_SUGGESTIONS: 'resetOutcomeSuggestions',
 } as const;
 
 /**
@@ -610,6 +635,13 @@ export function createDefaultOutcomeDefinitionState(): OutcomeDefinitionState {
     metricsEdited: false,
     stakeholdersEdited: false,
     customStakeholders: [],
+    suggestionsAccepted: false,
+    step2AssumptionsHash: undefined,
+    refinedSections: {
+      outcome: false,
+      kpis: false,
+      stakeholders: false,
+    },
   };
 }
 

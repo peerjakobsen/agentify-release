@@ -233,6 +233,55 @@ export function hasStep1Changed(
 }
 
 // ============================================================================
+// Step 2 Assumptions Change Detection (for Step 3 state preservation)
+// ============================================================================
+
+/**
+ * Generate a hash of Step 2 confirmed assumptions for change detection
+ * Used to determine if Step 3 state should be reset when returning from Step 2
+ *
+ * @param confirmedAssumptions Array of confirmed assumptions from Step 2
+ * @returns A hash string representing the assumptions
+ */
+export function generateAssumptionsHash(confirmedAssumptions: SystemAssumption[]): string {
+  // Sort assumptions by system name for consistent hash
+  const sorted = [...confirmedAssumptions].sort((a, b) => a.system.localeCompare(b.system));
+
+  // Create deterministic string representation
+  const combined = JSON.stringify(sorted);
+
+  // Use djb2 hash algorithm (same as generateStep1Hash)
+  let hash = 5381;
+  for (let i = 0; i < combined.length; i++) {
+    hash = (hash * 33) ^ combined.charCodeAt(i);
+  }
+
+  // Convert to unsigned 32-bit integer and then to hex string
+  return (hash >>> 0).toString(16);
+}
+
+/**
+ * Check if Step 2 assumptions have changed compared to a stored hash
+ * Used to determine if Step 3 state should be reset
+ *
+ * @param storedHash The previously stored hash (or undefined if none)
+ * @param confirmedAssumptions Current confirmed assumptions from Step 2
+ * @returns True if assumptions have changed (reset needed), false if unchanged
+ */
+export function hasAssumptionsChanged(
+  storedHash: string | undefined,
+  confirmedAssumptions: SystemAssumption[]
+): boolean {
+  // If no stored hash, this is the first visit - no change detected
+  if (!storedHash) {
+    return false;
+  }
+
+  const currentHash = generateAssumptionsHash(confirmedAssumptions);
+  return currentHash !== storedHash;
+}
+
+// ============================================================================
 // GapFillingService Class
 // ============================================================================
 
@@ -324,6 +373,25 @@ export class GapFillingService implements vscode.Disposable {
     customSystems?: string
   ): boolean {
     return hasStep1Changed(storedHash, businessObjective, industry, systems, customSystems);
+  }
+
+  /**
+   * Generate hash for Step 2 confirmed assumptions
+   * Instance method wrapper for the utility function
+   */
+  public generateAssumptionsHash(confirmedAssumptions: SystemAssumption[]): string {
+    return generateAssumptionsHash(confirmedAssumptions);
+  }
+
+  /**
+   * Check if Step 2 assumptions have changed
+   * Instance method wrapper for the utility function
+   */
+  public hasAssumptionsChanged(
+    storedHash: string | undefined,
+    confirmedAssumptions: SystemAssumption[]
+  ): boolean {
+    return hasAssumptionsChanged(storedHash, confirmedAssumptions);
   }
 
   /**

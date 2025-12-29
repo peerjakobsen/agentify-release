@@ -63,6 +63,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _outcomeService?: OutcomeDefinitionService;
   private _outcomeDisposables: vscode.Disposable[] = [];
   private _outcomeStreamingResponse = '';
+  private _isOutcomeRefinement = false;
   private _step2AssumptionsHash?: string;
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
@@ -328,11 +329,27 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           stakeholdersEdited: false,
           isLoading: false,
           loadingError: undefined,
+          suggestionsAccepted: false,
+          step2AssumptionsHash: this._ideationState.outcome.step2AssumptionsHash,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
         };
         // Reset outcome service conversation
         this._outcomeService?.resetConversation();
         // Fetch fresh AI suggestions
         this.sendOutcomeContextToClaude();
+        break;
+      case 'acceptOutcomeSuggestions':
+        // Transition from Phase 1 to Phase 2
+        this._ideationState.outcome.suggestionsAccepted = true;
+        // Reset edited flags so AI refinements can still update fields
+        this._ideationState.outcome.primaryOutcomeEdited = false;
+        this._ideationState.outcome.metricsEdited = false;
+        this._ideationState.outcome.stakeholdersEdited = false;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'sendOutcomeRefinement':
+        this.handleSendOutcomeRefinement(message.value as string);
         break;
       case 'dismissOutcomeError':
         this._ideationState.outcome.loadingError = undefined;
@@ -707,44 +724,92 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    * Parses response and populates form fields (respecting edited flags)
    */
   private handleOutcomeStreamingComplete(response: string): void {
-    // Will be fully implemented in Task Group 3
     this._ideationState.outcome.isLoading = false;
 
-    // Parse outcome suggestions from response
     const service = this._outcomeService;
-    if (service) {
-      const suggestions = service.parseOutcomeSuggestionsFromResponse(response);
-      if (suggestions) {
-        // Only update fields that haven't been manually edited
-        if (!this._ideationState.outcome.primaryOutcomeEdited && suggestions.primaryOutcome) {
-          this._ideationState.outcome.primaryOutcome = suggestions.primaryOutcome;
-        }
-        if (!this._ideationState.outcome.metricsEdited && suggestions.suggestedKPIs) {
-          this._ideationState.outcome.successMetrics = suggestions.suggestedKPIs;
-        }
-        if (!this._ideationState.outcome.stakeholdersEdited && suggestions.stakeholders) {
-          // Separate AI-suggested stakeholders into custom list if not in standard options
-          const standardOptions = ['Operations', 'Finance', 'IT', 'HR', 'Sales', 'Marketing', 'Customer Service', 'Executive Leadership'];
-          const customFromAI = suggestions.stakeholders.filter(s => !standardOptions.includes(s));
-          const standardFromAI = suggestions.stakeholders.filter(s => standardOptions.includes(s));
+    if (!service) {
+      this._outcomeStreamingResponse = '';
+      this.updateWebviewContent();
+      this.syncStateToWebview();
+      return;
+    }
 
-          this._ideationState.outcome.stakeholders = standardFromAI;
-          // Add custom AI stakeholders to customStakeholders array (if not already there)
-          customFromAI.forEach(s => {
-            if (!this._ideationState.outcome.customStakeholders.includes(s)) {
-              this._ideationState.outcome.customStakeholders.push(s);
-            }
-            if (!this._ideationState.outcome.stakeholders.includes(s)) {
-              this._ideationState.outcome.stakeholders.push(s);
-            }
-          });
+    // Handle refinement response differently from initial suggestions
+    if (this._isOutcomeRefinement) {
+      // Try to parse as refinement changes first
+      const changes = service.parseRefinementChangesFromResponse(response);
+      if (changes) {
+        // Apply changes and track which sections were refined
+        if (changes.outcome !== undefined) {
+          // In Phase 1 (not accepted) or Phase 2 with no manual edits: apply the change
+          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.primaryOutcomeEdited) {
+            this._ideationState.outcome.primaryOutcome = changes.outcome;
+            this._ideationState.outcome.refinedSections.outcome = true;
+          }
         }
+        if (changes.kpis !== undefined) {
+          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.metricsEdited) {
+            this._ideationState.outcome.successMetrics = changes.kpis;
+            this._ideationState.outcome.refinedSections.kpis = true;
+          }
+        }
+        if (changes.stakeholders !== undefined) {
+          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.stakeholdersEdited) {
+            this.applyStakeholderChanges(changes.stakeholders);
+            this._ideationState.outcome.refinedSections.stakeholders = true;
+          }
+        }
+      } else {
+        // Fall back to parsing as full suggestions (AI might return full response)
+        this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
       }
+    } else {
+      // Initial suggestions request - parse and apply full suggestions
+      this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
     }
 
     this._outcomeStreamingResponse = '';
+    this._isOutcomeRefinement = false;
     this.updateWebviewContent();
     this.syncStateToWebview();
+  }
+
+  /**
+   * Apply full outcome suggestions to state (for initial requests)
+   */
+  private applyOutcomeSuggestions(suggestions: ReturnType<OutcomeDefinitionService['parseOutcomeSuggestionsFromResponse']>): void {
+    if (!suggestions) return;
+
+    // Only update fields that haven't been manually edited
+    if (!this._ideationState.outcome.primaryOutcomeEdited && suggestions.primaryOutcome) {
+      this._ideationState.outcome.primaryOutcome = suggestions.primaryOutcome;
+    }
+    if (!this._ideationState.outcome.metricsEdited && suggestions.suggestedKPIs) {
+      this._ideationState.outcome.successMetrics = suggestions.suggestedKPIs;
+    }
+    if (!this._ideationState.outcome.stakeholdersEdited && suggestions.stakeholders) {
+      this.applyStakeholderChanges(suggestions.stakeholders);
+    }
+  }
+
+  /**
+   * Apply stakeholder changes, separating standard and custom stakeholders
+   */
+  private applyStakeholderChanges(stakeholders: string[]): void {
+    const standardOptions = ['Operations', 'Finance', 'IT', 'HR', 'Sales', 'Marketing', 'Customer Service', 'Executive Leadership'];
+    const customFromAI = stakeholders.filter(s => !standardOptions.includes(s));
+    const standardFromAI = stakeholders.filter(s => standardOptions.includes(s));
+
+    this._ideationState.outcome.stakeholders = standardFromAI;
+    // Add custom AI stakeholders to customStakeholders array (if not already there)
+    customFromAI.forEach(s => {
+      if (!this._ideationState.outcome.customStakeholders.includes(s)) {
+        this._ideationState.outcome.customStakeholders.push(s);
+      }
+      if (!this._ideationState.outcome.stakeholders.includes(s)) {
+        this._ideationState.outcome.stakeholders.push(s);
+      }
+    });
   }
 
   /**
@@ -798,6 +863,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         stakeholdersEdited: false,
         isLoading: false,
         loadingError: undefined,
+        suggestionsAccepted: false,
+        step2AssumptionsHash: currentHash,
+        refinedSections: { outcome: false, kpis: false, stakeholders: false },
       };
 
       // Update hash
@@ -834,10 +902,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       this._ideationState.customSystems
     );
 
-    // Set loading state
+    // Set loading state (initial request, not refinement)
     this._ideationState.outcome.isLoading = true;
     this._ideationState.outcome.loadingError = undefined;
     this._outcomeStreamingResponse = '';
+    this._isOutcomeRefinement = false;
     this.updateWebviewContent();
     this.syncStateToWebview();
 
@@ -845,6 +914,42 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _token of service.sendMessage(contextMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle send outcome refinement message
+   */
+  private async handleSendOutcomeRefinement(content: string): Promise<void> {
+    if (!content.trim()) return;
+
+    const service = this.initOutcomeService();
+    if (!service) {
+      this._ideationState.outcome.loadingError =
+        'Outcome service not available. Please check your configuration.';
+      this.syncStateToWebview();
+      return;
+    }
+
+    // Set loading state (this is a refinement request)
+    this._ideationState.outcome.isLoading = true;
+    this._ideationState.outcome.loadingError = undefined;
+    this._outcomeStreamingResponse = '';
+    this._isOutcomeRefinement = true;
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send refinement message to Claude
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendRefinementMessage(
+        content.trim(),
+        this._ideationState.outcome
+      )) {
         // Tokens are handled by onToken event handler
       }
     } catch (error) {
@@ -1735,6 +1840,110 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       textarea.error {
         border-color: var(--vscode-inputValidation-errorBorder, #be1100);
       }
+
+      /* Phase 1: Suggestion Card Styles */
+      .suggestion-card {
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, #454545));
+        border-radius: 4px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .suggestion-section {
+        margin-bottom: 16px;
+      }
+      .suggestion-section:last-of-type {
+        margin-bottom: 12px;
+      }
+      .suggestion-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .suggestion-content {
+        font-size: 13px;
+        color: var(--vscode-foreground);
+        line-height: 1.5;
+      }
+      .suggestion-kpis {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--vscode-foreground);
+      }
+      .suggestion-kpis li {
+        margin-bottom: 4px;
+      }
+      .suggestion-stakeholders {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .stakeholder-tag {
+        display: inline-block;
+        padding: 4px 10px;
+        font-size: 11px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        border-radius: 12px;
+      }
+      .refined-badge {
+        font-size: 10px;
+        font-weight: 400;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+      }
+      .empty-hint {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+      }
+      .suggestion-card .accept-btn {
+        width: 100%;
+        margin-top: 4px;
+        padding: 10px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .suggestion-card .accept-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .suggestion-card .accept-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* Phase 2: Accepted Banner */
+      .accepted-banner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 16px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--vscode-testing-iconPassed, #73c991);
+        background: var(--vscode-input-background);
+        border: 1px solid var(--vscode-testing-iconPassed, #73c991);
+        border-radius: 4px;
+      }
+
+      /* Refine Input Hints */
+      .refine-hints {
+        margin: 8px 0 0 0;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
     `;
   }
 
@@ -2122,14 +2331,13 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private getStep3Html(): string {
     const state = this._ideationState.outcome;
     const showErrors = this._ideationState.validationAttempted;
-
-    // Check for validation errors
-    const primaryOutcomeError = showErrors && !state.primaryOutcome.trim();
-    const metricsWarning = state.successMetrics.length === 0;
+    const suggestionsAccepted = state.suggestionsAccepted ?? false;
+    const isLoading = state.isLoading ?? false;
+    const refinedSections = state.refinedSections ?? { outcome: false, kpis: false, stakeholders: false };
 
     // Render loading indicator or error
     let loadingHtml = '';
-    if (state.isLoading) {
+    if (isLoading) {
       loadingHtml = `
         <div class="outcome-loading">
           <div class="typing-indicator">
@@ -2149,7 +2357,89 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       `;
     }
 
-    // Render metrics list
+    // Refine input (visible in both phases)
+    const refineInputHtml = `
+      <div class="chat-input-area">
+        <input
+          type="text"
+          id="outcomeRefineInput"
+          class="chat-input"
+          placeholder="Refine outcomes..."
+          ${isLoading ? 'disabled' : ''}
+          onkeydown="handleOutcomeRefineKeydown(event)"
+        >
+        <button class="send-btn" onclick="sendOutcomeRefinement()" ${isLoading ? 'disabled' : ''}>
+          Send
+        </button>
+      </div>
+      <p class="refine-hints">Try: "Add a metric for cost savings" or "Make the outcome more specific to risk"</p>
+    `;
+
+    // Phase 1: Suggestion Review (read-only card)
+    if (!suggestionsAccepted) {
+      // Build KPIs list for suggestion card
+      const kpisListHtml = state.successMetrics.length > 0
+        ? state.successMetrics.map((metric) => `
+            <li>${this.escapeHtml(metric.name)}${metric.targetValue ? `: ${this.escapeHtml(metric.targetValue)}` : ''}${metric.unit ? ` ${this.escapeHtml(metric.unit)}` : ''}</li>
+          `).join('')
+        : '<li class="empty-hint">No KPIs suggested yet</li>';
+
+      // Build stakeholders tags for suggestion card
+      const stakeholdersTagsHtml = state.stakeholders.length > 0
+        ? state.stakeholders.map((s) => `<span class="stakeholder-tag">${this.escapeHtml(s)}</span>`).join('')
+        : '<span class="empty-hint">No stakeholders suggested yet</span>';
+
+      // Refined indicators
+      const outcomeRefinedBadge = refinedSections.outcome ? '<span class="refined-badge">(refined)</span>' : '';
+      const kpisRefinedBadge = refinedSections.kpis ? '<span class="refined-badge">(refined)</span>' : '';
+      const stakeholdersRefinedBadge = refinedSections.stakeholders ? '<span class="refined-badge">(refined)</span>' : '';
+
+      return `
+        <div class="step3-header">
+          <p class="step-description">Review AI-generated outcome suggestions, refine if needed, then accept to edit.</p>
+          <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${isLoading ? 'disabled' : ''}>
+            ↻ Regenerate
+          </button>
+        </div>
+
+        ${loadingHtml}
+
+        <div class="suggestion-card">
+          <div class="suggestion-section">
+            <div class="suggestion-header">Primary Outcome ${outcomeRefinedBadge}</div>
+            <div class="suggestion-content">
+              ${state.primaryOutcome ? this.escapeHtml(state.primaryOutcome) : '<span class="empty-hint">Waiting for AI suggestions...</span>'}
+            </div>
+          </div>
+
+          <div class="suggestion-section">
+            <div class="suggestion-header">Suggested KPIs ${kpisRefinedBadge}</div>
+            <ul class="suggestion-kpis">
+              ${kpisListHtml}
+            </ul>
+          </div>
+
+          <div class="suggestion-section">
+            <div class="suggestion-header">Suggested Stakeholders ${stakeholdersRefinedBadge}</div>
+            <div class="suggestion-stakeholders">
+              ${stakeholdersTagsHtml}
+            </div>
+          </div>
+
+          <button class="accept-btn" onclick="acceptOutcomeSuggestions()" ${isLoading || !state.primaryOutcome ? 'disabled' : ''}>
+            Accept Suggestions
+          </button>
+        </div>
+
+        ${refineInputHtml}
+      `;
+    }
+
+    // Phase 2: Editable Form (after acceptance)
+    const primaryOutcomeError = showErrors && !state.primaryOutcome.trim();
+    const metricsWarning = state.successMetrics.length === 0;
+
+    // Render metrics list (editable)
     const metricsHtml = state.successMetrics.map((metric, index) => `
       <div class="metric-row" data-index="${index}">
         <input
@@ -2211,12 +2501,14 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     return `
       <div class="step3-header">
         <p class="step-description">Define measurable business outcomes and success metrics for your workflow.</p>
-        <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${state.isLoading ? 'disabled' : ''}>
+        <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${isLoading ? 'disabled' : ''}>
           ↻ Regenerate
         </button>
       </div>
 
       ${loadingHtml}
+
+      <div class="accepted-banner">Accepted ✓</div>
 
       <div class="form-section">
         <label class="form-label required">Primary Outcome</label>
@@ -2254,6 +2546,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           <button class="add-stakeholder-btn" onclick="addCustomStakeholder()">Add</button>
         </div>
       </div>
+
+      ${refineInputHtml}
     `;
   }
 
@@ -2434,6 +2728,22 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       function dismissOutcomeError() {
         vscode.postMessage({ command: 'dismissOutcomeError' });
       }
+      function acceptOutcomeSuggestions() {
+        vscode.postMessage({ command: 'acceptOutcomeSuggestions' });
+      }
+      function sendOutcomeRefinement() {
+        const input = document.getElementById('outcomeRefineInput');
+        if (input && input.value.trim()) {
+          vscode.postMessage({ command: 'sendOutcomeRefinement', value: input.value.trim() });
+          input.value = '';
+        }
+      }
+      function handleOutcomeRefineKeydown(event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          sendOutcomeRefinement();
+        }
+      }
     `;
   }
 
@@ -2550,6 +2860,12 @@ interface SuccessMetric {
   unit: string;
 }
 
+interface RefinedSectionsState {
+  outcome: boolean;
+  kpis: boolean;
+  stakeholders: boolean;
+}
+
 interface OutcomeDefinitionState {
   primaryOutcome: string;
   successMetrics: SuccessMetric[];
@@ -2560,6 +2876,9 @@ interface OutcomeDefinitionState {
   metricsEdited: boolean;
   stakeholdersEdited: boolean;
   customStakeholders: string[];
+  suggestionsAccepted: boolean;
+  step2AssumptionsHash?: string;
+  refinedSections: RefinedSectionsState;
 }
 
 interface IdeationState {
@@ -2620,6 +2939,9 @@ function createDefaultIdeationState(): IdeationState {
       metricsEdited: false,
       stakeholdersEdited: false,
       customStakeholders: [],
+      suggestionsAccepted: false,
+      step2AssumptionsHash: undefined,
+      refinedSections: { outcome: false, kpis: false, stakeholders: false },
     },
   };
 }

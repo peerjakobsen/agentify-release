@@ -226,7 +226,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 - User edits are preserved and not overwritten by subsequent AI calls
 - All existing Step 1-2 functionality unchanged `M`
 
-16.5. [ ] Outcome Refinement Conversation — Add conversational refinement UI to Step 3, matching the Step 2 pattern:
+16.5. [x] Outcome Refinement Conversation — Add conversational refinement UI to Step 3, matching the Step 2 pattern:
 
 **Two-Phase Display:**
 - **Phase 1 (Suggestion Review)**: On step entry, display AI suggestions as read-only card (not editable form)

@@ -13,7 +13,12 @@ import * as vscode from 'vscode';
 import { ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getBedrockClientAsync } from './bedrockClient';
 import { getConfigService } from './configService';
-import type { OutcomeSuggestions, SuccessMetric, SystemAssumption } from '../types/wizardPanel';
+import type {
+  OutcomeSuggestions,
+  SuccessMetric,
+  SystemAssumption,
+  OutcomeDefinitionState,
+} from '../types/wizardPanel';
 import {
   AgentifyError,
   createBedrockThrottledError,
@@ -125,6 +130,74 @@ Please provide your suggestions in the required JSON format.`;
 }
 
 // ============================================================================
+// Refinement Context Message Building
+// ============================================================================
+
+/**
+ * Build a context message for refinement requests
+ * Includes current outcome state so Claude can make informed updates
+ *
+ * @param userMessage The user's refinement request (e.g., "Add a metric for cost savings")
+ * @param currentState The current outcome definition state
+ * @returns Formatted refinement context message string
+ */
+export function buildRefinementContextMessage(
+  userMessage: string,
+  currentState: OutcomeDefinitionState
+): string {
+  // Format current KPIs
+  const kpisText = currentState.successMetrics.length > 0
+    ? currentState.successMetrics.map((m) => `- ${m.name}: ${m.targetValue} ${m.unit}`).join('\n')
+    : 'No KPIs defined yet.';
+
+  // Format current stakeholders
+  const stakeholdersText = currentState.stakeholders.length > 0
+    ? currentState.stakeholders.join(', ')
+    : 'No stakeholders selected yet.';
+
+  return `Current Outcome State:
+
+Primary Outcome: ${currentState.primaryOutcome || 'Not defined yet.'}
+
+Current KPIs:
+${kpisText}
+
+Current Stakeholders: ${stakeholdersText}
+
+User's Refinement Request: ${userMessage}
+
+Please update the outcome suggestions based on this refinement request. Respond with a JSON block containing only the changes:
+
+\`\`\`json
+{
+  "changes": {
+    "outcome": "updated outcome text (only if changing)",
+    "kpis": [{ "name": "...", "targetValue": "...", "unit": "..." }] (only if changing),
+    "stakeholders": ["..."] (only if changing)
+  }
+}
+\`\`\`
+
+Only include fields that are being changed. Do not include fields that should remain the same.`;
+}
+
+// ============================================================================
+// Refinement Changes Type
+// ============================================================================
+
+/**
+ * Structure for refinement changes parsed from Claude response
+ */
+export interface RefinementChanges {
+  /** Updated primary outcome (if changed) */
+  outcome?: string;
+  /** Updated KPIs array (if changed) */
+  kpis?: SuccessMetric[];
+  /** Updated stakeholders array (if changed) */
+  stakeholders?: string[];
+}
+
+// ============================================================================
 // JSON Outcome Parsing
 // ============================================================================
 
@@ -174,6 +247,143 @@ export function parseOutcomeSuggestionsFromResponse(response: string): OutcomeSu
     // Any unexpected error - return null
     return null;
   }
+}
+
+/**
+ * Parse refinement changes from a Claude response
+ * Extracts the JSON block containing changes for outcome, KPIs, and/or stakeholders
+ *
+ * @param response The full Claude response text (may include prose and JSON)
+ * @returns RefinementChanges object, or null if parsing fails
+ */
+export function parseRefinementChangesFromResponse(response: string): RefinementChanges | null {
+  try {
+    // Find all JSON blocks in the response using exec loop
+    const matches: RegExpExecArray[] = [];
+    let match: RegExpExecArray | null;
+
+    const regex = /```json\s*([\s\S]*?)```/g;
+    while ((match = regex.exec(response)) !== null) {
+      matches.push(match);
+    }
+
+    if (matches.length === 0) {
+      return null;
+    }
+
+    // Try each JSON block until we find one with valid changes
+    for (const m of matches) {
+      const jsonString = m[1].trim();
+
+      try {
+        const parsed = JSON.parse(jsonString);
+
+        // Check if this JSON has a changes object
+        if (parsed && typeof parsed.changes === 'object' && parsed.changes !== null) {
+          return validateAndTransformRefinementChanges(parsed.changes);
+        }
+      } catch {
+        // This JSON block didn't parse or doesn't have changes, try next one
+        continue;
+      }
+    }
+
+    // No valid changes found in any JSON block
+    return null;
+  } catch {
+    // Any unexpected error - return null
+    return null;
+  }
+}
+
+/**
+ * Validate and transform raw refinement changes into typed RefinementChanges
+ *
+ * @param raw Raw changes object from JSON
+ * @returns Validated and transformed RefinementChanges object
+ */
+function validateAndTransformRefinementChanges(
+  raw: Record<string, unknown>
+): RefinementChanges {
+  const changes: RefinementChanges = {};
+
+  // Extract outcome if present and is a string
+  if (typeof raw.outcome === 'string') {
+    changes.outcome = raw.outcome.trim();
+  }
+
+  // Extract KPIs if present and is an array
+  if (Array.isArray(raw.kpis)) {
+    const validKPIs: SuccessMetric[] = [];
+    for (const kpi of raw.kpis) {
+      if (isValidKPI(kpi)) {
+        validKPIs.push({
+          name: kpi.name,
+          targetValue: String(kpi.targetValue),
+          unit: kpi.unit,
+        });
+      }
+    }
+    if (validKPIs.length > 0) {
+      changes.kpis = validKPIs;
+    }
+  }
+
+  // Extract stakeholders if present and is an array
+  if (Array.isArray(raw.stakeholders)) {
+    const validStakeholders: string[] = raw.stakeholders
+      .filter((s): s is string => typeof s === 'string')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (validStakeholders.length > 0) {
+      changes.stakeholders = validStakeholders;
+    }
+  }
+
+  return changes;
+}
+
+// ============================================================================
+// Apply Refinement Changes with Edited Flags
+// ============================================================================
+
+/**
+ * Apply refinement changes to outcome state while respecting edited flags
+ * If a field has been manually edited by the user, AI changes are not applied to it
+ *
+ * @param currentState The current outcome definition state
+ * @param changes The refinement changes to apply
+ * @returns New state with changes applied (respecting edited flags)
+ */
+export function applyRefinementChangesWithEditedFlags(
+  currentState: OutcomeDefinitionState,
+  changes: RefinementChanges
+): OutcomeDefinitionState {
+  // Create a copy of the current state
+  const newState: OutcomeDefinitionState = {
+    ...currentState,
+    refinedSections: { ...currentState.refinedSections },
+  };
+
+  // Apply outcome change if not manually edited
+  if (changes.outcome !== undefined && !currentState.primaryOutcomeEdited) {
+    newState.primaryOutcome = changes.outcome;
+    newState.refinedSections.outcome = true;
+  }
+
+  // Apply KPIs change if not manually edited
+  if (changes.kpis !== undefined && !currentState.metricsEdited) {
+    newState.successMetrics = [...changes.kpis];
+    newState.refinedSections.kpis = true;
+  }
+
+  // Apply stakeholders change if not manually edited
+  if (changes.stakeholders !== undefined && !currentState.stakeholdersEdited) {
+    newState.stakeholders = [...changes.stakeholders];
+    newState.refinedSections.stakeholders = true;
+  }
+
+  return newState;
 }
 
 /**
@@ -364,11 +574,41 @@ export class OutcomeDefinitionService implements vscode.Disposable {
   }
 
   /**
+   * Build refinement context message
+   * Instance method wrapper for the utility function
+   */
+  public buildRefinementContextMessage(
+    userMessage: string,
+    currentState: OutcomeDefinitionState
+  ): string {
+    return buildRefinementContextMessage(userMessage, currentState);
+  }
+
+  /**
    * Parse outcome suggestions from Claude response
    * Instance method wrapper for the utility function
    */
   public parseOutcomeSuggestionsFromResponse(response: string): OutcomeSuggestions | null {
     return parseOutcomeSuggestionsFromResponse(response);
+  }
+
+  /**
+   * Parse refinement changes from Claude response
+   * Instance method wrapper for the utility function
+   */
+  public parseRefinementChangesFromResponse(response: string): RefinementChanges | null {
+    return parseRefinementChangesFromResponse(response);
+  }
+
+  /**
+   * Apply refinement changes respecting edited flags
+   * Instance method wrapper for the utility function
+   */
+  public applyRefinementChangesWithEditedFlags(
+    currentState: OutcomeDefinitionState,
+    changes: RefinementChanges
+  ): OutcomeDefinitionState {
+    return applyRefinementChangesWithEditedFlags(currentState, changes);
   }
 
   /**
@@ -404,6 +644,25 @@ export class OutcomeDefinitionService implements vscode.Disposable {
       this._isStreaming = false;
       throw error;
     }
+  }
+
+  /**
+   * Send a refinement message with current state context
+   * Builds context from current state and sends to Claude
+   *
+   * @param userMessage The user's refinement request
+   * @param currentState The current outcome definition state
+   * @yields Individual tokens as they stream from Bedrock
+   */
+  public async *sendRefinementMessage(
+    userMessage: string,
+    currentState: OutcomeDefinitionState
+  ): AsyncIterable<string> {
+    // Build refinement context message
+    const contextMessage = this.buildRefinementContextMessage(userMessage, currentState);
+
+    // Use the existing sendMessage flow
+    yield* this.sendMessage(contextMessage);
   }
 
   /**
