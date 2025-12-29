@@ -45,13 +45,29 @@ import {
 import {
   createDefaultAgentDesignState,
   createDefaultMockDataState,
+  createDefaultWizardState,
+  persistedStateToWizardState,
   AgentDesignState,
   MockDataState,
   OutcomeDefinitionState,
   SuccessMetric,
   RefinedSectionsState,
   OrchestrationPattern,
+  ResumeBannerState,
+  WizardState,
 } from '../types/wizardPanel';
+import {
+  getWizardStatePersistenceService,
+  WizardStatePersistenceService,
+} from '../services/wizardStatePersistenceService';
+import {
+  getResumeBannerHtml,
+  getResumeBannerStyles,
+  truncateBusinessObjective,
+  calculateExpiryStatus,
+} from './resumeBannerHtml';
+// Task 8.2: Import steering file creation function
+import { createSteeringFile } from '../templates/steeringFile';
 
 /**
  * View ID for the Tabbed Panel
@@ -105,6 +121,17 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _step5Handler?: Step5LogicHandler;
   private _step6Handler?: Step6LogicHandler;
 
+  // Task 6.2: Persistence service and resume banner state
+  private _persistenceService: WizardStatePersistenceService | null = null;
+  private _resumeBannerState: ResumeBannerState = {
+    visible: false,
+    businessObjectivePreview: '',
+    stepReached: 1,
+    savedAt: 0,
+    isExpired: false,
+    isVersionMismatch: false,
+  };
+
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
     this._context = context;
@@ -118,6 +145,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
     // Initialize step handlers
     this.initStepHandlers();
+
+    // Task 6.2: Initialize persistence service
+    this._persistenceService = getWizardStatePersistenceService();
   }
 
   /**
@@ -197,8 +227,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this._extensionUri],
     };
 
-    // Check project initialization
-    this.checkProjectInitialization().then(() => {
+    // Check project initialization and load persisted state
+    this.checkProjectInitialization().then(async () => {
+      // Task 6.3: Load persisted state on panel resolve
+      await this.loadPersistedState();
       this.updateWebviewContent();
       this.syncStateToWebview();
     });
@@ -222,6 +254,249 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       this._demoState.isProjectInitialized = configFiles.length > 0;
     } catch {
       this._demoState.isProjectInitialized = false;
+    }
+  }
+
+  /**
+   * Load persisted state and set up resume banner
+   * Task 6.3: Implement state loading in resolveWebviewView()
+   */
+  private async loadPersistedState(): Promise<void> {
+    if (!this._persistenceService) {
+      return;
+    }
+
+    try {
+      const result = await this._persistenceService.load();
+
+      switch (result.status) {
+        case 'loaded':
+          if (result.state) {
+            // Set up resume banner with state preview
+            const expiryStatus = calculateExpiryStatus(result.state.savedAt);
+            this._resumeBannerState = {
+              visible: true,
+              businessObjectivePreview: truncateBusinessObjective(result.state.businessObjective),
+              stepReached: result.state.highestStepReached,
+              savedAt: result.state.savedAt,
+              isExpired: expiryStatus.isExpired,
+              isVersionMismatch: false,
+            };
+          }
+          break;
+
+        case 'version_mismatch':
+          // Show version mismatch banner
+          this._resumeBannerState = {
+            visible: true,
+            businessObjectivePreview: '',
+            stepReached: 1,
+            savedAt: 0,
+            isExpired: false,
+            isVersionMismatch: true,
+          };
+          break;
+
+        case 'corrupted':
+          // Show warning notification, treat as not found
+          vscode.window.showWarningMessage(
+            'Previous wizard session data is corrupted. Starting fresh.'
+          );
+          // Clear the corrupted file
+          await this._persistenceService.clear();
+          break;
+
+        case 'not_found':
+          // No action needed, no banner shown
+          break;
+      }
+    } catch (error) {
+      console.error('[TabbedPanel] Failed to load persisted state:', error);
+    }
+  }
+
+  /**
+   * Handle resumeSession command
+   * Task 6.6: Load persisted state, convert to WizardState, restore and navigate
+   */
+  private async handleResumeSession(): Promise<void> {
+    if (!this._persistenceService) {
+      return;
+    }
+
+    try {
+      const result = await this._persistenceService.load();
+
+      if (result.status === 'loaded' && result.state) {
+        // Convert persisted state to wizard state
+        const wizardState = persistedStateToWizardState(result.state);
+
+        // Update ideation state with restored values
+        this._ideationState.currentStep = wizardState.currentStep;
+        this._ideationState.highestStepReached = wizardState.highestStepReached;
+        this._ideationState.validationAttempted = wizardState.validationAttempted;
+        this._ideationState.businessObjective = wizardState.businessObjective;
+        this._ideationState.industry = wizardState.industry;
+        this._ideationState.customIndustry = wizardState.customIndustry;
+        this._ideationState.systems = wizardState.systems;
+        this._ideationState.customSystems = wizardState.customSystems;
+        this._ideationState.uploadedFile = undefined; // Binary not persisted
+        this._ideationState.uploadedFileMetadata = wizardState.uploadedFileMetadata;
+        this._ideationState.aiGapFillingState = wizardState.aiGapFillingState;
+        this._ideationState.outcome = wizardState.outcome;
+        this._ideationState.securityGuardrails = {
+          dataSensitivity: wizardState.security.dataSensitivity,
+          complianceFrameworks: wizardState.security.complianceFrameworks,
+          approvalGates: wizardState.security.approvalGates,
+          guardrailNotes: wizardState.security.guardrailNotes,
+          skipped: wizardState.security.skipped,
+          aiSuggested: false,
+          industryDefaultsApplied: false,
+          aiCalled: false,
+          isLoading: false,
+        };
+        this._ideationState.agentDesign = wizardState.agentDesign;
+        this._ideationState.mockData = wizardState.mockData;
+
+        // Re-initialize step handlers with restored state
+        this.initStepHandlers();
+
+        // Navigate to highestStepReached
+        this._ideationState.currentStep = wizardState.highestStepReached;
+
+        // Hide the resume banner
+        this._resumeBannerState.visible = false;
+
+        // Update UI
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+      }
+    } catch (error) {
+      console.error('[TabbedPanel] Failed to resume session:', error);
+      vscode.window.showErrorMessage('Failed to resume previous session.');
+    }
+  }
+
+  /**
+   * Handle startFresh command
+   * Task 6.7: Clear persisted state and reset to default wizard state
+   */
+  private async handleStartFresh(): Promise<void> {
+    if (this._persistenceService) {
+      try {
+        await this._persistenceService.clear();
+      } catch (error) {
+        console.error('[TabbedPanel] Failed to clear persisted state:', error);
+      }
+    }
+
+    // Reset to default state
+    this._ideationState = createDefaultIdeationState();
+    this._ideationValidation = { isValid: false, errors: [], hasWarnings: false };
+
+    // Re-initialize step handlers with fresh state
+    this.initStepHandlers();
+
+    // Hide the resume banner
+    this._resumeBannerState.visible = false;
+
+    // Stay on Step 1
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle generateSteeringFiles command
+   * Task 8.2: Generate steering files and clear wizard state on success
+   */
+  private async handleGenerateSteeringFiles(): Promise<void> {
+    // Get workspace root
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      vscode.window.showErrorMessage('No workspace folder open. Please open a folder first.');
+      return;
+    }
+
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+    try {
+      // Create the steering file
+      const result = await createSteeringFile(workspaceRoot);
+
+      if (result.success) {
+        // Task 8.2: Clear wizard state after successful generation
+        if (this._persistenceService) {
+          await this._persistenceService.clear();
+          console.log('[TabbedPanel] Wizard state cleared after successful generation');
+        }
+
+        // Show success message
+        if (result.skipped) {
+          vscode.window.showInformationMessage(result.message);
+        } else {
+          vscode.window.showInformationMessage('Steering files generated successfully!');
+        }
+      } else {
+        // Generation failed - state is preserved (no clear called)
+        vscode.window.showErrorMessage(`Failed to generate steering files: ${result.message}`);
+      }
+    } catch (error) {
+      // Generation threw an error - state is preserved (no clear called)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[TabbedPanel] Failed to generate steering files:', error);
+      vscode.window.showErrorMessage(`Failed to generate steering files: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Convert IdeationState to WizardState for persistence
+   * Task 6.4: Helper to map local state to persistable format
+   */
+  private ideationStateToWizardState(): WizardState {
+    return {
+      currentStep: this._ideationState.currentStep,
+      highestStepReached: this._ideationState.highestStepReached,
+      validationAttempted: this._ideationState.validationAttempted,
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      customIndustry: this._ideationState.customIndustry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+      uploadedFile: this._ideationState.uploadedFile,
+      uploadedFileMetadata: this._ideationState.uploadedFileMetadata,
+      aiGapFillingState: this._ideationState.aiGapFillingState,
+      outcome: this._ideationState.outcome,
+      security: {
+        dataSensitivity: this._ideationState.securityGuardrails.dataSensitivity as 'public' | 'internal' | 'confidential' | 'restricted',
+        complianceFrameworks: this._ideationState.securityGuardrails.complianceFrameworks,
+        approvalGates: this._ideationState.securityGuardrails.approvalGates,
+        guardrailNotes: this._ideationState.securityGuardrails.guardrailNotes,
+        skipped: this._ideationState.securityGuardrails.skipped,
+      },
+      agentDesign: this._ideationState.agentDesign,
+      mockData: this._ideationState.mockData,
+    };
+  }
+
+  /**
+   * Save current state with debouncing
+   * Task 6.4: Wire debounced save to state mutation handlers
+   */
+  private saveState(): void {
+    if (this._persistenceService) {
+      const wizardState = this.ideationStateToWizardState();
+      this._persistenceService.save(wizardState);
+    }
+  }
+
+  /**
+   * Save current state immediately (no debounce)
+   * Task 6.5: Wire immediate save to navigation handlers
+   */
+  private async saveStateImmediate(): Promise<void> {
+    if (this._persistenceService) {
+      const wizardState = this.ideationStateToWizardState();
+      await this._persistenceService.saveImmediate(wizardState);
     }
   }
 
@@ -286,6 +561,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.businessObjective = message.value as string;
         this.validateIdeationStep1();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'updateIndustry':
         this._ideationState.industry = message.value as string;
@@ -297,10 +573,12 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'updateCustomIndustry':
         this._ideationState.customIndustry = message.value as string;
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'toggleSystem':
         const system = message.value as string;
@@ -313,10 +591,12 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'updateCustomSystems':
         this._ideationState.customSystems = message.value as string;
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'uploadFile':
         const fileData = message.file as { name: string; size: number; data: number[] };
@@ -326,16 +606,21 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
             size: fileData.size,
             data: new Uint8Array(fileData.data),
           };
+          // Clear previous metadata when new file uploaded
+          this._ideationState.uploadedFileMetadata = undefined;
           this.validateIdeationStep1();
           this.updateWebviewContent();
           this.syncStateToWebview();
+          this.saveState(); // Task 6.4: Debounced save
         }
         break;
       case 'removeFile':
         this._ideationState.uploadedFile = undefined;
+        this._ideationState.uploadedFileMetadata = undefined;
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
 
       // Step 2: AI Gap-Filling commands
@@ -357,6 +642,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.outcome.primaryOutcome = message.value as string;
         this._ideationState.outcome.primaryOutcomeEdited = true;
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'addMetric':
         this._ideationState.outcome.successMetrics.push({
@@ -367,6 +653,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.outcome.metricsEdited = true;
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'removeMetric':
         const metricIndex = message.index as number;
@@ -375,6 +662,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           this._ideationState.outcome.metricsEdited = true;
           this.updateWebviewContent();
           this.syncStateToWebview();
+          this.saveState(); // Task 6.4: Debounced save
         }
         break;
       case 'updateMetric':
@@ -391,6 +679,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           }
           this._ideationState.outcome.metricsEdited = true;
           this.syncStateToWebview();
+          this.saveState(); // Task 6.4: Debounced save
         }
         break;
       case 'toggleStakeholder':
@@ -404,6 +693,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         this._ideationState.outcome.stakeholdersEdited = true;
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'addCustomStakeholder':
         const customStakeholder = message.value as string;
@@ -423,6 +713,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           this._ideationState.outcome.stakeholdersEdited = true;
           this.updateWebviewContent();
           this.syncStateToWebview();
+          this.saveState(); // Task 6.4: Debounced save
         }
         break;
       case 'regenerateOutcomeSuggestions':
@@ -437,6 +728,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.outcome.stakeholdersEdited = false;
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'sendOutcomeRefinement':
         this._step3Handler?.handleSendOutcomeRefinement(message.value as string);
@@ -452,6 +744,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.securityGuardrails.dataSensitivity = message.value as string;
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'toggleComplianceFramework':
         const framework = message.value as string;
@@ -464,6 +757,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'toggleApprovalGate':
         const gate = message.value as string;
@@ -476,11 +770,13 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'updateGuardrailNotes':
         this._ideationState.securityGuardrails.guardrailNotes = message.value as string;
         this._ideationState.securityGuardrails.aiSuggested = false;
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
       case 'skipSecurityStep':
         // Apply sensible defaults
@@ -494,6 +790,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
         this.updateWebviewContent();
         this.syncStateToWebview();
+        this.saveState(); // Task 6.4: Debounced save
         break;
 
       // Step 5: Agent Design commands (Phase 1)
@@ -690,6 +987,36 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           message.enabled as boolean,
           this.getStep6Inputs()
         );
+        break;
+
+      // =========================================================================
+      // Step 8: Generate Steering Files command (Task Group 8)
+      // Task 8.2: Handle steering file generation with auto-clear on success
+      // =========================================================================
+
+      case 'generateSteeringFiles':
+        this.handleGenerateSteeringFiles();
+        break;
+
+      // =========================================================================
+      // Resume Banner commands (Task Group 6)
+      // =========================================================================
+
+      case 'resumeSession':
+        // Task 6.6: Implement resumeSession message handler
+        this.handleResumeSession();
+        break;
+
+      case 'startFresh':
+        // Task 6.7: Implement startFresh message handler
+        this.handleStartFresh();
+        break;
+
+      case 'dismissResumeBanner':
+        // Dismiss banner without action
+        this._resumeBannerState.visible = false;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
         break;
     }
   }
@@ -982,8 +1309,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Navigate forward in wizard
+   * Task 6.5: Made async for immediate save before navigation
    */
-  private ideationNavigateForward(): void {
+  private async ideationNavigateForward(): Promise<void> {
     this._ideationState.validationAttempted = true;
     this.validateIdeationStep1();
 
@@ -991,6 +1319,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       this.syncStateToWebview();
       return;
     }
+
+    // Task 6.5: Immediate save before navigation
+    await this.saveStateImmediate();
 
     const previousStep = this._ideationState.currentStep;
 
@@ -1046,9 +1377,13 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Navigate backward in wizard
+   * Task 6.5: Made async for immediate save before navigation
    */
-  private ideationNavigateBackward(): void {
+  private async ideationNavigateBackward(): Promise<void> {
     if (this._ideationState.currentStep > 1) {
+      // Task 6.5: Immediate save before navigation
+      await this.saveStateImmediate();
+
       // Task 2.5b: Handle back navigation from Step 6 to Step 5
       if (this._ideationState.currentStep === 6) {
         this._step5Handler?.handleBackNavigationToStep5();
@@ -1068,9 +1403,13 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Navigate to specific step
+   * Task 6.5: Made async for immediate save before navigation
    */
-  private ideationNavigateToStep(step: number): void {
+  private async ideationNavigateToStep(step: number): Promise<void> {
     if (step >= 1 && step <= this._ideationState.highestStepReached && step !== this._ideationState.currentStep) {
+      // Task 6.5: Immediate save before navigation
+      await this.saveStateImmediate();
+
       // Task 2.5b: Handle back navigation from Step 6 to Step 5
       if (this._ideationState.currentStep === 6 && step === 5) {
         this._step5Handler?.handleBackNavigationToStep5();
@@ -1109,6 +1448,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       ideation: {
         state: this._ideationState,
         validation: this._ideationValidation,
+        resumeBanner: this._resumeBannerState, // Task 6.6: Include resume banner state
       },
       demo: {
         state: this._demoState,
@@ -1130,19 +1470,28 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   <style>
     ${this.getBaseStyles()}
     ${this.getTabStyles()}
-    ${this._activeTab === 'ideation' ? getIdeationStyles() : this.getDemoStyles()}
+    ${this._activeTab === 'ideation' ? getIdeationStyles() + getResumeBannerStyles() : this.getDemoStyles()}
   </style>
 </head>
 <body>
   ${this.getTabBarHtml()}
   <div class="tab-content">
-    ${this._activeTab === 'ideation' ? getIdeationContentHtml(this._ideationState as unknown as StepHtmlIdeationState, this._ideationValidation as unknown as StepHtmlValidationState) : this.getDemoContentHtml()}
+    ${this._activeTab === 'ideation' ? getResumeBannerHtml(this._resumeBannerState) + getIdeationContentHtml(this._ideationState as unknown as StepHtmlIdeationState, this._ideationValidation as unknown as StepHtmlValidationState) : this.getDemoContentHtml()}
   </div>
   <script>
     const vscode = acquireVsCodeApi();
 
     function switchTab(tabId) {
       vscode.postMessage({ command: 'switchTab', tab: tabId });
+    }
+
+    // Task 6.6: Resume banner button handlers
+    function resumeSession() {
+      vscode.postMessage({ command: 'resumeSession' });
+    }
+
+    function startFresh() {
+      vscode.postMessage({ command: 'startFresh' });
     }
 
     ${this._activeTab === 'ideation' ? getIdeationScript() : this.getDemoScript()}
@@ -1408,6 +1757,14 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
 
   /**
+   * Reset the wizard to default state
+   * Task Group 7: Public method for the VS Code command
+   */
+  public async resetWizard(): Promise<void> {
+    await this.handleStartFresh();
+  }
+
+  /**
    * Refresh the panel
    */
   public async refresh(): Promise<void> {
@@ -1442,6 +1799,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step3Handler?.dispose();
     this._step5Handler?.dispose();
     this._step6Handler?.dispose();
+    this._persistenceService?.dispose(); // Task 6.2: Clean up persistence service
   }
 }
 
@@ -1465,6 +1823,13 @@ interface IdeationState {
     name: string;
     size: number;
     data: Uint8Array;
+  };
+  // Task 6.2: Metadata for previously uploaded file (from resumed session)
+  uploadedFileMetadata?: {
+    fileName: string;
+    fileSize: number;
+    uploadedAt: number;
+    requiresReupload: true;
   };
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;

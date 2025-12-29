@@ -68,6 +68,10 @@
       {
         "command": "agentify.loadDemoEvents",
         "title": "Agentify: Load Demo Events (Testing)"
+      },
+      {
+        "command": "agentify.resetWizard",
+        "title": "Agentify: Reset Ideation Wizard"
       }
     ],
     "configuration": {

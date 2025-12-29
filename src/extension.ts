@@ -35,6 +35,10 @@ import {
   setStatusUpdateCallback,
 } from './services/credentialValidation';
 import { validateTableExists } from './services/tableValidator';
+import {
+  getWizardStatePersistenceService,
+  resetWizardStatePersistenceService,
+} from './services/wizardStatePersistenceService';
 import { StatusBarManager, StatusState } from './statusBar';
 import {
   DemoViewerPanelProvider,
@@ -157,6 +161,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
     handleRefreshCredentials
   );
   context.subscriptions.push(refreshCredentialsCmd);
+
+  // Task Group 7: Reset Wizard command
+  const resetWizardCmd = vscode.commands.registerCommand(
+    'agentify.resetWizard',
+    handleResetWizard
+  );
+  context.subscriptions.push(resetWizardCmd);
 }
 
 /**
@@ -561,6 +572,45 @@ async function handleRefreshCredentials(): Promise<void> {
 }
 
 /**
+ * Command handler: Reset Wizard
+ * Task Group 7: Clears persisted wizard state and resets the wizard to initial state
+ */
+async function handleResetWizard(): Promise<void> {
+  // Prompt user for confirmation
+  const result = await vscode.window.showWarningMessage(
+    'Reset Ideation Wizard? This will clear all saved wizard progress.',
+    { modal: true },
+    'Reset',
+    'Cancel'
+  );
+
+  if (result !== 'Reset') {
+    return;
+  }
+
+  try {
+    // Clear persisted state using persistence service
+    const persistenceService = getWizardStatePersistenceService();
+    if (persistenceService) {
+      await persistenceService.clear();
+      console.log('[Agentify] Wizard state cleared via command');
+    }
+
+    // Reset the wizard in the tabbed panel
+    if (tabbedPanelProvider) {
+      tabbedPanelProvider.resetWizard();
+      console.log('[Agentify] Wizard panel reset');
+    }
+
+    vscode.window.showInformationMessage('Ideation Wizard has been reset.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Agentify] Failed to reset wizard:', message);
+    vscode.window.showErrorMessage(`Failed to reset wizard: ${message}`);
+  }
+}
+
+/**
  * Command handler: Load Demo Events
  * Injects sample log entries for UI testing
  */
@@ -839,6 +889,9 @@ export function deactivate(): void {
 
   // Reset config service
   resetConfigService();
+
+  // Reset wizard state persistence service
+  resetWizardStatePersistenceService();
 
   // Clean up status bar (handled by subscriptions, but reset for clarity)
   statusBarManager = null;

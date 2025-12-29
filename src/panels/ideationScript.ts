@@ -261,6 +261,23 @@ export function getIdeationScript(): string {
       }
 
       // =========================================================================
+      // Resume Banner functions (Task Group 5)
+      // Task 5.3: Button handlers for resume/start fresh actions
+      // =========================================================================
+
+      function resumeSession() {
+        vscode.postMessage({ command: 'resumeSession' });
+      }
+
+      function startFresh() {
+        vscode.postMessage({ command: 'startFresh' });
+      }
+
+      function dismissResumeBanner() {
+        vscode.postMessage({ command: 'dismissResumeBanner' });
+      }
+
+      // =========================================================================
       // Step 6: Mock Data Strategy functions (Task Group 6)
       // =========================================================================
 
@@ -342,6 +359,15 @@ export function getIdeationScript(): string {
       // Task 6.3: Toggle customer terminology refinement
       function step6ToggleTerminology(enabled) {
         vscode.postMessage({ command: 'step6ToggleTerminology', enabled });
+      }
+
+      // =========================================================================
+      // Step 8: Generate Steering Files function (Task Group 8)
+      // Task 8.2: Trigger steering file generation with auto-clear on success
+      // =========================================================================
+
+      function generateSteeringFiles() {
+        vscode.postMessage({ command: 'generateSteeringFiles' });
       }
     `;
 }

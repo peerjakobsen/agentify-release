@@ -3,6 +3,109 @@
  * Types and interfaces for the Ideation Wizard panel functionality
  */
 
+// ============================================================================
+// Wizard State Persistence Types (Task Group 1)
+// ============================================================================
+
+/**
+ * Schema version for persisted wizard state
+ * Increment when making breaking changes to PersistedWizardState
+ * Task 1.2: Version constant for compatibility checking
+ */
+export const WIZARD_STATE_SCHEMA_VERSION = 1;
+
+/**
+ * Metadata for a previously uploaded file
+ * Task 1.3: Stores file metadata without binary data for persistence
+ */
+export interface PersistedFileMetadata {
+  /** Original filename */
+  fileName: string;
+  /** File size in bytes */
+  fileSize: number;
+  /** Unix timestamp when file was uploaded (milliseconds) */
+  uploadedAt: number;
+  /** Always true - indicates file needs re-upload */
+  requiresReupload: true;
+}
+
+/**
+ * Persisted wizard state for storage
+ * Task 1.4: Full persisted state structure
+ */
+export interface PersistedWizardState {
+  // -------------------------------------------------------------------------
+  // Metadata
+  // -------------------------------------------------------------------------
+
+  /** Schema version for compatibility checking */
+  schemaVersion: number;
+  /** Unix timestamp when state was saved (milliseconds) */
+  savedAt: number;
+
+  // -------------------------------------------------------------------------
+  // Navigation
+  // -------------------------------------------------------------------------
+
+  /** Current step number (1-8) */
+  currentStep: number;
+  /** Highest step that has been visited */
+  highestStepReached: number;
+  /** Whether validation has been attempted */
+  validationAttempted: boolean;
+
+  // -------------------------------------------------------------------------
+  // Step 1: Business Context
+  // -------------------------------------------------------------------------
+
+  /** Business objective/problem statement text */
+  businessObjective: string;
+  /** Selected industry vertical */
+  industry: string;
+  /** Custom industry text when "Other" is selected */
+  customIndustry?: string;
+  /** Array of selected system names */
+  systems: string[];
+  /** Custom systems text for additional systems */
+  customSystems?: string;
+  /** Metadata for previously uploaded file (binary data not persisted) */
+  uploadedFileMetadata?: PersistedFileMetadata;
+
+  // -------------------------------------------------------------------------
+  // Step 2-6: State Objects
+  // -------------------------------------------------------------------------
+
+  /** AI gap-filling conversation state */
+  aiGapFillingState: AIGapFillingState;
+  /** Outcome definition state */
+  outcome: OutcomeDefinitionState;
+  /** Security and guardrails state */
+  security: SecurityState;
+  /** Agent design state */
+  agentDesign: AgentDesignState;
+  /** Mock data state */
+  mockData: MockDataState;
+}
+
+/**
+ * Resume banner state for UI display
+ * Task 4.2: Interface for resume banner visibility and data
+ */
+export interface ResumeBannerState {
+  /** Whether the banner is visible */
+  visible: boolean;
+  /** Truncated business objective for preview */
+  businessObjectivePreview: string;
+  /** Step number reached in previous session */
+  stepReached: number;
+  /** Unix timestamp when state was last saved */
+  savedAt: number;
+  /** Whether the session is older than 7 days */
+  isExpired: boolean;
+  /** Whether the schema version doesn't match */
+  isVersionMismatch: boolean;
+}
+
 /**
  * Enum representing the wizard steps
  * Each step corresponds to a distinct phase in the agent ideation workflow
@@ -609,6 +712,12 @@ export interface WizardState {
    */
   uploadedFile?: UploadedFile;
 
+  /**
+   * Metadata for previously uploaded file (from resumed session)
+   * Task 1.6: Used by UI to show re-upload indicator
+   */
+  uploadedFileMetadata?: PersistedFileMetadata;
+
   // -------------------------------------------------------------------------
   // Step 2: AI Gap-Filling Conversation (Roadmap Item 15)
   // -------------------------------------------------------------------------
@@ -739,6 +848,7 @@ export interface WizardValidationState {
  *
  * Task 1.4: Extended with Phase 2 action commands for Step 5 Agent Design Editing
  * Task 1.5: Extended with Step 6 Mock Data Strategy commands
+ * Task 5.2: Extended with Resume Banner commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -861,6 +971,15 @@ export const WIZARD_COMMANDS = {
   STEP6_IMPORT_DATA: 'step6ImportData',
   /** Toggle customer terminology setting */
   STEP6_TOGGLE_TERMINOLOGY: 'step6ToggleTerminology',
+  // -------------------------------------------------------------------------
+  // Resume Banner commands (Task 5.2)
+  // -------------------------------------------------------------------------
+  /** Resume previous session from persisted state */
+  RESUME_SESSION: 'resumeSession',
+  /** Start fresh by clearing persisted state */
+  START_FRESH: 'startFresh',
+  /** Dismiss the resume banner without action */
+  DISMISS_RESUME_BANNER: 'dismissResumeBanner',
 } as const;
 
 /**
@@ -991,6 +1110,7 @@ export function createDefaultWizardState(): WizardState {
     systems: [],
     customSystems: undefined,
     uploadedFile: undefined,
+    uploadedFileMetadata: undefined,
     // Step 2: AI Gap-Filling Conversation
     aiGapFillingState: createDefaultAIGapFillingState(),
     // Step 3: Outcome Definition
@@ -1031,3 +1151,139 @@ export const FILE_UPLOAD_CONSTRAINTS = {
     'text/markdown',
   ],
 } as const;
+
+// ============================================================================
+// State Conversion Functions (Task Group 1)
+// ============================================================================
+
+/**
+ * Maximum number of messages to keep in conversation history when persisting
+ * Task 3.2: Limit to prevent state file bloat
+ */
+export const MAX_CONVERSATION_HISTORY = 10;
+
+/**
+ * Truncate conversation history to a maximum number of messages
+ * Task 3.2: Keeps most recent messages (from end)
+ *
+ * @param messages Array of conversation messages
+ * @param limit Maximum number of messages to keep (default 10)
+ * @returns Truncated messages array
+ */
+export function truncateConversationHistory(
+  messages: ConversationMessage[],
+  limit: number = MAX_CONVERSATION_HISTORY
+): ConversationMessage[] {
+  if (messages.length <= limit) {
+    return messages;
+  }
+  return messages.slice(-limit);
+}
+
+/**
+ * Apply conversation truncation to all conversation arrays in wizard state
+ * Task 3.3: Called before serialization
+ *
+ * @param state Wizard state with conversation histories
+ * @param limit Maximum messages per conversation
+ * @returns State with truncated conversations
+ */
+export function applyConversationTruncation(
+  state: WizardState,
+  limit: number = MAX_CONVERSATION_HISTORY
+): WizardState {
+  return {
+    ...state,
+    aiGapFillingState: {
+      ...state.aiGapFillingState,
+      conversationHistory: truncateConversationHistory(
+        state.aiGapFillingState.conversationHistory,
+        limit
+      ),
+    },
+  };
+}
+
+/**
+ * Convert WizardState to PersistedWizardState for storage
+ * Task 1.5: Extracts all persisted fields, handles file metadata
+ *
+ * @param state Current wizard state
+ * @returns Persisted state ready for JSON serialization
+ */
+export function wizardStateToPersistedState(state: WizardState): PersistedWizardState {
+  // Apply conversation truncation before persisting
+  const truncatedState = applyConversationTruncation(state);
+
+  // Handle uploaded file - store metadata only, not binary data
+  let uploadedFileMetadata: PersistedFileMetadata | undefined;
+  if (truncatedState.uploadedFile) {
+    uploadedFileMetadata = {
+      fileName: truncatedState.uploadedFile.name,
+      fileSize: truncatedState.uploadedFile.size,
+      uploadedAt: Date.now(),
+      requiresReupload: true,
+    };
+  } else if (truncatedState.uploadedFileMetadata) {
+    // Preserve existing metadata if no new file
+    uploadedFileMetadata = truncatedState.uploadedFileMetadata;
+  }
+
+  return {
+    // Metadata
+    schemaVersion: WIZARD_STATE_SCHEMA_VERSION,
+    savedAt: Date.now(),
+
+    // Navigation
+    currentStep: truncatedState.currentStep,
+    highestStepReached: truncatedState.highestStepReached,
+    validationAttempted: truncatedState.validationAttempted,
+
+    // Step 1: Business Context
+    businessObjective: truncatedState.businessObjective,
+    industry: truncatedState.industry,
+    customIndustry: truncatedState.customIndustry,
+    systems: truncatedState.systems,
+    customSystems: truncatedState.customSystems,
+    uploadedFileMetadata,
+
+    // Step 2-6: State Objects
+    aiGapFillingState: truncatedState.aiGapFillingState,
+    outcome: truncatedState.outcome,
+    security: truncatedState.security,
+    agentDesign: truncatedState.agentDesign,
+    mockData: truncatedState.mockData,
+  };
+}
+
+/**
+ * Convert PersistedWizardState back to WizardState
+ * Task 1.7: Restores state, sets uploadedFile to undefined
+ *
+ * @param persisted Previously saved state
+ * @returns Full wizard state with file metadata preserved
+ */
+export function persistedStateToWizardState(persisted: PersistedWizardState): WizardState {
+  return {
+    // Navigation
+    currentStep: persisted.currentStep,
+    highestStepReached: persisted.highestStepReached,
+    validationAttempted: persisted.validationAttempted,
+
+    // Step 1: Business Context
+    businessObjective: persisted.businessObjective,
+    industry: persisted.industry,
+    customIndustry: persisted.customIndustry,
+    systems: persisted.systems,
+    customSystems: persisted.customSystems,
+    uploadedFile: undefined, // Binary data not persisted
+    uploadedFileMetadata: persisted.uploadedFileMetadata, // Preserve for UI display
+
+    // Step 2-6: State Objects
+    aiGapFillingState: persisted.aiGapFillingState,
+    outcome: persisted.outcome,
+    security: persisted.security,
+    agentDesign: persisted.agentDesign,
+    mockData: persisted.mockData,
+  };
+}

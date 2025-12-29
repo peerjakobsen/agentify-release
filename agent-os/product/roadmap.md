@@ -436,7 +436,7 @@ interface ProposedEdge {
 - Mock definitions stored in wizard state
 - Used in Phase 4 steering file generation (`integration-landscape.md`) `M`
 
-22. [ ] Wizard State Persistence — Implement workspace storage for wizard progress so users can resume incomplete ideation sessions:
+22. [x] Wizard State Persistence — Implement workspace storage for wizard progress so users can resume incomplete ideation sessions:
 
 **Storage:**
 - Save wizard state to `.agentify/wizard-state.json` on each step completion

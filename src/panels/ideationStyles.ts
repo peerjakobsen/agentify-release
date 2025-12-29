@@ -3,6 +3,8 @@
  * CSS styles for the ideation wizard panel
  */
 
+import { getResumeBannerStyles } from './resumeBannerHtml';
+
 /**
  * Get Ideation styles
  */
@@ -1447,6 +1449,327 @@ export function getIdeationStyles(): string {
         margin-top: 6px;
         font-size: 11px;
         color: var(--vscode-descriptionForeground);
+      }
+
+      /* Task Group 4: Resume Banner Styles */
+      ${getResumeBannerStyles()}
+
+      /* =========================================================================
+       * Step 6: Mock Data Strategy Styles
+       * ========================================================================= */
+
+      .step6-header {
+        margin-bottom: 20px;
+      }
+      .step6-header h2 {
+        margin: 0 0 8px 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+
+      /* Mock Data Loading/Error States */
+      .mock-data-loading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-input-background);
+        border-radius: 6px;
+      }
+      .mock-data-loading .loading-text {
+        font-size: 13px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .mock-data-error {
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+        border-radius: 6px;
+      }
+      .mock-data-error .error-text {
+        font-size: 13px;
+        color: var(--vscode-errorForeground, #f48771);
+      }
+
+      /* Mock Definitions Container */
+      .mock-definitions-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      /* Mock Accordion Cards */
+      .mock-accordion-card {
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-editorWidget-border);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .mock-accordion-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 12px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .mock-accordion-header:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .mock-accordion-header .codicon {
+        flex-shrink: 0;
+        font-size: 14px;
+        color: var(--vscode-foreground);
+        margin-top: 2px;
+        transition: transform 0.2s ease;
+      }
+      .mock-accordion-card.expanded .mock-accordion-header .codicon {
+        transform: rotate(90deg);
+      }
+      .accordion-header-content {
+        flex: 1;
+        min-width: 0;
+      }
+      .accordion-header-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .mock-accordion-card .tool-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+      .mock-accordion-card .system-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        border-radius: 10px;
+        white-space: nowrap;
+      }
+      .mock-accordion-card .tool-description {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1.4;
+      }
+
+      /* Mock Accordion Content */
+      .mock-accordion-content {
+        padding: 0 16px 16px 16px;
+        border-top: 1px solid var(--vscode-editorWidget-border);
+      }
+      .mock-accordion-card:not(.expanded) .mock-accordion-content {
+        display: none;
+      }
+
+      /* JSON Editor Sections */
+      .json-section {
+        margin-top: 16px;
+      }
+      .json-section .form-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+        margin-bottom: 8px;
+      }
+      .json-editor {
+        position: relative;
+      }
+      .json-textarea {
+        width: 100%;
+        min-height: 100px;
+        padding: 12px;
+        font-size: 12px;
+        font-family: var(--vscode-editor-font-family, monospace);
+        line-height: 1.5;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-editor-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        resize: vertical;
+      }
+      .json-textarea:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+
+      /* Sample Data Section */
+      .sample-data-section {
+        margin-top: 16px;
+      }
+      .sample-data-section .form-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+        margin-bottom: 8px;
+      }
+      .no-schema-message {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+        padding: 12px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+
+      /* Sample Data Table */
+      .sample-data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      .sample-data-table th {
+        text-align: left;
+        padding: 8px 12px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+        background: var(--vscode-editor-background);
+        border-bottom: 1px solid var(--vscode-input-border);
+      }
+      .sample-data-table td {
+        padding: 4px 8px;
+        vertical-align: middle;
+      }
+      .sample-data-table tr:not(:last-child) td {
+        border-bottom: 1px solid var(--vscode-input-border);
+      }
+      .sample-data-input {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .sample-data-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .row-actions {
+        text-align: center;
+        width: 40px;
+      }
+      .delete-row-btn {
+        background: transparent;
+        border: none;
+        color: var(--vscode-errorForeground, #f48771);
+        font-size: 14px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        opacity: 0.7;
+      }
+      .delete-row-btn:hover {
+        opacity: 1;
+        background: var(--vscode-input-background);
+      }
+      .actions-col {
+        width: 40px;
+      }
+
+      /* Sample Data Actions */
+      .sample-data-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 8px;
+      }
+      .add-row-btn {
+        padding: 6px 12px;
+        font-size: 12px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .add-row-btn:hover:not(:disabled) {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .add-row-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .max-rows-hint {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+
+      /* Tool Import Section */
+      .tool-import-section {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--vscode-input-border);
+      }
+      .import-btn {
+        padding: 6px 12px;
+        font-size: 12px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .import-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .import-summary {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+      }
+
+      /* Mock Data Action Buttons */
+      .mock-data-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+      .mock-data-actions .regenerate-btn {
+        padding: 8px 16px;
+        font-size: 12px;
+      }
+      .terminology-toggle {
+        padding: 8px 16px;
+        font-size: 12px;
+        background: transparent;
+        color: var(--vscode-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .terminology-toggle:hover:not(:disabled) {
+        background: var(--vscode-input-background);
+      }
+      .terminology-toggle.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border-color: var(--vscode-button-background);
+      }
+      .terminology-toggle:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* Step 6 Non-blocking Validation Warnings */
+      .validation-warnings.non-blocking {
+        margin-top: 16px;
+        background: var(--vscode-inputValidation-warningBackground, rgba(205, 145, 0, 0.1));
+        border: 1px solid var(--vscode-inputValidation-warningBorder, #cca700);
       }
     `;
 }

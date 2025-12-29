@@ -12,7 +12,8 @@ import {
   APPROVAL_GATE_OPTIONS,
   STAKEHOLDER_OPTIONS,
 } from './ideationConstants';
-import type { MockDataState, MockToolDefinition } from '../types/wizardPanel';
+import type { MockDataState, MockToolDefinition, PersistedFileMetadata } from '../types/wizardPanel';
+import { getFileReuploadIndicatorHtml } from './resumeBannerHtml';
 
 // ============================================================================
 // Types (local to tabbedPanel - should be consolidated later)
@@ -138,6 +139,8 @@ export interface IdeationState {
     size: number;
     data: Uint8Array;
   };
+  /** Task 5.4: Metadata for previously uploaded file (for re-upload indicator) */
+  uploadedFileMetadata?: PersistedFileMetadata;
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
@@ -415,16 +418,30 @@ export function getStep1Html(state: IdeationState, validation: IdeationValidatio
       </div>
     `).join('');
 
-  const fileHtml = state.uploadedFile
-    ? `<div class="file-info">
-          <span>${escapeHtml(state.uploadedFile.name)} (${formatFileSize(state.uploadedFile.size)})</span>
-          <button class="remove-file" onclick="removeFile()">Remove</button>
-        </div>`
-    : `<div class="file-upload-area" onclick="document.getElementById('file-input').click()">
+  // Task 5.4: File upload area with re-upload indicator support
+  const fileUploadArea = `<div class="file-upload-area" onclick="document.getElementById('file-input').click()">
           <p>Click to upload a file</p>
           <p style="font-size: 11px; color: var(--vscode-descriptionForeground);">PDF, DOCX, TXT, MD (max 5MB)</p>
           <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" style="display: none" onchange="handleFileUpload(event)">
         </div>`;
+
+  let fileHtml: string;
+  if (state.uploadedFile) {
+    // File is currently uploaded - show file info with remove button
+    fileHtml = `<div class="file-info">
+          <span>${escapeHtml(state.uploadedFile.name)} (${formatFileSize(state.uploadedFile.size)})</span>
+          <button class="remove-file" onclick="removeFile()">Remove</button>
+        </div>`;
+  } else if (state.uploadedFileMetadata) {
+    // File was previously uploaded but not available (resumed session) - show re-upload indicator
+    fileHtml = getFileReuploadIndicatorHtml(
+      state.uploadedFileMetadata.fileName,
+      state.uploadedFileMetadata.fileSize
+    ) + fileUploadArea;
+  } else {
+    // No file - show upload area only
+    fileHtml = fileUploadArea;
+  }
 
   return `
       ${showSystemsWarning ? `<div class="warning-banner">${validation.errors.find(e => e.type === 'systems')?.message}</div>` : ''}
@@ -1472,8 +1489,8 @@ function renderSampleDataTable(def: MockToolDefinition, toolIndex: number): stri
  */
 function renderMockAccordionCard(def: MockToolDefinition, toolIndex: number): string {
   const expandedClass = def.expanded ? 'expanded' : '';
-  const chevronIcon = def.expanded ? 'codicon-chevron-down' : 'codicon-chevron-right';
-  const contentDisplay = def.expanded ? '' : 'style="display: none;"';
+  // Always use chevron-right - CSS transform handles rotation when expanded
+  const chevronIcon = 'codicon-chevron-right';
 
   // Import summary if present (stored in extended interface)
   const importSummary = (def as MockToolDefinition & { importSummary?: string }).importSummary;
@@ -1486,14 +1503,11 @@ function renderMockAccordionCard(def: MockToolDefinition, toolIndex: number): st
       <div class="mock-accordion-header" onclick="handleStep6Command('step6ToggleAccordion', { toolIndex: ${toolIndex} })">
         <span class="codicon ${chevronIcon}"></span>
         <div class="accordion-header-content">
-          <div class="accordion-header-row">
-            <span class="tool-name">${escapeHtml(def.tool)}</span>
-            <span class="system-badge">${escapeHtml(def.system)}</span>
-          </div>
+          <span class="tool-name">${escapeHtml(def.tool)}</span>
           <span class="tool-description">${escapeHtml(def.description || '')}</span>
         </div>
       </div>
-      <div class="mock-accordion-content" ${contentDisplay}>
+      <div class="mock-accordion-content">
         <div class="json-section">
           <label class="form-label">Mock Request Schema</label>
           ${renderJsonEditor(def.mockRequest, toolIndex, 'request', 'step6UpdateRequest')}
@@ -1615,10 +1629,11 @@ export function getStep6Html(state: IdeationState): string {
 
 /**
  * Get navigation buttons HTML
+ * Task 8.2: Generate button now calls generateSteeringFiles()
  */
 export function getNavigationButtonsHtml(state: IdeationState): string {
   const isFirstStep = state.currentStep === 1;
-  const isLastStep = state.currentStep === 6;
+  const isLastStep = state.currentStep === 8;
   const isStep4 = state.currentStep === 4;
 
   // Skip button for Step 4 (optional step)
@@ -1632,7 +1647,7 @@ export function getNavigationButtonsHtml(state: IdeationState): string {
         <div class="nav-buttons-right">
           ${skipButton}
           ${isLastStep
-            ? '<button class="nav-btn primary">Generate</button>'
+            ? '<button class="nav-btn primary" onclick="generateSteeringFiles()">Generate</button>'
             : '<button class="nav-btn primary" onclick="nextStep()">Next</button>'
           }
         </div>
