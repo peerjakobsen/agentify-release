@@ -65,7 +65,7 @@ Reduce commercial loan underwriting cycle time by 50% while maintaining decision
 
 **Sample Refinement Prompt:**
 ```
-Make the cycle time reduction more aggressive - we're targeting 60%. Add metrics for false positive rate on fraud flags and loan officer productivity. Also add Executive as a stakeholder since they're sponsoring this initiative.
+Make the cycle time reduction more aggressive - we're targeting 70%. Add metrics for false positive rate on fraud flags and loan officer productivity. Also add Executive as a stakeholder since they're sponsoring this initiative.
 ```
 
 ---

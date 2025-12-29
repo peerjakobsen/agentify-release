@@ -267,7 +267,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 - Refine input matches Step 2 "Refine assumptions..." input styling
 - Loading and error states match Step 2 patterns `M`
 
-17. [ ] Security & Guardrails Step — Build wizard step 4 for compliance and approval gate configuration:
+17. [x] Security & Guardrails Step — Build wizard step 4 for compliance and approval gate configuration:
 
 **Data Sensitivity Classification:**
 - Radio buttons: Public, Internal, Confidential, Restricted

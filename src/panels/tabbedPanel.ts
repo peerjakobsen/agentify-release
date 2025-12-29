@@ -185,6 +185,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         if (message.value !== 'Other') {
           this._ideationState.customIndustry = undefined;
         }
+        // Reset Step 4 industry defaults so they can be reapplied for new industry
+        this._ideationState.securityGuardrails.industryDefaultsApplied = false;
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
@@ -356,6 +358,55 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.updateWebviewContent();
         this.syncStateToWebview();
         break;
+
+      // Step 4: Security & Guardrails commands
+      case 'updateDataSensitivity':
+        this._ideationState.securityGuardrails.dataSensitivity = message.value as string;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'toggleComplianceFramework':
+        const framework = message.value as string;
+        const frameworks = this._ideationState.securityGuardrails.complianceFrameworks;
+        const frameworkIdx = frameworks.indexOf(framework);
+        if (frameworkIdx >= 0) {
+          frameworks.splice(frameworkIdx, 1);
+        } else {
+          frameworks.push(framework);
+        }
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'toggleApprovalGate':
+        const gate = message.value as string;
+        const gates = this._ideationState.securityGuardrails.approvalGates;
+        const gateIdx = gates.indexOf(gate);
+        if (gateIdx >= 0) {
+          gates.splice(gateIdx, 1);
+        } else {
+          gates.push(gate);
+        }
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'updateGuardrailNotes':
+        this._ideationState.securityGuardrails.guardrailNotes = message.value as string;
+        this._ideationState.securityGuardrails.aiSuggested = false;
+        this.syncStateToWebview();
+        break;
+      case 'skipSecurityStep':
+        // Apply sensible defaults
+        this._ideationState.securityGuardrails.dataSensitivity = 'Internal';
+        this._ideationState.securityGuardrails.complianceFrameworks = [];
+        this._ideationState.securityGuardrails.approvalGates = [];
+        this._ideationState.securityGuardrails.guardrailNotes = '';
+        this._ideationState.securityGuardrails.skipped = true;
+        // Navigate forward
+        this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
+        this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
     }
   }
 
@@ -442,6 +493,12 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Auto-send context to Claude when entering Step 3
       if (previousStep === 2 && this._ideationState.currentStep === 3) {
         this.triggerAutoSendForStep3();
+      }
+
+      // Apply industry defaults and trigger AI suggestions when entering Step 4
+      if (this._ideationState.currentStep === 4) {
+        this.applyIndustryDefaultsForStep4();
+        this.triggerAutoSendForStep4();
       }
     }
   }
@@ -877,6 +934,118 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Fresh entry with no outcome yet
       this.sendOutcomeContextToClaude();
     }
+  }
+
+  /**
+   * Apply industry-aware compliance defaults for Step 4
+   */
+  private applyIndustryDefaultsForStep4(): void {
+    const state = this._ideationState.securityGuardrails;
+
+    // Only apply defaults on first visit or if industry changed
+    if (state.industryDefaultsApplied) {
+      return;
+    }
+
+    // Get industry (handle "Other" case)
+    const industry = this._ideationState.industry === 'Other'
+      ? (this._ideationState.customIndustry || 'Other')
+      : this._ideationState.industry;
+
+    // Look up compliance defaults for this industry
+    const complianceDefaults = INDUSTRY_COMPLIANCE_MAPPING[industry] || [];
+
+    // Apply defaults
+    state.complianceFrameworks = [...complianceDefaults];
+    state.industryDefaultsApplied = true;
+
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Trigger AI guardrail suggestions for Step 4
+   */
+  private triggerAutoSendForStep4(): void {
+    const state = this._ideationState.securityGuardrails;
+
+    // Only trigger if guardrailNotes is empty AND AI hasn't been called yet
+    if (state.guardrailNotes === '' && !state.aiCalled) {
+      this.sendGuardrailSuggestionRequest();
+    }
+  }
+
+  /**
+   * Send guardrail suggestion request to Claude
+   */
+  private async sendGuardrailSuggestionRequest(): Promise<void> {
+    const state = this._ideationState.securityGuardrails;
+
+    // Mark AI as called to prevent repeated calls
+    state.aiCalled = true;
+    state.isLoading = true;
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    try {
+      // Build context from Steps 1-2
+      const context = this.buildGuardrailContextMessage();
+
+      // Get service
+      const service = this.initOutcomeService();
+      if (!service) {
+        throw new Error('Service not available');
+      }
+
+      // Send request using the conversation service and collect response
+      let fullResponse = '';
+      for await (const chunk of service.sendMessage(context)) {
+        fullResponse += chunk;
+      }
+
+      // Parse response - it's plain text
+      if (fullResponse.trim()) {
+        state.guardrailNotes = fullResponse.trim();
+        state.aiSuggested = true;
+      } else {
+        // Use fallback
+        state.guardrailNotes = 'No PII in demo data, mask account numbers...';
+        state.aiSuggested = false;
+      }
+    } catch (error) {
+      // Use fallback on error
+      state.guardrailNotes = 'No PII in demo data, mask account numbers...';
+      state.aiSuggested = false;
+      console.error('Guardrail suggestion error:', error);
+    } finally {
+      state.isLoading = false;
+      this.updateWebviewContent();
+      this.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Build context message for guardrail suggestions
+   */
+  private buildGuardrailContextMessage(): string {
+    const industry = this._ideationState.industry === 'Other'
+      ? (this._ideationState.customIndustry || 'Other')
+      : this._ideationState.industry;
+
+    const systems = this._ideationState.systems.join(', ') || 'No specific systems';
+
+    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions
+      .map(a => `${a.system}: ${a.modules?.join(', ') || 'N/A'}`)
+      .join('; ') || 'No confirmed assumptions';
+
+    return `Based on the following context, suggest 2-3 brief security guardrail notes for an AI demo:
+
+Business Objective: ${this._ideationState.businessObjective}
+Industry: ${industry}
+Systems: ${systems}
+Integration Details: ${assumptions}
+
+Please provide practical security considerations specific to this demo scenario. Keep suggestions concise (2-3 bullet points). Focus on data handling, privacy concerns, and demo-appropriate safeguards. Do not include extensive explanations - just the key guardrail notes.`;
   }
 
   /**
@@ -1421,6 +1590,98 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       }
       .nav-btn.secondary:hover {
         background: var(--vscode-input-background);
+      }
+      .nav-buttons-right {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .nav-btn.skip-btn {
+        background: transparent;
+        color: var(--vscode-descriptionForeground);
+        border: 1px dashed var(--vscode-input-border);
+      }
+      .nav-btn.skip-btn:hover {
+        background: var(--vscode-input-background);
+        color: var(--vscode-foreground);
+      }
+
+      /* Step 4: Security & Guardrails Styles */
+      .sensitivity-radio-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sensitivity-radio-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: border-color 0.15s ease;
+      }
+      .sensitivity-radio-option:hover {
+        border-color: var(--vscode-focusBorder);
+      }
+      .sensitivity-radio-option input[type="radio"] {
+        margin-top: 2px;
+        accent-color: var(--vscode-button-background);
+      }
+      .sensitivity-radio-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .sensitivity-label {
+        font-weight: 500;
+        color: var(--vscode-foreground);
+      }
+      .sensitivity-helper {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .ai-suggested-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        background: var(--vscode-badge-background);
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 8px;
+        font-weight: normal;
+      }
+      .guardrail-notes-input {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        resize: vertical;
+        min-height: 80px;
+      }
+      .guardrail-notes-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .guardrail-notes-input:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .guardrail-loading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--vscode-input-background);
+        border-radius: 6px;
+        margin-bottom: 16px;
       }
       .placeholder-content {
         text-align: center;
@@ -2102,6 +2363,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     if (this._ideationState.currentStep === 3) {
       return this.getStep3Html();
     }
+    if (this._ideationState.currentStep === 4) {
+      return this.getStep4Html();
+    }
     return `
       <div class="placeholder-content">
         <p>Step ${this._ideationState.currentStep} - Coming Soon</p>
@@ -2552,19 +2816,144 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get Step 4 HTML - Security & Guardrails
+   */
+  private getStep4Html(): string {
+    const state = this._ideationState.securityGuardrails;
+    const isLoading = state.isLoading;
+
+    // Loading indicator
+    let loadingHtml = '';
+    if (isLoading) {
+      loadingHtml = `
+        <div class="guardrail-loading">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating guardrail suggestions...</span>
+        </div>
+      `;
+    }
+
+    // Data Sensitivity radio buttons
+    const sensitivityOptionsHtml = DATA_SENSITIVITY_OPTIONS.map(opt => `
+      <label class="sensitivity-radio-option">
+        <input
+          type="radio"
+          name="dataSensitivity"
+          value="${opt.value}"
+          ${state.dataSensitivity === opt.value ? 'checked' : ''}
+          onchange="updateDataSensitivity('${opt.value}')"
+        >
+        <div class="sensitivity-radio-content">
+          <span class="sensitivity-label">${opt.label}</span>
+          <span class="sensitivity-helper">${opt.helperText}</span>
+        </div>
+      </label>
+    `).join('');
+
+    // Compliance Frameworks checkboxes
+    const complianceOptionsHtml = COMPLIANCE_FRAMEWORK_OPTIONS.map(framework => `
+      <label class="system-option">
+        <input
+          type="checkbox"
+          ${state.complianceFrameworks.includes(framework) ? 'checked' : ''}
+          onchange="toggleComplianceFramework('${this.escapeHtml(framework)}')"
+        >
+        <span>${this.escapeHtml(framework)}</span>
+      </label>
+    `).join('');
+
+    // Approval Gates checkboxes
+    const approvalGatesHtml = APPROVAL_GATE_OPTIONS.map(gate => `
+      <label class="system-option">
+        <input
+          type="checkbox"
+          ${state.approvalGates.includes(gate) ? 'checked' : ''}
+          onchange="toggleApprovalGate('${this.escapeHtml(gate)}')"
+        >
+        <span>${this.escapeHtml(gate)}</span>
+      </label>
+    `).join('');
+
+    // AI suggested badge
+    const aiSuggestedBadge = state.aiSuggested
+      ? '<span class="ai-suggested-badge">✨ AI suggested</span>'
+      : '';
+
+    return `
+      <div class="step-content">
+        <h2>Security & Guardrails</h2>
+        <p class="step-description">Configure security settings and compliance requirements for your demo. This step is optional.</p>
+
+        ${loadingHtml}
+
+        <div class="form-section">
+          <label class="form-label">Data Sensitivity</label>
+          <div class="sensitivity-radio-group">
+            ${sensitivityOptionsHtml}
+          </div>
+        </div>
+
+        <div class="form-section">
+          <label class="form-label">Compliance Frameworks</label>
+          <p class="field-description">Select applicable compliance frameworks based on your industry.</p>
+          <div class="systems-grid">
+            ${complianceOptionsHtml}
+          </div>
+        </div>
+
+        <div class="form-section">
+          <label class="form-label">Human Approval Gates</label>
+          <p class="field-description">Select workflow stages that require human approval.</p>
+          <div class="systems-grid">
+            ${approvalGatesHtml}
+          </div>
+        </div>
+
+        <div class="form-section">
+          <label class="form-label">
+            Guardrail Notes
+            ${aiSuggestedBadge}
+          </label>
+          <p class="field-description">Additional security constraints for this demo.</p>
+          <textarea
+            class="guardrail-notes-input"
+            rows="4"
+            placeholder="Additional security constraints..."
+            oninput="updateGuardrailNotes(this.value)"
+            ${isLoading ? 'disabled' : ''}
+          >${this.escapeHtml(state.guardrailNotes)}</textarea>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Get navigation buttons HTML
    */
   private getNavigationButtonsHtml(): string {
     const isFirstStep = this._ideationState.currentStep === 1;
     const isLastStep = this._ideationState.currentStep === 6;
+    const isStep4 = this._ideationState.currentStep === 4;
+
+    // Skip button for Step 4 (optional step)
+    const skipButton = isStep4
+      ? '<button class="nav-btn skip-btn" onclick="skipSecurityStep()">Skip</button>'
+      : '';
 
     return `
       <div class="nav-buttons">
         ${isFirstStep ? '<div></div>' : '<button class="nav-btn secondary" onclick="previousStep()">Back</button>'}
-        ${isLastStep
-          ? '<button class="nav-btn primary">Generate</button>'
-          : '<button class="nav-btn primary" onclick="nextStep()">Next</button>'
-        }
+        <div class="nav-buttons-right">
+          ${skipButton}
+          ${isLastStep
+            ? '<button class="nav-btn primary">Generate</button>'
+            : '<button class="nav-btn primary" onclick="nextStep()">Next</button>'
+          }
+        </div>
       </div>
     `;
   }
@@ -2744,6 +3133,23 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           sendOutcomeRefinement();
         }
       }
+
+      // Step 4: Security & Guardrails functions
+      function updateDataSensitivity(value) {
+        vscode.postMessage({ command: 'updateDataSensitivity', value });
+      }
+      function toggleComplianceFramework(framework) {
+        vscode.postMessage({ command: 'toggleComplianceFramework', value: framework });
+      }
+      function toggleApprovalGate(gate) {
+        vscode.postMessage({ command: 'toggleApprovalGate', value: gate });
+      }
+      function updateGuardrailNotes(value) {
+        vscode.postMessage({ command: 'updateGuardrailNotes', value });
+      }
+      function skipSecurityStep() {
+        vscode.postMessage({ command: 'skipSecurityStep' });
+      }
     `;
   }
 
@@ -2881,6 +3287,18 @@ interface OutcomeDefinitionState {
   refinedSections: RefinedSectionsState;
 }
 
+interface SecurityGuardrailsState {
+  dataSensitivity: string;
+  complianceFrameworks: string[];
+  approvalGates: string[];
+  guardrailNotes: string;
+  aiSuggested: boolean;
+  aiCalled: boolean;
+  skipped: boolean;
+  industryDefaultsApplied: boolean;
+  isLoading: boolean;
+}
+
 interface IdeationState {
   currentStep: number;
   highestStepReached: number;
@@ -2897,6 +3315,7 @@ interface IdeationState {
   };
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;
+  securityGuardrails: SecurityGuardrailsState;
 }
 
 interface IdeationValidationError {
@@ -2943,6 +3362,17 @@ function createDefaultIdeationState(): IdeationState {
       step2AssumptionsHash: undefined,
       refinedSections: { outcome: false, kpis: false, stakeholders: false },
     },
+    securityGuardrails: {
+      dataSensitivity: 'Internal',
+      complianceFrameworks: [],
+      approvalGates: [],
+      guardrailNotes: '',
+      aiSuggested: false,
+      aiCalled: false,
+      skipped: false,
+      industryDefaultsApplied: false,
+      isLoading: false,
+    },
   };
 }
 
@@ -2963,6 +3393,36 @@ const WIZARD_STEPS = [
   { step: 7, label: 'Demo Strategy' },
   { step: 8, label: 'Generate' },
 ];
+
+const DATA_SENSITIVITY_OPTIONS = [
+  { value: 'Public', label: 'Public', helperText: 'Data that can be shown to anyone. Example: product catalog, public pricing' },
+  { value: 'Internal', label: 'Internal', helperText: 'Business data not for external sharing. Example: sales forecasts, inventory levels' },
+  { value: 'Confidential', label: 'Confidential', helperText: 'Sensitive business data. Example: customer lists, financial reports' },
+  { value: 'Restricted', label: 'Restricted', helperText: 'Highly sensitive, regulatory implications. Example: PII, health records, payment data' },
+];
+
+const COMPLIANCE_FRAMEWORK_OPTIONS = ['SOC 2', 'HIPAA', 'PCI-DSS', 'GDPR', 'FedRAMP', 'None/Not specified'];
+
+const APPROVAL_GATE_OPTIONS = [
+  'Before external API calls',
+  'Before data modification',
+  'Before sending recommendations',
+  'Before financial transactions',
+];
+
+const INDUSTRY_COMPLIANCE_MAPPING: Record<string, string[]> = {
+  'Healthcare': ['HIPAA'],
+  'Life Sciences': ['HIPAA'],
+  'FSI': ['PCI-DSS', 'SOC 2'],
+  'Retail': ['PCI-DSS'],
+  'Public Sector': ['FedRAMP'],
+  'Energy': ['SOC 2'],
+  'Telecom': ['SOC 2'],
+  'Manufacturing': [],
+  'Media & Entertainment': [],
+  'Travel & Hospitality': ['PCI-DSS'],
+  'Other': [],
+};
 
 const INDUSTRY_OPTIONS = [
   'Retail',
