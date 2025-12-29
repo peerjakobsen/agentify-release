@@ -153,7 +153,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 - `confirmedAssumptions: {system: string, modules: string[], integrations: string[]}[]`
 - Stored in wizard state for downstream steps `L`
 
-16. [ ] Outcome Definition Step — Build wizard step 3 for defining measurable business outcomes:
+16. [x] Outcome Definition Step — Build wizard step 3 for defining measurable business outcomes:
 
 **AI-Driven Suggestions on Step Entry:**
 - Auto-send context (objective, industry, assumptions from Step 2) to Bedrock
@@ -178,6 +178,94 @@ No separate merge service needed — panel handles trivial array combination. `M
 **Validation:**
 - Primary outcome required
 - At least one success metric recommended (warning, not blocking) `S`
+
+16.2. [ ] Outcome Refinement Conversation — Add conversational refinement UI to Step 3, matching the Step 2 pattern:
+
+**Two-Phase Display:**
+- **Phase 1 (Suggestion Review)**: On step entry, display AI suggestions as read-only card (not editable form)
+  - Card shows: Primary Outcome statement, Suggested KPIs as bullet list, Suggested Stakeholders as tags
+  - "Accept Suggestions" button (green, full-width) to transition to Phase 2
+  - Refine input visible below card for pre-acceptance adjustments
+- **Phase 2 (Editable Form)**: After acceptance, show current editable form (from item 16)
+  - "Accepted ✓" banner at top (matches Step 2 pattern)
+  - All fields now editable (textarea, metric rows, stakeholder checkboxes)
+  - Refine input remains visible for post-acceptance adjustments
+
+**Refine Input (Both Phases):**
+- Text input with placeholder: "Refine outcomes..."
+- "Send" button to submit refinement request
+- Example hints below input: "Add a metric for cost savings", "Make the outcome more specific to risk"
+- Sends natural language request to Claude with current outcome state as context
+- AI responds with updated suggestions (Phase 1) or directly updates form fields (Phase 2)
+
+**Refinement Handling:**
+- Parse AI response for structured changes: outcome text updates, KPI additions/removals/edits, stakeholder changes
+- In Phase 1: Update suggestion card with refined values
+- In Phase 2: Update form fields directly, preserve user's other manual edits
+- Show brief "Updating..." indicator while AI processes refinement
+
+**State Management:**
+- New field: `suggestionsAccepted: boolean` (false on step entry, true after Accept click)
+- Preserve `suggestionsAccepted: true` when navigating back and returning to Step 3
+- "Regenerate" button resets to Phase 1 (`suggestionsAccepted: false`) with fresh AI call
+
+**Conversation Context:**
+- Refinement requests include: business objective, industry, confirmed assumptions (Step 2), current outcome state
+- AI maintains context for multi-turn refinements within the step
+- Conversation resets on "Regenerate" or when leaving and re-entering step with fresh data
+
+**UI Consistency with Step 2:**
+- Suggestion card styling matches Step 2 assumption cards (bordered container, system headers)
+- Accept button matches Step 2 green "Accepted ✓" style
+- Refine input matches Step 2 "Refine assumptions..." input styling
+- Loading and error states match Step 2 patterns `M`
+
+16.5. [ ] Panel Architecture Consolidation — Consolidate duplicate ideation wizard implementations into single `tabbedPanel.ts`:
+
+**Current State:**
+- `src/panels/ideationWizardPanel.ts` (~3000 lines): Original standalone wizard with complete AI integration for Steps 1-3, including `OutcomeDefinitionService` integration, streaming handlers, and conversation management
+- `src/panels/tabbedPanel.ts` (~2100 lines): Newer unified tabbed panel (Ideation + Demo Viewer) currently used by the app, with manual Step 3 implementation (no AI)
+
+**Problem:**
+- Two parallel implementations cause confusion during development
+- AI integration code in `ideationWizardPanel.ts` is not being used
+- Step 3 in `tabbedPanel.ts` lacks AI-driven suggestions that exist in `ideationWizardPanel.ts`
+
+**Migration Tasks:**
+
+1. **Port AI Integration for Step 3:**
+   - Import and initialize `OutcomeDefinitionService` in `tabbedPanel.ts`
+   - Add `_outcomeService` and `_outcomeStreamingResponse` private members
+   - Implement `initOutcomeService()` method with event subscriptions
+   - Implement `triggerAutoSendForStep3()` to auto-send context on step entry
+   - Implement `sendOutcomeContextToClaude()` for AI suggestions
+   - Add streaming handlers: `handleOutcomeStreamingToken()`, `handleOutcomeStreamingComplete()`, `handleOutcomeStreamingError()`
+
+2. **Port Type Definitions:**
+   - Verify `OutcomeSuggestions` interface from `wizardPanel.ts` is used
+   - Ensure `parseOutcomeSuggestionsFromResponse()` from service is called
+
+3. **Update Step Navigation:**
+   - Add `triggerAutoSendForStep3()` call in `ideationNavigateForward()` when entering Step 3 from Step 2
+
+4. **Port Prompt Template:**
+   - Ensure `resources/prompts/outcome-definition-assistant.md` is loaded by service
+
+5. **Delete Redundant Code:**
+   - Remove `src/panels/ideationWizardPanel.ts` entirely
+   - Remove `IDEATION_WIZARD_VIEW_ID` export and any package.json references
+   - Clean up any unused imports in extension.ts
+
+6. **Update Tests:**
+   - Move relevant tests from `ideationWizardPanel.*.test.ts` to tabbedPanel tests
+   - Delete `src/test/panels/ideationWizardPanel.*.test.ts` files
+
+**Verification:**
+- Step 3 auto-generates AI suggestions on entry (like Step 2 does)
+- Regenerate button fetches fresh AI suggestions
+- AI suggestions populate form fields (primary outcome, metrics, stakeholders)
+- User edits are preserved and not overwritten by subsequent AI calls
+- All existing Step 1-2 functionality unchanged `M`
 
 17. [ ] Security & Guardrails Step — Build wizard step 4 for compliance and approval gate configuration:
 
@@ -462,7 +550,7 @@ This step is optional — "Skip" button available with sensible defaults applied
 | File | Source | Content |
 |------|--------|---------|
 | `product.md` | Item 13, 16 | Business objective as product description, success metrics, stakeholders |
-| `tech.md` | Item 18, 20 | Strands SDK, Python 3.11+, selected orchestration pattern, DynamoDB for events |
+| `tech.md` | Item 18, 20 | Strands SDK, Python 3.12+, selected orchestration pattern, DynamoDB for events |
 | `structure.md` | Static template | Standard agentic project layout (`agents/`, `tools/`, `mocks/`, etc.) |
 | `customer-context.md` | Item 13, 15 | Industry, confirmed system assumptions, strategic priorities |
 | `integration-landscape.md` | Item 15, 21 | Systems, data sources, mock definitions with sample data |

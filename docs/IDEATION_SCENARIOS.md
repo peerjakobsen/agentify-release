@@ -1,0 +1,320 @@
+# Ideation Wizard Scenarios
+
+This document provides sample scenarios for the Ideation Wizard, demonstrating typical inputs for different industries. Use these as reference when creating agent workflow demos.
+
+---
+
+## Scenario 1: Financial Services (FSI) - Loan Processing Automation
+
+### Step 1: Business Context
+
+**Business Objective:**
+```
+Automate the commercial loan underwriting process to reduce manual document review time and improve decision consistency. Currently, loan officers spend 4-6 hours per application reviewing financial documents, cross-referencing credit reports, and compiling risk assessments. We need an AI agent that can extract key financial metrics, flag anomalies, and generate preliminary risk scores while ensuring compliance with regulatory requirements.
+```
+
+**Industry:** FSI
+
+**Systems to Integrate:**
+- CRM: Salesforce
+- Data: Snowflake
+
+**Custom Systems:**
+```
+IBM Mainframe (z/OS) with core banking system (FIS Profile, Fiserv DNA), Experian Credit API, Moody's Analytics, DocuSign, internal loan origination system (LOS), MQ Series for mainframe messaging
+```
+
+**Additional Context (suggested file):** Commercial_Loan_Guidelines_2024.pdf
+
+---
+
+### Step 2: AI Gap-Filling (Expected Assumptions)
+
+The AI should propose assumptions like:
+- **IBM Mainframe (z/OS):** Core banking system (FIS Profile or Fiserv DNA), customer master data, account balances, transaction history. Integration via MQ Series message queues and CICS web services
+- **Salesforce:** Modules: Financial Services Cloud. Integrations: Customer relationship history, previous loan applications, relationship manager notes
+- **Snowflake:** Integrations: Historical loan performance data, credit model training datasets, regulatory reporting warehouse
+
+**Sample Refinement Prompt:**
+```
+We use FIS Profile for core banking, not Fiserv DNA. The mainframe integration goes through our API gateway (Apigee) which wraps the CICS transactions. We also need to integrate with our Basel III compliance engine for capital adequacy calculations and pull data from Bloomberg Terminal for market risk indicators.
+```
+
+---
+
+### Step 3: Outcome Definition
+
+**Primary Outcome:**
+```
+Reduce commercial loan underwriting cycle time by 60% while maintaining or improving decision quality and regulatory compliance accuracy.
+```
+
+**Success Metrics:**
+
+| Metric Name | Target Value | Unit |
+|-------------|--------------|------|
+| Document processing time | 45 | minutes |
+| Risk assessment accuracy | 95 | % |
+| Compliance check completion | 100 | % |
+| False positive rate (fraud flags) | < 2 | % |
+| Loan officer productivity | 3x | applications/day |
+
+**Stakeholders:**
+- [x] Finance
+- [x] Operations
+- [x] Executive
+- [x] Legal
+- [ ] IT
+- [ ] Customer Service
+
+---
+
+### Step 4: Security & Guardrails
+
+**Data Sensitivity:** Confidential
+
+**Compliance Frameworks:**
+- [x] PCI-DSS
+- [x] SOC 2
+
+**Approval Gates:**
+- [x] Before external API calls
+- [x] Before data modification
+- [x] Before sending recommendations
+- [x] Before financial transactions
+
+**Guardrail Notes:**
+```
+All loan decisions require human approval before communication to customer. Agent must log all data access for audit trail. PII must be masked in any logging or reporting outputs.
+```
+
+---
+
+## Scenario 2: Manufacturing - Predictive Maintenance Agent
+
+### Step 1: Business Context
+
+**Business Objective:**
+```
+Implement an AI-powered predictive maintenance system for our automotive parts manufacturing facility. Our production lines experience approximately 15 unplanned downtime events per month, costing $50,000+ per incident. We need an agent that can monitor IoT sensor data in real-time, predict equipment failures before they occur, automatically generate maintenance work orders, and optimize spare parts inventory based on predicted failure patterns.
+```
+
+**Industry:** Manufacturing
+
+**Systems to Integrate:**
+- ERP: SAP S/4HANA
+- Service: ServiceNow
+- Data: Databricks
+
+**Custom Systems:**
+```
+Siemens MindSphere (IoT platform), OSIsoft PI System, Rockwell FactoryTalk, CMMS (Maximo)
+```
+
+**Additional Context (suggested file):** Equipment_Specifications_LineA.pdf
+
+---
+
+### Step 2: AI Gap-Filling (Expected Assumptions)
+
+The AI should propose assumptions like:
+- **SAP S/4HANA:** Modules: PM (Plant Maintenance), MM (Materials Management), PP (Production Planning). Integrations: Work order creation, spare parts inventory, production scheduling
+- **ServiceNow:** Modules: IT Service Management, Field Service. Integrations: Incident creation, maintenance technician dispatch
+- **Databricks:** Integrations: ML model training for failure prediction, sensor data processing pipelines
+
+**Sample Refinement Prompt:**
+```
+We're using Siemens S7-1500 PLCs across all production lines. The agent needs to read OPC-UA data directly. Also, we have shift schedules in Kronos that should factor into maintenance window recommendations.
+```
+
+---
+
+### Step 3: Outcome Definition
+
+**Primary Outcome:**
+```
+Reduce unplanned production downtime by 70% through AI-driven predictive maintenance while optimizing maintenance labor and spare parts costs.
+```
+
+**Success Metrics:**
+
+| Metric Name | Target Value | Unit |
+|-------------|--------------|------|
+| Unplanned downtime reduction | 70 | % |
+| Prediction accuracy (failures) | 85 | % |
+| Mean time to repair | 2 | hours |
+| Spare parts inventory turns | 6 | per year |
+| Maintenance cost per unit | 15 | % reduction |
+
+**Stakeholders:**
+- [x] Operations
+- [x] Supply Chain
+- [x] Finance
+- [x] IT
+- [ ] Executive
+- [ ] Customer Service
+
+---
+
+### Step 4: Security & Guardrails
+
+**Data Sensitivity:** Internal
+
+**Compliance Frameworks:**
+- [x] SOC 2
+
+**Approval Gates:**
+- [x] Before data modification
+- [ ] Before external API calls
+- [ ] Before sending recommendations
+- [ ] Before financial transactions
+
+**Guardrail Notes:**
+```
+Agent cannot directly control equipment - all actions must be recommendations to human operators. Emergency shutdown scenarios require immediate human notification via SMS. Maintenance windows must respect collective bargaining agreement shift rules.
+```
+
+---
+
+## Scenario 3: Life Sciences - Clinical Trial Document Processing
+
+### Step 1: Business Context
+
+**Business Objective:**
+```
+Accelerate clinical trial regulatory submission preparation by automating document compilation and cross-referencing. Our regulatory affairs team currently spends 200+ hours per NDA submission manually compiling Clinical Study Reports (CSRs), cross-referencing patient data, and ensuring consistency across hundreds of documents. We need an AI agent that can extract structured data from clinical trial databases, auto-generate document sections following FDA/EMA templates, identify inconsistencies, and prepare submission-ready packages.
+```
+
+**Industry:** Life Sciences
+
+**Systems to Integrate:**
+- Data: Snowflake
+- ERP: Oracle
+
+**Custom Systems:**
+```
+Veeva Vault RIM (Regulatory Information Management), Medidata Rave (Clinical Trial Data), SAS for statistical analysis, electronic Common Technical Document (eCTD) publishing system
+```
+
+**Additional Context (suggested file):** FDA_eCTD_Submission_Guidelines.pdf
+
+---
+
+### Step 2: AI Gap-Filling (Expected Assumptions)
+
+The AI should propose assumptions like:
+- **Oracle:** Modules: Oracle Clinical, Oracle Health Sciences Data Management. Integrations: Clinical trial master data, patient demographics, adverse event reporting
+- **Snowflake:** Integrations: Aggregated clinical data warehouse, statistical analysis outputs, historical submission data
+- **Veeva Vault:** Assumed integration for regulatory document management, submission tracking, and compliance workflows
+
+**Sample Refinement Prompt:**
+```
+We need to ensure the agent can handle both FDA and EMA submission formats. The agent should also integrate with our LIMS (Laboratory Information Management System) for bioanalytical data. All patient identifiers must be anonymized according to HIPAA Safe Harbor standards.
+```
+
+---
+
+### Step 3: Outcome Definition
+
+**Primary Outcome:**
+```
+Reduce NDA/BLA submission preparation time by 50% while improving document quality scores and ensuring 100% regulatory compliance across FDA and EMA requirements.
+```
+
+**Success Metrics:**
+
+| Metric Name | Target Value | Unit |
+|-------------|--------------|------|
+| Submission prep time | 100 | hours |
+| Document consistency score | 98 | % |
+| First-pass acceptance rate | 95 | % |
+| Cross-reference accuracy | 99.5 | % |
+| Deficiency letter reduction | 60 | % reduction |
+
+**Stakeholders:**
+- [x] Operations
+- [x] Legal
+- [x] Executive
+- [x] IT
+- [ ] Finance
+- [ ] Customer Service
+
+**Custom Stakeholders (AI-suggested):**
+- [x] Regulatory Affairs
+- [x] Clinical Operations
+- [x] Medical Writing
+- [x] Quality Assurance
+
+---
+
+### Step 4: Security & Guardrails
+
+**Data Sensitivity:** Restricted
+
+**Compliance Frameworks:**
+- [x] HIPAA
+- [x] SOC 2
+- [x] GDPR
+
+**Approval Gates:**
+- [x] Before external API calls
+- [x] Before data modification
+- [x] Before sending recommendations
+
+**Guardrail Notes:**
+```
+All patient data must be de-identified before AI processing. 21 CFR Part 11 compliance required for electronic signatures and audit trails. No patient-level data can leave the validated environment. All AI-generated content must be reviewed by qualified medical writer before submission. Agent must maintain complete audit trail for regulatory inspection.
+```
+
+---
+
+## Quick Reference: Field Mappings
+
+### Industries Available
+- Retail
+- FSI
+- Healthcare
+- Life Sciences
+- Manufacturing
+- Energy
+- Telecom
+- Public Sector
+- Media & Entertainment
+- Travel & Hospitality
+- Other
+
+### System Categories
+| Category | Systems |
+|----------|---------|
+| CRM | Salesforce, HubSpot, Dynamics |
+| ERP | SAP S/4HANA, Oracle, NetSuite |
+| Data | Databricks, Snowflake, Redshift |
+| HR | Workday, SuccessFactors |
+| Service | ServiceNow, Zendesk |
+
+### Default Stakeholders
+- Operations
+- Finance
+- Supply Chain
+- Customer Service
+- Executive
+- IT
+- Sales
+- Marketing
+- HR
+- Legal
+
+### Compliance Frameworks
+- SOC 2
+- HIPAA
+- PCI-DSS
+- GDPR
+- FedRAMP
+
+### Industry Compliance Defaults
+| Industry | Default Frameworks |
+|----------|-------------------|
+| Healthcare | HIPAA |
+| Life Sciences | HIPAA |
+| FSI | PCI-DSS, SOC 2 |
+| Public Sector | FedRAMP |

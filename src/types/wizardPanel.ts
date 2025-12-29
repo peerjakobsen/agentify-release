@@ -228,6 +228,7 @@ export interface SuccessMetric {
 
 /**
  * Stakeholder options for outcome definition
+ * Expanded list includes all business function stakeholders
  */
 export const STAKEHOLDER_OPTIONS: string[] = [
   'Operations',
@@ -235,18 +236,49 @@ export const STAKEHOLDER_OPTIONS: string[] = [
   'Supply Chain',
   'Customer Service',
   'Executive',
+  'IT',
+  'Sales',
+  'Marketing',
+  'HR',
+  'Legal',
 ];
 
 /**
+ * AI-suggested outcome response format
+ * Represents the JSON structure returned by Claude for outcome suggestions
+ */
+export interface OutcomeSuggestions {
+  /** Primary outcome statement describing the business result */
+  primaryOutcome: string;
+  /** Array of suggested success metrics/KPIs (typically 3-5 items) */
+  suggestedKPIs: SuccessMetric[];
+  /** Array of suggested stakeholders (from STAKEHOLDER_OPTIONS plus custom AI suggestions) */
+  stakeholders: string[];
+}
+
+/**
  * Outcome definition state for Step 3
+ * Includes AI loading state and user edit tracking for regeneration logic
  */
 export interface OutcomeDefinitionState {
   /** Primary outcome statement describing the business result */
   primaryOutcome: string;
   /** Array of success metrics/KPIs */
   successMetrics: SuccessMetric[];
-  /** Selected stakeholders who benefit */
+  /** Selected stakeholders who benefit (from static list) */
   stakeholders: string[];
+  /** Whether AI suggestions are currently loading */
+  isLoading: boolean;
+  /** Error message if AI suggestions failed to load */
+  loadingError?: string;
+  /** Whether user has edited the primary outcome field */
+  primaryOutcomeEdited: boolean;
+  /** Whether user has edited any success metrics */
+  metricsEdited: boolean;
+  /** Whether user has edited stakeholder selections */
+  stakeholdersEdited: boolean;
+  /** AI-suggested stakeholders outside the static STAKEHOLDER_OPTIONS list */
+  customStakeholders: string[];
 }
 
 // ============================================================================
@@ -506,6 +538,23 @@ export const WIZARD_COMMANDS = {
   REGENERATE_ASSUMPTIONS: 'regenerateAssumptions',
   /** Retry the last message after an error */
   RETRY_LAST_MESSAGE: 'retryLastMessage',
+  // Step 3: Outcome Definition commands
+  /** Update the primary outcome text */
+  UPDATE_PRIMARY_OUTCOME: 'updatePrimaryOutcome',
+  /** Add a new empty metric row */
+  ADD_METRIC: 'addMetric',
+  /** Remove a metric at specified index */
+  REMOVE_METRIC: 'removeMetric',
+  /** Update a metric field (name, targetValue, or unit) */
+  UPDATE_METRIC: 'updateMetric',
+  /** Toggle a stakeholder checkbox */
+  TOGGLE_STAKEHOLDER: 'toggleStakeholder',
+  /** Add a custom stakeholder from text input */
+  ADD_CUSTOM_STAKEHOLDER: 'addCustomStakeholder',
+  /** Regenerate all outcome suggestions from AI */
+  REGENERATE_OUTCOME_SUGGESTIONS: 'regenerateOutcomeSuggestions',
+  /** Dismiss the outcome loading error message */
+  DISMISS_OUTCOME_ERROR: 'dismissOutcomeError',
 } as const;
 
 /**
@@ -547,6 +596,24 @@ export function createDefaultAIGapFillingState(): AIGapFillingState {
 }
 
 /**
+ * Creates default outcome definition state
+ * Used to initialize or reset Step 3 state
+ */
+export function createDefaultOutcomeDefinitionState(): OutcomeDefinitionState {
+  return {
+    primaryOutcome: '',
+    successMetrics: [],
+    stakeholders: [],
+    isLoading: false,
+    loadingError: undefined,
+    primaryOutcomeEdited: false,
+    metricsEdited: false,
+    stakeholdersEdited: false,
+    customStakeholders: [],
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -563,11 +630,7 @@ export function createDefaultWizardState(): WizardState {
     // Step 2: AI Gap-Filling Conversation
     aiGapFillingState: createDefaultAIGapFillingState(),
     // Step 3: Outcome Definition
-    outcome: {
-      primaryOutcome: '',
-      successMetrics: [],
-      stakeholders: [],
-    },
+    outcome: createDefaultOutcomeDefinitionState(),
     // Step 4: Security & Guardrails
     security: {
       dataSensitivity: 'internal',

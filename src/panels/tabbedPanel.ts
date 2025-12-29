@@ -234,6 +234,96 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       case 'retryLastMessage':
         this.handleRetryLastMessage();
         break;
+
+      // Step 3: Outcome Definition commands
+      case 'updatePrimaryOutcome':
+        this._ideationState.outcome.primaryOutcome = message.value as string;
+        this._ideationState.outcome.primaryOutcomeEdited = true;
+        this.syncStateToWebview();
+        break;
+      case 'addMetric':
+        this._ideationState.outcome.successMetrics.push({
+          name: '',
+          targetValue: '',
+          unit: '',
+        });
+        this._ideationState.outcome.metricsEdited = true;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'removeMetric':
+        const metricIndex = message.index as number;
+        if (metricIndex >= 0 && metricIndex < this._ideationState.outcome.successMetrics.length) {
+          this._ideationState.outcome.successMetrics.splice(metricIndex, 1);
+          this._ideationState.outcome.metricsEdited = true;
+          this.updateWebviewContent();
+          this.syncStateToWebview();
+        }
+        break;
+      case 'updateMetric':
+        const updateIndex = message.index as number;
+        const field = message.field as string;
+        const metric = this._ideationState.outcome.successMetrics[updateIndex];
+        if (metric) {
+          if (field === 'name') {
+            metric.name = message.value as string;
+          } else if (field === 'targetValue') {
+            metric.targetValue = message.value as string;
+          } else if (field === 'unit') {
+            metric.unit = message.value as string;
+          }
+          this._ideationState.outcome.metricsEdited = true;
+          this.syncStateToWebview();
+        }
+        break;
+      case 'toggleStakeholder':
+        const stakeholder = message.value as string;
+        const stakeholders = this._ideationState.outcome.stakeholders;
+        const stakeholderIdx = stakeholders.indexOf(stakeholder);
+        if (stakeholderIdx >= 0) {
+          stakeholders.splice(stakeholderIdx, 1);
+        } else {
+          stakeholders.push(stakeholder);
+        }
+        this._ideationState.outcome.stakeholdersEdited = true;
+        this.syncStateToWebview();
+        break;
+      case 'addCustomStakeholder':
+        const customStakeholder = message.value as string;
+        if (customStakeholder && customStakeholder.trim()) {
+          const trimmedValue = customStakeholder.trim();
+          // Add to custom stakeholders if not already in static list or custom list
+          if (
+            !STAKEHOLDER_OPTIONS.includes(trimmedValue) &&
+            !this._ideationState.outcome.customStakeholders.includes(trimmedValue)
+          ) {
+            this._ideationState.outcome.customStakeholders.push(trimmedValue);
+          }
+          // Also add to selected stakeholders
+          if (!this._ideationState.outcome.stakeholders.includes(trimmedValue)) {
+            this._ideationState.outcome.stakeholders.push(trimmedValue);
+          }
+          this._ideationState.outcome.stakeholdersEdited = true;
+          this.updateWebviewContent();
+          this.syncStateToWebview();
+        }
+        break;
+      case 'regenerateOutcomeSuggestions':
+        // For now, just clear the form (AI integration can be added later)
+        this._ideationState.outcome.primaryOutcome = '';
+        this._ideationState.outcome.successMetrics = [];
+        this._ideationState.outcome.stakeholders = [];
+        this._ideationState.outcome.primaryOutcomeEdited = false;
+        this._ideationState.outcome.metricsEdited = false;
+        this._ideationState.outcome.stakeholdersEdited = false;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'dismissOutcomeError':
+        this._ideationState.outcome.loadingError = undefined;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
     }
   }
 
@@ -1264,6 +1354,167 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         background: var(--vscode-input-background);
         border-radius: 4px;
       }
+
+      /* Step 3: Outcome Definition Styles */
+      .step3-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+        gap: 12px;
+      }
+      .outcome-loading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+      .outcome-loading .loading-text {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .outcome-error {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+        border-radius: 4px;
+      }
+      .dismiss-error-btn {
+        background: transparent;
+        border: none;
+        color: var(--vscode-errorForeground, #f48771);
+        font-size: 11px;
+        cursor: pointer;
+        padding: 4px 8px;
+      }
+      .dismiss-error-btn:hover {
+        text-decoration: underline;
+      }
+      .field-hint {
+        margin: 0 0 8px 0;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .metrics-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .metric-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .metric-input {
+        padding: 8px 10px;
+        font-family: var(--vscode-font-family);
+        font-size: 13px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .metric-input:focus {
+        outline: 1px solid var(--vscode-focusBorder);
+        border-color: var(--vscode-focusBorder);
+      }
+      .metric-name {
+        flex: 2;
+      }
+      .metric-target {
+        flex: 1;
+      }
+      .metric-unit {
+        flex: 1;
+      }
+      .remove-metric-btn {
+        background: transparent;
+        border: none;
+        color: var(--vscode-errorForeground, #f48771);
+        font-size: 14px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      .remove-metric-btn:hover {
+        background: var(--vscode-input-background);
+      }
+      .add-metric-btn {
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        padding: 8px 16px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        align-self: flex-start;
+      }
+      .add-metric-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .stakeholders-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .stakeholder-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        padding: 6px 8px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+      .stakeholder-checkbox input[type="checkbox"] {
+        margin: 0;
+        cursor: pointer;
+        width: auto;
+      }
+      .stakeholder-checkbox.ai-suggested {
+        border: 1px solid var(--vscode-button-background);
+      }
+      .ai-badge {
+        font-size: 10px;
+        padding: 2px 6px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border-radius: 10px;
+        margin-left: auto;
+      }
+      .custom-stakeholder-input {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .custom-stakeholder-input input {
+        flex: 1;
+      }
+      .add-stakeholder-btn {
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        padding: 8px 16px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .add-stakeholder-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      textarea.error {
+        border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+      }
     `;
   }
 
@@ -1418,6 +1669,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     }
     if (this._ideationState.currentStep === 2) {
       return this.getStep2Html();
+    }
+    if (this._ideationState.currentStep === 3) {
+      return this.getStep3Html();
     }
     return `
       <div class="placeholder-content">
@@ -1643,6 +1897,147 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get Step 3 (Outcome Definition) HTML
+   */
+  private getStep3Html(): string {
+    const state = this._ideationState.outcome;
+    const showErrors = this._ideationState.validationAttempted;
+
+    // Check for validation errors
+    const primaryOutcomeError = showErrors && !state.primaryOutcome.trim();
+    const metricsWarning = state.successMetrics.length === 0;
+
+    // Render loading indicator or error
+    let loadingHtml = '';
+    if (state.isLoading) {
+      loadingHtml = `
+        <div class="outcome-loading">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating suggestions...</span>
+        </div>
+      `;
+    } else if (state.loadingError) {
+      loadingHtml = `
+        <div class="outcome-error">
+          <span class="error-text">${this.escapeHtml(state.loadingError)}</span>
+          <button class="dismiss-error-btn" onclick="dismissOutcomeError()">Dismiss</button>
+        </div>
+      `;
+    }
+
+    // Render metrics list
+    const metricsHtml = state.successMetrics.map((metric, index) => `
+      <div class="metric-row" data-index="${index}">
+        <input
+          type="text"
+          class="metric-input metric-name"
+          placeholder="Metric name"
+          value="${this.escapeHtml(metric.name)}"
+          oninput="updateMetric(${index}, 'name', this.value)"
+        >
+        <input
+          type="text"
+          class="metric-input metric-target"
+          placeholder="Target"
+          value="${this.escapeHtml(metric.targetValue)}"
+          oninput="updateMetric(${index}, 'targetValue', this.value)"
+        >
+        <input
+          type="text"
+          class="metric-input metric-unit"
+          placeholder="Unit"
+          value="${this.escapeHtml(metric.unit)}"
+          oninput="updateMetric(${index}, 'unit', this.value)"
+        >
+        <button class="remove-metric-btn" onclick="removeMetric(${index})" title="Remove metric">✕</button>
+      </div>
+    `).join('');
+
+    // Combine static stakeholders with AI-suggested custom stakeholders
+    const allStakeholders = [...STAKEHOLDER_OPTIONS];
+    const aiSuggestedStakeholders = state.customStakeholders.filter(
+      (s) => !STAKEHOLDER_OPTIONS.includes(s)
+    );
+
+    // Render stakeholder checkboxes
+    const stakeholderCheckboxesHtml = allStakeholders.map((stakeholder) => {
+      const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
+      const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      return `
+        <label class="stakeholder-checkbox">
+          <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${stakeholder}')">
+          <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
+        </label>
+      `;
+    }).join('');
+
+    // Render AI-suggested stakeholders with badge
+    const aiStakeholderCheckboxesHtml = aiSuggestedStakeholders.map((stakeholder) => {
+      const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
+      const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      return `
+        <label class="stakeholder-checkbox ai-suggested">
+          <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${this.escapeHtml(stakeholder)}')">
+          <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
+          <span class="ai-badge">AI suggested</span>
+        </label>
+      `;
+    }).join('');
+
+    return `
+      <div class="step3-header">
+        <p class="step-description">Define measurable business outcomes and success metrics for your workflow.</p>
+        <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${state.isLoading ? 'disabled' : ''}>
+          ↻ Regenerate
+        </button>
+      </div>
+
+      ${loadingHtml}
+
+      <div class="form-section">
+        <label class="form-label required">Primary Outcome</label>
+        <textarea
+          class="${primaryOutcomeError ? 'error' : ''}"
+          placeholder="Describe the measurable business result you want to achieve..."
+          oninput="updatePrimaryOutcome(this.value)"
+        >${this.escapeHtml(state.primaryOutcome)}</textarea>
+        ${primaryOutcomeError ? '<div class="error-message">Primary outcome is required</div>' : ''}
+      </div>
+
+      <div class="form-section">
+        <label class="form-label">Success Metrics</label>
+        ${metricsWarning && showErrors ? '<div class="warning-banner">Consider adding at least one success metric to measure outcomes</div>' : ''}
+        <div class="metrics-list">
+          ${metricsHtml}
+        </div>
+        <button class="add-metric-btn" onclick="addMetric()">+ Add Metric</button>
+      </div>
+
+      <div class="form-section">
+        <label class="form-label">Stakeholders</label>
+        <p class="field-hint">Select stakeholders who will benefit from or be impacted by this workflow.</p>
+        <div class="stakeholders-grid">
+          ${stakeholderCheckboxesHtml}
+          ${aiStakeholderCheckboxesHtml}
+        </div>
+        <div class="custom-stakeholder-input">
+          <input
+            type="text"
+            id="customStakeholderInput"
+            placeholder="Add custom stakeholder..."
+            onkeydown="handleCustomStakeholderKeydown(event)"
+          >
+          <button class="add-stakeholder-btn" onclick="addCustomStakeholder()">Add</button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Get navigation buttons HTML
    */
   private getNavigationButtonsHtml(): string {
@@ -1784,6 +2179,41 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       function retryLastMessage() {
         vscode.postMessage({ command: 'retryLastMessage' });
       }
+      // Step 3: Outcome Definition functions
+      function updatePrimaryOutcome(value) {
+        vscode.postMessage({ command: 'updatePrimaryOutcome', value });
+      }
+      function addMetric() {
+        vscode.postMessage({ command: 'addMetric' });
+      }
+      function removeMetric(index) {
+        vscode.postMessage({ command: 'removeMetric', index });
+      }
+      function updateMetric(index, field, value) {
+        vscode.postMessage({ command: 'updateMetric', index, field, value });
+      }
+      function toggleStakeholder(stakeholder) {
+        vscode.postMessage({ command: 'toggleStakeholder', value: stakeholder });
+      }
+      function addCustomStakeholder() {
+        const input = document.getElementById('customStakeholderInput');
+        if (input && input.value.trim()) {
+          vscode.postMessage({ command: 'addCustomStakeholder', value: input.value.trim() });
+          input.value = '';
+        }
+      }
+      function handleCustomStakeholderKeydown(event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          addCustomStakeholder();
+        }
+      }
+      function regenerateOutcomeSuggestions() {
+        vscode.postMessage({ command: 'regenerateOutcomeSuggestions' });
+      }
+      function dismissOutcomeError() {
+        vscode.postMessage({ command: 'dismissOutcomeError' });
+      }
     `;
   }
 
@@ -1892,6 +2322,24 @@ interface AIGapFillingState {
   streamingError?: string;
 }
 
+interface SuccessMetric {
+  name: string;
+  targetValue: string;
+  unit: string;
+}
+
+interface OutcomeDefinitionState {
+  primaryOutcome: string;
+  successMetrics: SuccessMetric[];
+  stakeholders: string[];
+  isLoading: boolean;
+  loadingError?: string;
+  primaryOutcomeEdited: boolean;
+  metricsEdited: boolean;
+  stakeholdersEdited: boolean;
+  customStakeholders: string[];
+}
+
 interface IdeationState {
   currentStep: number;
   highestStepReached: number;
@@ -1907,6 +2355,7 @@ interface IdeationState {
     data: Uint8Array;
   };
   aiGapFillingState: AIGapFillingState;
+  outcome: OutcomeDefinitionState;
 }
 
 interface IdeationValidationError {
@@ -1939,6 +2388,16 @@ function createDefaultIdeationState(): IdeationState {
       confirmedAssumptions: [],
       assumptionsAccepted: false,
       isStreaming: false,
+    },
+    outcome: {
+      primaryOutcome: '',
+      successMetrics: [],
+      stakeholders: [],
+      isLoading: false,
+      primaryOutcomeEdited: false,
+      metricsEdited: false,
+      stakeholdersEdited: false,
+      customStakeholders: [],
     },
   };
 }
@@ -1982,3 +2441,16 @@ const SYSTEM_OPTIONS: Record<string, string[]> = {
   HR: ['Workday', 'SuccessFactors'],
   Service: ['ServiceNow', 'Zendesk'],
 };
+
+const STAKEHOLDER_OPTIONS = [
+  'Operations',
+  'Finance',
+  'Supply Chain',
+  'Customer Service',
+  'Executive',
+  'IT',
+  'Sales',
+  'Marketing',
+  'HR',
+  'Legal',
+];
