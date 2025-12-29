@@ -5,9 +5,41 @@
  */
 
 import * as vscode from 'vscode';
-import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
-import { buildContextMessage, parseAssumptionsFromResponse, generateStep1Hash, hasStep1Changed } from '../services/gapFillingService';
-import { getOutcomeDefinitionService, OutcomeDefinitionService } from '../services/outcomeDefinitionService';
+import { getIdeationStyles } from './ideationStyles';
+import { getIdeationScript } from './ideationScript';
+import {
+  getIdeationContentHtml,
+  escapeHtml,
+  IdeationState as StepHtmlIdeationState,
+  IdeationValidationState as StepHtmlValidationState,
+} from './ideationStepHtml';
+import {
+  WIZARD_STEPS,
+  STAKEHOLDER_OPTIONS,
+} from './ideationConstants';
+
+// Step logic handlers
+import {
+  Step2LogicHandler,
+  createDefaultAIGapFillingState,
+  AIGapFillingState,
+  SystemAssumption,
+  ConversationMessage,
+} from './ideationStep2Logic';
+import {
+  Step3LogicHandler,
+  createDefaultOutcomeDefinitionState,
+} from './ideationStep3Logic';
+import {
+  Step4LogicHandler,
+  createDefaultSecurityGuardrailsState,
+  SecurityGuardrailsState,
+} from './ideationStep4Logic';
+import {
+  Step5LogicHandler,
+  generateStep4Hash,
+} from './ideationStep5Logic';
+import { createDefaultAgentDesignState, AgentDesignState, OutcomeDefinitionState, SuccessMetric, RefinedSectionsState } from '../types/wizardPanel';
 
 /**
  * View ID for the Tabbed Panel
@@ -54,17 +86,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   // Config change listener
   private _configChangeDisposable?: vscode.Disposable;
 
-  // Bedrock service for AI gap-filling (Step 2)
-  private _bedrockService?: BedrockConversationService;
-  private _bedrockDisposables: vscode.Disposable[] = [];
-  private _streamingResponse = '';
-
-  // Outcome service for AI suggestions (Step 3)
-  private _outcomeService?: OutcomeDefinitionService;
-  private _outcomeDisposables: vscode.Disposable[] = [];
-  private _outcomeStreamingResponse = '';
-  private _isOutcomeRefinement = false;
-  private _step2AssumptionsHash?: string;
+  // Step logic handlers
+  private _step2Handler?: Step2LogicHandler;
+  private _step3Handler?: Step3LogicHandler;
+  private _step4Handler?: Step4LogicHandler;
+  private _step5Handler?: Step5LogicHandler;
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
@@ -76,6 +102,64 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
     // Initialize Demo state
     this._demoState = createDefaultDemoState();
+
+    // Initialize step handlers
+    this.initStepHandlers();
+  }
+
+  /**
+   * Initialize step logic handlers
+   */
+  private initStepHandlers(): void {
+    const callbacks = {
+      updateWebviewContent: () => this.updateWebviewContent(),
+      syncStateToWebview: () => this.syncStateToWebview(),
+      postStreamingToken: (content: string) => this.postStreamingToken(content),
+    };
+
+    this._step2Handler = new Step2LogicHandler(
+      this._context,
+      this._ideationState.aiGapFillingState,
+      callbacks
+    );
+
+    this._step3Handler = new Step3LogicHandler(
+      this._context,
+      this._ideationState.outcome,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    this._step4Handler = new Step4LogicHandler(
+      this._ideationState.securityGuardrails,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    this._step5Handler = new Step5LogicHandler(
+      this._context,
+      this._ideationState.agentDesign,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+  }
+
+  /**
+   * Post streaming token to webview
+   */
+  private postStreamingToken(content: string): void {
+    if (this._view) {
+      this._view.webview.postMessage({
+        type: 'streamingToken',
+        content,
+      });
+    }
   }
 
   resolveWebviewView(
@@ -186,7 +270,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           this._ideationState.customIndustry = undefined;
         }
         // Reset Step 4 industry defaults so they can be reapplied for new industry
-        this._ideationState.securityGuardrails.industryDefaultsApplied = false;
+        this._step4Handler?.resetIndustryDefaults();
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
@@ -233,16 +317,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
       // Step 2: AI Gap-Filling commands
       case 'sendChatMessage':
-        this.handleSendChatMessage(message.value as string);
+        this._step2Handler?.handleSendChatMessage(message.value as string);
         break;
       case 'acceptAssumptions':
-        this.handleAcceptAssumptions();
+        this._step2Handler?.handleAcceptAssumptions();
         break;
       case 'regenerateAssumptions':
-        this.handleRegenerateAssumptions();
+        this._step2Handler?.handleRegenerateAssumptions(this.getStep1Inputs());
         break;
       case 'retryLastMessage':
-        this.handleRetryLastMessage();
+        this._step2Handler?.handleRetryLastMessage(this.getStep1Inputs());
         break;
 
       // Step 3: Outcome Definition commands
@@ -319,26 +403,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'regenerateOutcomeSuggestions':
-        // Reset outcome state (preserve customStakeholders) and fetch fresh AI suggestions
-        const customStakeholdersToPreserve = this._ideationState.outcome.customStakeholders;
-        this._ideationState.outcome = {
-          primaryOutcome: '',
-          successMetrics: [],
-          stakeholders: [],
-          customStakeholders: customStakeholdersToPreserve,
-          primaryOutcomeEdited: false,
-          metricsEdited: false,
-          stakeholdersEdited: false,
-          isLoading: false,
-          loadingError: undefined,
-          suggestionsAccepted: false,
-          step2AssumptionsHash: this._ideationState.outcome.step2AssumptionsHash,
-          refinedSections: { outcome: false, kpis: false, stakeholders: false },
-        };
-        // Reset outcome service conversation
-        this._outcomeService?.resetConversation();
-        // Fetch fresh AI suggestions
-        this.sendOutcomeContextToClaude();
+        this._step3Handler?.handleRegenerateSuggestions(this.getStep1And2Inputs());
         break;
       case 'acceptOutcomeSuggestions':
         // Transition from Phase 1 to Phase 2
@@ -351,7 +416,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         break;
       case 'sendOutcomeRefinement':
-        this.handleSendOutcomeRefinement(message.value as string);
+        this._step3Handler?.handleSendOutcomeRefinement(message.value as string);
         break;
       case 'dismissOutcomeError':
         this._ideationState.outcome.loadingError = undefined;
@@ -407,6 +472,26 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.updateWebviewContent();
         this.syncStateToWebview();
         break;
+
+      // Step 5: Agent Design commands
+      case 'regenerateAgentProposal':
+        this._step5Handler?.handleRegenerateProposal(this.getStep5Inputs());
+        break;
+      case 'acceptAgentProposal':
+        this._step5Handler?.handleAcceptProposal();
+        // Navigate to Step 6
+        this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
+        this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'sendAgentDesignAdjustment':
+        this._step5Handler?.handleSendAdjustment(message.value as string, this.getStep5Inputs());
+        break;
+      case 'toggleOrchestrationReasoning':
+        // Toggle handled in JS, just sync state
+        this.syncStateToWebview();
+        break;
     }
   }
 
@@ -429,6 +514,51 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         break;
     }
+  }
+
+  /**
+   * Get Step 1 inputs for Step 2
+   */
+  private getStep1Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+    };
+  }
+
+  /**
+   * Get Steps 1-2 inputs for Step 3
+   */
+  private getStep1And2Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      customIndustry: this._ideationState.customIndustry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+      confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+    };
+  }
+
+  /**
+   * Get Steps 1-4 inputs for Step 5
+   */
+  private getStep5Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      customIndustry: this._ideationState.customIndustry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+      confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+      primaryOutcome: this._ideationState.outcome.primaryOutcome,
+      successMetrics: this._ideationState.outcome.successMetrics,
+      dataSensitivity: this._ideationState.securityGuardrails.dataSensitivity,
+      complianceFrameworks: this._ideationState.securityGuardrails.complianceFrameworks,
+      approvalGates: this._ideationState.securityGuardrails.approvalGates,
+    };
   }
 
   /**
@@ -487,18 +617,35 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
       // Auto-send context to Claude when entering Step 2
       if (previousStep === 1 && this._ideationState.currentStep === 2) {
-        this.triggerAutoSendForStep2();
+        this._step2Handler?.triggerAutoSend(this.getStep1Inputs());
       }
 
       // Auto-send context to Claude when entering Step 3
       if (previousStep === 2 && this._ideationState.currentStep === 3) {
-        this.triggerAutoSendForStep3();
+        this._step3Handler?.triggerAutoSend(this.getStep1And2Inputs());
       }
 
       // Apply industry defaults and trigger AI suggestions when entering Step 4
       if (this._ideationState.currentStep === 4) {
-        this.applyIndustryDefaultsForStep4();
-        this.triggerAutoSendForStep4();
+        this._step4Handler?.applyIndustryDefaults(
+          this._ideationState.industry,
+          this._ideationState.customIndustry
+        );
+        this._step4Handler?.triggerAutoSend(
+          {
+            businessObjective: this._ideationState.businessObjective,
+            industry: this._ideationState.industry,
+            customIndustry: this._ideationState.customIndustry,
+            systems: this._ideationState.systems,
+            confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+          },
+          this._step3Handler?.getService()
+        );
+      }
+
+      // Auto-send context to Claude when entering Step 5
+      if (previousStep === 4 && this._ideationState.currentStep === 5) {
+        this._step5Handler?.triggerAutoSend(this.getStep5Inputs());
       }
     }
   }
@@ -555,686 +702,6 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  // =========================================================================
-  // Step 2: AI Gap-Filling Methods
-  // =========================================================================
-
-  /**
-   * Trigger auto-send when entering Step 2
-   */
-  private triggerAutoSendForStep2(): void {
-    const state = this._ideationState.aiGapFillingState;
-
-    // Check if Step 1 inputs have changed since last visit
-    if (hasStep1Changed(
-      state.step1InputHash,
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    )) {
-      // Reset conversation state due to input changes
-      this._ideationState.aiGapFillingState = {
-        conversationHistory: [],
-        confirmedAssumptions: [],
-        assumptionsAccepted: false,
-        isStreaming: false,
-      };
-    }
-
-    // Only auto-send if conversation is empty
-    if (this._ideationState.aiGapFillingState.conversationHistory.length === 0 && !this._ideationState.aiGapFillingState.isStreaming) {
-      this.sendContextToClaude();
-    }
-  }
-
-  /**
-   * Initialize Bedrock service if needed
-   */
-  private initBedrockService(): BedrockConversationService | undefined {
-    if (this._bedrockService) {
-      return this._bedrockService;
-    }
-
-    if (!this._context) {
-      console.warn('[TabbedPanel] Extension context not available for Bedrock service');
-      return undefined;
-    }
-
-    this._bedrockService = getBedrockConversationService(this._context);
-
-    // Subscribe to streaming events
-    this._bedrockDisposables.push(
-      this._bedrockService.onToken((token) => {
-        this.handleStreamingToken(token);
-      })
-    );
-
-    this._bedrockDisposables.push(
-      this._bedrockService.onComplete((response) => {
-        this.handleStreamingComplete(response);
-      })
-    );
-
-    this._bedrockDisposables.push(
-      this._bedrockService.onError((error) => {
-        this.handleStreamingError(error.message);
-      })
-    );
-
-    return this._bedrockService;
-  }
-
-  /**
-   * Initialize OutcomeDefinitionService for Step 3 AI suggestions
-   * Follows same pattern as initBedrockService()
-   */
-  private initOutcomeService(): OutcomeDefinitionService | undefined {
-    if (this._outcomeService) {
-      return this._outcomeService;
-    }
-
-    if (!this._context) {
-      console.warn('[TabbedPanel] Extension context not available for Outcome service');
-      return undefined;
-    }
-
-    this._outcomeService = getOutcomeDefinitionService(this._context);
-
-    // Subscribe to streaming events
-    this._outcomeDisposables.push(
-      this._outcomeService.onToken((token) => {
-        this.handleOutcomeStreamingToken(token);
-      })
-    );
-
-    this._outcomeDisposables.push(
-      this._outcomeService.onComplete((response) => {
-        this.handleOutcomeStreamingComplete(response);
-      })
-    );
-
-    this._outcomeDisposables.push(
-      this._outcomeService.onError((error) => {
-        this.handleOutcomeStreamingError(error.message);
-      })
-    );
-
-    return this._outcomeService;
-  }
-
-  /**
-   * Build and send context to Claude via Bedrock
-   */
-  private async sendContextToClaude(): Promise<void> {
-    const service = this.initBedrockService();
-    if (!service) {
-      this._ideationState.aiGapFillingState.streamingError =
-        'Claude service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Build context message from Step 1 inputs (including custom systems)
-    const contextMessage = buildContextMessage(
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    );
-
-    // Store hash for change detection (include custom systems)
-    this._ideationState.aiGapFillingState.step1InputHash = generateStep1Hash(
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    );
-
-    // Add user message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'user',
-      content: contextMessage,
-      timestamp: Date.now(),
-    });
-
-    // Set streaming state
-    this._ideationState.aiGapFillingState.isStreaming = true;
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude (streaming handled by event handlers)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(contextMessage)) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle incoming streaming token from Claude
-   */
-  private handleStreamingToken(token: string): void {
-    this._streamingResponse += token;
-
-    // Send incremental update to webview
-    if (this._view) {
-      this._view.webview.postMessage({
-        type: 'streamingToken',
-        content: this._streamingResponse,
-      });
-    }
-  }
-
-  /**
-   * Handle streaming completion from Claude
-   */
-  private handleStreamingComplete(fullResponse: string): void {
-    // Parse assumptions from response
-    const parsedAssumptions = parseAssumptionsFromResponse(fullResponse);
-
-    // Add assistant message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'assistant',
-      content: fullResponse,
-      timestamp: Date.now(),
-      parsedAssumptions,
-    });
-
-    // Update streaming state
-    this._ideationState.aiGapFillingState.isStreaming = false;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Handle streaming error from Claude
-   */
-  private handleStreamingError(errorMessage: string): void {
-    this._ideationState.aiGapFillingState.isStreaming = false;
-    this._ideationState.aiGapFillingState.streamingError = errorMessage;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  // =========================================================================
-  // Step 3: Outcome Definition AI Methods
-  // =========================================================================
-
-  /**
-   * Handle incoming streaming token for outcome suggestions
-   */
-  private handleOutcomeStreamingToken(token: string): void {
-    this._outcomeStreamingResponse += token;
-    // Note: Step 3 doesn't show streaming preview, just accumulates
-  }
-
-  /**
-   * Handle streaming complete for outcome suggestions
-   * Parses response and populates form fields (respecting edited flags)
-   */
-  private handleOutcomeStreamingComplete(response: string): void {
-    this._ideationState.outcome.isLoading = false;
-
-    const service = this._outcomeService;
-    if (!service) {
-      this._outcomeStreamingResponse = '';
-      this.updateWebviewContent();
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Handle refinement response differently from initial suggestions
-    if (this._isOutcomeRefinement) {
-      // Try to parse as refinement changes first
-      const changes = service.parseRefinementChangesFromResponse(response);
-      if (changes) {
-        // Apply changes and track which sections were refined
-        if (changes.outcome !== undefined) {
-          // In Phase 1 (not accepted) or Phase 2 with no manual edits: apply the change
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.primaryOutcomeEdited) {
-            this._ideationState.outcome.primaryOutcome = changes.outcome;
-            this._ideationState.outcome.refinedSections.outcome = true;
-          }
-        }
-        if (changes.kpis !== undefined) {
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.metricsEdited) {
-            this._ideationState.outcome.successMetrics = changes.kpis;
-            this._ideationState.outcome.refinedSections.kpis = true;
-          }
-        }
-        if (changes.stakeholders !== undefined) {
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.stakeholdersEdited) {
-            this.applyStakeholderChanges(changes.stakeholders);
-            this._ideationState.outcome.refinedSections.stakeholders = true;
-          }
-        }
-      } else {
-        // Fall back to parsing as full suggestions (AI might return full response)
-        this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
-      }
-    } else {
-      // Initial suggestions request - parse and apply full suggestions
-      this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
-    }
-
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = false;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Apply full outcome suggestions to state (for initial requests)
-   */
-  private applyOutcomeSuggestions(suggestions: ReturnType<OutcomeDefinitionService['parseOutcomeSuggestionsFromResponse']>): void {
-    if (!suggestions) return;
-
-    // Only update fields that haven't been manually edited
-    if (!this._ideationState.outcome.primaryOutcomeEdited && suggestions.primaryOutcome) {
-      this._ideationState.outcome.primaryOutcome = suggestions.primaryOutcome;
-    }
-    if (!this._ideationState.outcome.metricsEdited && suggestions.suggestedKPIs) {
-      this._ideationState.outcome.successMetrics = suggestions.suggestedKPIs;
-    }
-    if (!this._ideationState.outcome.stakeholdersEdited && suggestions.stakeholders) {
-      this.applyStakeholderChanges(suggestions.stakeholders);
-    }
-  }
-
-  /**
-   * Apply stakeholder changes, separating standard and custom stakeholders
-   */
-  private applyStakeholderChanges(stakeholders: string[]): void {
-    const standardOptions = ['Operations', 'Finance', 'IT', 'HR', 'Sales', 'Marketing', 'Customer Service', 'Executive Leadership'];
-    const customFromAI = stakeholders.filter(s => !standardOptions.includes(s));
-    const standardFromAI = stakeholders.filter(s => standardOptions.includes(s));
-
-    this._ideationState.outcome.stakeholders = standardFromAI;
-    // Add custom AI stakeholders to customStakeholders array (if not already there)
-    customFromAI.forEach(s => {
-      if (!this._ideationState.outcome.customStakeholders.includes(s)) {
-        this._ideationState.outcome.customStakeholders.push(s);
-      }
-      if (!this._ideationState.outcome.stakeholders.includes(s)) {
-        this._ideationState.outcome.stakeholders.push(s);
-      }
-    });
-  }
-
-  /**
-   * Handle streaming error for outcome suggestions
-   */
-  private handleOutcomeStreamingError(errorMessage: string): void {
-    this._ideationState.outcome.isLoading = false;
-    this._ideationState.outcome.loadingError = errorMessage;
-    this._outcomeStreamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Generate a hash of Step 2 confirmed assumptions for change detection
-   * Uses the same djb2 hash algorithm as generateStep1Hash
-   */
-  private generateStep2AssumptionsHash(): string {
-    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions;
-    // Sort by system name for consistent hash
-    const sorted = [...assumptions].sort((a, b) => a.system.localeCompare(b.system));
-    const combined = JSON.stringify(sorted);
-
-    // djb2 hash algorithm
-    let hash = 5381;
-    for (let i = 0; i < combined.length; i++) {
-      hash = (hash * 33) ^ combined.charCodeAt(i);
-    }
-
-    return (hash >>> 0).toString(16);
-  }
-
-  /**
-   * Trigger auto-send when entering Step 3
-   * Re-triggers AI if Step 2 assumptions have changed, or if fresh entry
-   */
-  private triggerAutoSendForStep3(): void {
-    const currentHash = this.generateStep2AssumptionsHash();
-
-    // Check if assumptions have changed since last visit
-    if (this._step2AssumptionsHash !== currentHash) {
-      // Reset outcome state (preserve customStakeholders)
-      const customStakeholders = this._ideationState.outcome.customStakeholders;
-      this._ideationState.outcome = {
-        primaryOutcome: '',
-        successMetrics: [],
-        stakeholders: [],
-        customStakeholders: customStakeholders,
-        primaryOutcomeEdited: false,
-        metricsEdited: false,
-        stakeholdersEdited: false,
-        isLoading: false,
-        loadingError: undefined,
-        suggestionsAccepted: false,
-        step2AssumptionsHash: currentHash,
-        refinedSections: { outcome: false, kpis: false, stakeholders: false },
-      };
-
-      // Update hash
-      this._step2AssumptionsHash = currentHash;
-
-      // Trigger AI
-      this.sendOutcomeContextToClaude();
-    } else if (!this._ideationState.outcome.primaryOutcome && !this._ideationState.outcome.isLoading) {
-      // Fresh entry with no outcome yet
-      this.sendOutcomeContextToClaude();
-    }
-  }
-
-  /**
-   * Apply industry-aware compliance defaults for Step 4
-   */
-  private applyIndustryDefaultsForStep4(): void {
-    const state = this._ideationState.securityGuardrails;
-
-    // Only apply defaults on first visit or if industry changed
-    if (state.industryDefaultsApplied) {
-      return;
-    }
-
-    // Get industry (handle "Other" case)
-    const industry = this._ideationState.industry === 'Other'
-      ? (this._ideationState.customIndustry || 'Other')
-      : this._ideationState.industry;
-
-    // Look up compliance defaults for this industry
-    const complianceDefaults = INDUSTRY_COMPLIANCE_MAPPING[industry] || [];
-
-    // Apply defaults
-    state.complianceFrameworks = [...complianceDefaults];
-    state.industryDefaultsApplied = true;
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Trigger AI guardrail suggestions for Step 4
-   */
-  private triggerAutoSendForStep4(): void {
-    const state = this._ideationState.securityGuardrails;
-
-    // Only trigger if guardrailNotes is empty AND AI hasn't been called yet
-    if (state.guardrailNotes === '' && !state.aiCalled) {
-      this.sendGuardrailSuggestionRequest();
-    }
-  }
-
-  /**
-   * Send guardrail suggestion request to Claude
-   */
-  private async sendGuardrailSuggestionRequest(): Promise<void> {
-    const state = this._ideationState.securityGuardrails;
-
-    // Mark AI as called to prevent repeated calls
-    state.aiCalled = true;
-    state.isLoading = true;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    try {
-      // Build context from Steps 1-2
-      const context = this.buildGuardrailContextMessage();
-
-      // Get service
-      const service = this.initOutcomeService();
-      if (!service) {
-        throw new Error('Service not available');
-      }
-
-      // Send request using the conversation service and collect response
-      let fullResponse = '';
-      for await (const chunk of service.sendMessage(context)) {
-        fullResponse += chunk;
-      }
-
-      // Parse response - it's plain text
-      if (fullResponse.trim()) {
-        state.guardrailNotes = fullResponse.trim();
-        state.aiSuggested = true;
-      } else {
-        // Use fallback
-        state.guardrailNotes = 'No PII in demo data, mask account numbers...';
-        state.aiSuggested = false;
-      }
-    } catch (error) {
-      // Use fallback on error
-      state.guardrailNotes = 'No PII in demo data, mask account numbers...';
-      state.aiSuggested = false;
-      console.error('Guardrail suggestion error:', error);
-    } finally {
-      state.isLoading = false;
-      this.updateWebviewContent();
-      this.syncStateToWebview();
-    }
-  }
-
-  /**
-   * Build context message for guardrail suggestions
-   */
-  private buildGuardrailContextMessage(): string {
-    const industry = this._ideationState.industry === 'Other'
-      ? (this._ideationState.customIndustry || 'Other')
-      : this._ideationState.industry;
-
-    const systems = this._ideationState.systems.join(', ') || 'No specific systems';
-
-    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions
-      .map(a => `${a.system}: ${a.modules?.join(', ') || 'N/A'}`)
-      .join('; ') || 'No confirmed assumptions';
-
-    return `Based on the following context, suggest 2-3 brief security guardrail notes for an AI demo:
-
-Business Objective: ${this._ideationState.businessObjective}
-Industry: ${industry}
-Systems: ${systems}
-Integration Details: ${assumptions}
-
-Please provide practical security considerations specific to this demo scenario. Keep suggestions concise (2-3 bullet points). Focus on data handling, privacy concerns, and demo-appropriate safeguards. Do not include extensive explanations - just the key guardrail notes.`;
-  }
-
-  /**
-   * Build and send context to Claude for outcome suggestions
-   */
-  private async sendOutcomeContextToClaude(): Promise<void> {
-    const service = this.initOutcomeService();
-    if (!service) {
-      this._ideationState.outcome.loadingError =
-        'Outcome service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Build context message from Steps 1-2 inputs
-    const contextMessage = service.buildOutcomeContextMessage(
-      this._ideationState.businessObjective,
-      this._ideationState.industry === 'Other'
-        ? (this._ideationState.customIndustry || this._ideationState.industry)
-        : this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.aiGapFillingState.confirmedAssumptions,
-      this._ideationState.customSystems
-    );
-
-    // Set loading state (initial request, not refinement)
-    this._ideationState.outcome.isLoading = true;
-    this._ideationState.outcome.loadingError = undefined;
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = false;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude (streaming handled by event handlers)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(contextMessage)) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle send outcome refinement message
-   */
-  private async handleSendOutcomeRefinement(content: string): Promise<void> {
-    if (!content.trim()) return;
-
-    const service = this.initOutcomeService();
-    if (!service) {
-      this._ideationState.outcome.loadingError =
-        'Outcome service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Set loading state (this is a refinement request)
-    this._ideationState.outcome.isLoading = true;
-    this._ideationState.outcome.loadingError = undefined;
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = true;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send refinement message to Claude
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendRefinementMessage(
-        content.trim(),
-        this._ideationState.outcome
-      )) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle send chat message command
-   */
-  private async handleSendChatMessage(content: string): Promise<void> {
-    if (!content.trim()) return;
-
-    const service = this.initBedrockService();
-    if (!service) {
-      return;
-    }
-
-    // Add user message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'user',
-      content: content.trim(),
-      timestamp: Date.now(),
-    });
-
-    // Set streaming state
-    this._ideationState.aiGapFillingState.isStreaming = true;
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(content.trim())) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle accept assumptions command
-   */
-  private handleAcceptAssumptions(): void {
-    const history = this._ideationState.aiGapFillingState.conversationHistory;
-
-    // Find last assistant message with assumptions
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i];
-      if (msg.role === 'assistant' && msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
-        this._ideationState.aiGapFillingState.confirmedAssumptions = [...msg.parsedAssumptions];
-        this._ideationState.aiGapFillingState.assumptionsAccepted = true;
-        break;
-      }
-    }
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Handle regenerate assumptions command
-   */
-  private handleRegenerateAssumptions(): void {
-    // Reset conversation but keep the hash
-    const hash = this._ideationState.aiGapFillingState.step1InputHash;
-    this._ideationState.aiGapFillingState = {
-      conversationHistory: [],
-      confirmedAssumptions: [],
-      assumptionsAccepted: false,
-      isStreaming: false,
-    };
-    this._ideationState.aiGapFillingState.step1InputHash = hash;
-
-    // Reset the Bedrock service conversation history
-    if (this._bedrockService) {
-      this._bedrockService.resetConversation();
-    }
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Trigger new conversation
-    this.sendContextToClaude();
-  }
-
-  /**
-   * Handle retry last message command
-   */
-  private handleRetryLastMessage(): void {
-    const history = this._ideationState.aiGapFillingState.conversationHistory;
-
-    // Clear the error
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-
-    // If there's no history or only one message, resend context
-    if (history.length <= 1) {
-      this.sendContextToClaude();
-      return;
-    }
-
-    // Find the last user message and resend it
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i];
-      if (msg.role === 'user') {
-        // Remove this message from history (it will be re-added by handleSendChatMessage)
-        history.splice(i, 1);
-        this.handleSendChatMessage(msg.content);
-        break;
-      }
-    }
-  }
-
   /**
    * Get full HTML content
    */
@@ -1249,13 +716,13 @@ Please provide practical security considerations specific to this demo scenario.
   <style>
     ${this.getBaseStyles()}
     ${this.getTabStyles()}
-    ${this._activeTab === 'ideation' ? this.getIdeationStyles() : this.getDemoStyles()}
+    ${this._activeTab === 'ideation' ? getIdeationStyles() : this.getDemoStyles()}
   </style>
 </head>
 <body>
   ${this.getTabBarHtml()}
   <div class="tab-content">
-    ${this._activeTab === 'ideation' ? this.getIdeationContentHtml() : this.getDemoContentHtml()}
+    ${this._activeTab === 'ideation' ? getIdeationContentHtml(this._ideationState as unknown as StepHtmlIdeationState, this._ideationValidation as unknown as StepHtmlValidationState) : this.getDemoContentHtml()}
   </div>
   <script>
     const vscode = acquireVsCodeApi();
@@ -1264,7 +731,7 @@ Please provide practical security considerations specific to this demo scenario.
       vscode.postMessage({ command: 'switchTab', tab: tabId });
     }
 
-    ${this._activeTab === 'ideation' ? this.getIdeationScript() : this.getDemoScript()}
+    ${this._activeTab === 'ideation' ? getIdeationScript() : this.getDemoScript()}
 
     window.addEventListener('message', event => {
       const message = event.data;
@@ -1365,848 +832,6 @@ Please provide practical security considerations specific to this demo scenario.
     return `<div class="tab-bar">${tabs}</div>`;
   }
 
-  /**
-   * Get Ideation styles
-   */
-  private getIdeationStyles(): string {
-    return `
-      .step-indicator {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 24px;
-        gap: 4px;
-      }
-      .step-item {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        flex: 1;
-        min-width: 0;
-      }
-      .step-circle {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        font-weight: 600;
-        margin-bottom: 4px;
-        background: var(--vscode-input-background);
-        border: 2px solid var(--vscode-input-border);
-        color: var(--vscode-descriptionForeground);
-      }
-      .step-item.current .step-circle {
-        background: var(--vscode-button-background);
-        border-color: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-      }
-      .step-item.completed .step-circle {
-        background: var(--vscode-testing-iconPassed);
-        border-color: var(--vscode-testing-iconPassed);
-        color: white;
-      }
-      .step-item.clickable {
-        cursor: pointer;
-      }
-      .step-item {
-        position: relative;
-      }
-      .step-tooltip {
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        background: var(--vscode-editorWidget-background);
-        color: var(--vscode-editorWidget-foreground);
-        border: 1px solid var(--vscode-editorWidget-border);
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        white-space: nowrap;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.15s;
-        z-index: 100;
-        margin-top: 4px;
-      }
-      .step-item:hover .step-tooltip {
-        opacity: 1;
-      }
-      .step-label {
-        font-size: 10px;
-        text-align: center;
-        color: var(--vscode-descriptionForeground);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 100%;
-      }
-      .step-item.current .step-label {
-        color: var(--vscode-foreground);
-        font-weight: 500;
-      }
-      .step-icon {
-        width: 14px;
-        height: 14px;
-      }
-      .form-section {
-        margin-bottom: 20px;
-      }
-      .form-label {
-        display: block;
-        font-size: 13px;
-        font-weight: 500;
-        margin-bottom: 6px;
-        color: var(--vscode-foreground);
-      }
-      .required::after {
-        content: ' *';
-        color: var(--vscode-errorForeground);
-      }
-      textarea, select, input[type="text"] {
-        width: 100%;
-        padding: 8px;
-        font-size: 13px;
-        font-family: var(--vscode-font-family);
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 4px;
-      }
-      textarea {
-        min-height: 80px;
-        resize: vertical;
-      }
-      textarea:focus, select:focus, input:focus {
-        outline: none;
-        border-color: var(--vscode-focusBorder);
-      }
-      .error-message {
-        color: var(--vscode-errorForeground);
-        font-size: 12px;
-        margin-top: 4px;
-      }
-      .warning-banner {
-        background: var(--vscode-inputValidation-warningBackground);
-        border: 1px solid var(--vscode-inputValidation-warningBorder);
-        color: var(--vscode-inputValidation-warningForeground);
-        padding: 8px 12px;
-        border-radius: 4px;
-        font-size: 12px;
-        margin-bottom: 16px;
-      }
-      .systems-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px 16px;
-      }
-      .system-category {
-        break-inside: avoid;
-      }
-      .system-category h4 {
-        font-size: 11px;
-        text-transform: uppercase;
-        color: var(--vscode-descriptionForeground);
-        margin: 0 0 6px 0;
-        letter-spacing: 0.5px;
-      }
-      .system-option {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        margin-bottom: 2px;
-      }
-      .system-option input[type="checkbox"] {
-        width: auto;
-        margin: 0;
-      }
-      .other-systems-label {
-        font-size: 11px;
-        text-transform: uppercase;
-        color: var(--vscode-descriptionForeground);
-        margin: 12px 0 6px 0;
-        letter-spacing: 0.5px;
-      }
-      .file-upload-area {
-        border: 2px dashed var(--vscode-input-border);
-        border-radius: 4px;
-        padding: 16px;
-        text-align: center;
-        cursor: pointer;
-        transition: border-color 0.15s;
-      }
-      .file-upload-area:hover {
-        border-color: var(--vscode-focusBorder);
-      }
-      .file-info {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--vscode-input-background);
-        padding: 8px 12px;
-        border-radius: 4px;
-        font-size: 13px;
-      }
-      .remove-file {
-        background: transparent;
-        border: none;
-        color: var(--vscode-errorForeground);
-        cursor: pointer;
-        font-size: 12px;
-      }
-      .nav-buttons {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 24px;
-        padding-top: 16px;
-        border-top: 1px solid var(--vscode-panel-border);
-      }
-      .nav-btn {
-        padding: 8px 20px;
-        font-size: 13px;
-        border-radius: 4px;
-        cursor: pointer;
-        border: none;
-        font-family: var(--vscode-font-family);
-      }
-      .nav-btn.primary {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-      }
-      .nav-btn.primary:hover {
-        background: var(--vscode-button-hoverBackground);
-      }
-      .nav-btn.primary:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .nav-btn.secondary {
-        background: transparent;
-        color: var(--vscode-foreground);
-        border: 1px solid var(--vscode-input-border);
-      }
-      .nav-btn.secondary:hover {
-        background: var(--vscode-input-background);
-      }
-      .nav-buttons-right {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .nav-btn.skip-btn {
-        background: transparent;
-        color: var(--vscode-descriptionForeground);
-        border: 1px dashed var(--vscode-input-border);
-      }
-      .nav-btn.skip-btn:hover {
-        background: var(--vscode-input-background);
-        color: var(--vscode-foreground);
-      }
-
-      /* Step 4: Security & Guardrails Styles */
-      .sensitivity-radio-group {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .sensitivity-radio-option {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 10px 12px;
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 6px;
-        cursor: pointer;
-        transition: border-color 0.15s ease;
-      }
-      .sensitivity-radio-option:hover {
-        border-color: var(--vscode-focusBorder);
-      }
-      .sensitivity-radio-option input[type="radio"] {
-        margin-top: 2px;
-        accent-color: var(--vscode-button-background);
-      }
-      .sensitivity-radio-content {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .sensitivity-label {
-        font-weight: 500;
-        color: var(--vscode-foreground);
-      }
-      .sensitivity-helper {
-        font-size: 12px;
-        color: var(--vscode-descriptionForeground);
-      }
-      .ai-suggested-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        background: var(--vscode-badge-background);
-        padding: 2px 6px;
-        border-radius: 4px;
-        margin-left: 8px;
-        font-weight: normal;
-      }
-      .guardrail-notes-input {
-        width: 100%;
-        padding: 10px 12px;
-        font-size: 13px;
-        font-family: var(--vscode-font-family);
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 4px;
-        resize: vertical;
-        min-height: 80px;
-      }
-      .guardrail-notes-input:focus {
-        outline: none;
-        border-color: var(--vscode-focusBorder);
-      }
-      .guardrail-notes-input:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .guardrail-loading {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px;
-        background: var(--vscode-input-background);
-        border-radius: 6px;
-        margin-bottom: 16px;
-      }
-      .placeholder-content {
-        text-align: center;
-        padding: 40px 20px;
-        color: var(--vscode-descriptionForeground);
-      }
-
-      /* Step 2: AI Gap-Filling Chat Styles */
-      .step2-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 12px;
-        gap: 12px;
-      }
-      .step-description {
-        font-size: 13px;
-        color: var(--vscode-descriptionForeground);
-        margin: 0;
-        flex: 1;
-      }
-      .regenerate-btn {
-        padding: 6px 12px;
-        font-size: 12px;
-        background: var(--vscode-button-secondaryBackground);
-        color: var(--vscode-button-secondaryForeground);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .regenerate-btn:hover:not(:disabled) {
-        background: var(--vscode-button-secondaryHoverBackground);
-      }
-      .regenerate-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .chat-container {
-        min-height: 200px;
-        max-height: 350px;
-        overflow-y: auto;
-        background: var(--vscode-editor-background);
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 4px;
-        margin-bottom: 12px;
-      }
-      .chat-messages {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        padding: 12px;
-      }
-      .chat-message {
-        display: flex;
-        gap: 8px;
-        max-width: 90%;
-      }
-      .chat-message.claude-message {
-        align-self: flex-start;
-      }
-      .chat-message.user-message {
-        align-self: flex-end;
-        flex-direction: row-reverse;
-      }
-      .message-avatar {
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 18px;
-        flex-shrink: 0;
-      }
-      .message-content {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .message-text {
-        padding: 10px 14px;
-        border-radius: 12px;
-        font-size: 13px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-      }
-      .claude-message .message-text {
-        background: var(--vscode-input-background);
-        border-bottom-left-radius: 4px;
-      }
-      .user-message .message-text {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border-bottom-right-radius: 4px;
-      }
-      .streaming-text:empty {
-        display: none;
-      }
-      .streaming-text {
-        background: var(--vscode-input-background);
-        border-bottom-left-radius: 4px;
-      }
-      .typing-indicator {
-        display: flex;
-        gap: 4px;
-        padding: 12px 14px;
-        background: var(--vscode-input-background);
-        border-radius: 12px;
-        border-bottom-left-radius: 4px;
-      }
-      .typing-indicator .dot {
-        width: 8px;
-        height: 8px;
-        background: var(--vscode-descriptionForeground);
-        border-radius: 50%;
-        animation: typing 1.4s infinite ease-in-out both;
-      }
-      .typing-indicator .dot:nth-child(1) { animation-delay: 0s; }
-      .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
-      .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
-      @keyframes typing {
-        0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
-        40% { transform: scale(1); opacity: 1; }
-      }
-      .assumptions-container {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .assumption-card {
-        padding: 12px;
-        background: var(--vscode-editorWidget-background);
-        border: 1px solid var(--vscode-editorWidget-border);
-        border-radius: 6px;
-      }
-      .assumption-card.user-corrected {
-        border-left: 3px solid var(--vscode-charts-blue, #3794ff);
-      }
-      .assumption-header {
-        font-size: 13px;
-        font-weight: 600;
-        margin-bottom: 8px;
-      }
-      .assumption-modules {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        margin-bottom: 8px;
-      }
-      .module-chip {
-        display: inline-block;
-        padding: 2px 8px;
-        font-size: 11px;
-        background: var(--vscode-badge-background);
-        color: var(--vscode-badge-foreground);
-        border-radius: 12px;
-      }
-      .assumption-integrations {
-        margin: 0;
-        padding-left: 16px;
-        font-size: 12px;
-        color: var(--vscode-descriptionForeground);
-      }
-      .assumption-integrations li {
-        margin-bottom: 2px;
-      }
-      .accept-btn {
-        margin-top: 8px;
-        padding: 8px 16px;
-        font-size: 12px;
-        font-weight: 500;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .accept-btn:hover:not(:disabled) {
-        background: var(--vscode-button-hoverBackground);
-      }
-      .accept-btn:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .error-content {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding: 12px;
-        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
-        border-radius: 6px;
-      }
-      .error-text {
-        font-size: 12px;
-        color: var(--vscode-errorForeground, #f48771);
-      }
-      .retry-btn {
-        align-self: flex-start;
-        padding: 6px 12px;
-        font-size: 11px;
-        background: var(--vscode-button-secondaryBackground);
-        color: var(--vscode-button-secondaryForeground);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .retry-btn:hover {
-        background: var(--vscode-button-secondaryHoverBackground);
-      }
-      .chat-input-area {
-        display: flex;
-        gap: 8px;
-      }
-      .chat-input {
-        flex: 1;
-        padding: 10px 12px;
-        font-size: 13px;
-        font-family: var(--vscode-font-family);
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 4px;
-      }
-      .chat-input:focus {
-        outline: 1px solid var(--vscode-focusBorder);
-        border-color: var(--vscode-focusBorder);
-      }
-      .chat-input:disabled {
-        opacity: 0.5;
-      }
-      .send-btn {
-        padding: 10px 16px;
-        font-size: 13px;
-        font-weight: 500;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .send-btn:hover:not(:disabled) {
-        background: var(--vscode-button-hoverBackground);
-      }
-      .send-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .finalization-hint {
-        padding: 8px 12px;
-        margin-bottom: 12px;
-        font-size: 12px;
-        text-align: center;
-        color: var(--vscode-descriptionForeground);
-        background: var(--vscode-input-background);
-        border-radius: 4px;
-      }
-
-      /* Step 3: Outcome Definition Styles */
-      .step3-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 12px;
-        gap: 12px;
-      }
-      .outcome-loading {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 16px;
-        margin-bottom: 16px;
-        background: var(--vscode-input-background);
-        border-radius: 4px;
-      }
-      .outcome-loading .loading-text {
-        font-size: 12px;
-        color: var(--vscode-descriptionForeground);
-      }
-      .outcome-error {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 16px;
-        margin-bottom: 16px;
-        background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
-        border-radius: 4px;
-      }
-      .dismiss-error-btn {
-        background: transparent;
-        border: none;
-        color: var(--vscode-errorForeground, #f48771);
-        font-size: 11px;
-        cursor: pointer;
-        padding: 4px 8px;
-      }
-      .dismiss-error-btn:hover {
-        text-decoration: underline;
-      }
-      .field-hint {
-        margin: 0 0 8px 0;
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-      }
-      .metrics-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-      .metric-row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .metric-input {
-        padding: 8px 10px;
-        font-family: var(--vscode-font-family);
-        font-size: 13px;
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 4px;
-      }
-      .metric-input:focus {
-        outline: 1px solid var(--vscode-focusBorder);
-        border-color: var(--vscode-focusBorder);
-      }
-      .metric-name {
-        flex: 2;
-      }
-      .metric-target {
-        flex: 1;
-      }
-      .metric-unit {
-        flex: 1;
-      }
-      .remove-metric-btn {
-        background: transparent;
-        border: none;
-        color: var(--vscode-errorForeground, #f48771);
-        font-size: 14px;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-      }
-      .remove-metric-btn:hover {
-        background: var(--vscode-input-background);
-      }
-      .add-metric-btn {
-        background: var(--vscode-button-secondaryBackground);
-        color: var(--vscode-button-secondaryForeground);
-        border: none;
-        padding: 8px 16px;
-        font-size: 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        align-self: flex-start;
-      }
-      .add-metric-btn:hover {
-        background: var(--vscode-button-secondaryHoverBackground);
-      }
-      .stakeholders-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-      .stakeholder-checkbox {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        cursor: pointer;
-        font-size: 12px;
-        padding: 6px 8px;
-        background: var(--vscode-input-background);
-        border-radius: 4px;
-      }
-      .stakeholder-checkbox input[type="checkbox"] {
-        margin: 0;
-        cursor: pointer;
-        width: auto;
-      }
-      .stakeholder-checkbox.ai-suggested {
-        border: 1px solid var(--vscode-button-background);
-      }
-      .ai-badge {
-        font-size: 10px;
-        padding: 2px 6px;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border-radius: 10px;
-        margin-left: auto;
-      }
-      .custom-stakeholder-input {
-        display: flex;
-        gap: 8px;
-        margin-top: 8px;
-      }
-      .custom-stakeholder-input input {
-        flex: 1;
-      }
-      .add-stakeholder-btn {
-        background: var(--vscode-button-secondaryBackground);
-        color: var(--vscode-button-secondaryForeground);
-        border: none;
-        padding: 8px 16px;
-        font-size: 12px;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .add-stakeholder-btn:hover {
-        background: var(--vscode-button-secondaryHoverBackground);
-      }
-      textarea.error {
-        border-color: var(--vscode-inputValidation-errorBorder, #be1100);
-      }
-
-      /* Phase 1: Suggestion Card Styles */
-      .suggestion-card {
-        background: var(--vscode-editorWidget-background);
-        border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, #454545));
-        border-radius: 4px;
-        padding: 16px;
-        margin-bottom: 16px;
-      }
-      .suggestion-section {
-        margin-bottom: 16px;
-      }
-      .suggestion-section:last-of-type {
-        margin-bottom: 12px;
-      }
-      .suggestion-header {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--vscode-foreground);
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .suggestion-content {
-        font-size: 13px;
-        color: var(--vscode-foreground);
-        line-height: 1.5;
-      }
-      .suggestion-kpis {
-        margin: 0;
-        padding-left: 20px;
-        font-size: 12px;
-        color: var(--vscode-foreground);
-      }
-      .suggestion-kpis li {
-        margin-bottom: 4px;
-      }
-      .suggestion-stakeholders {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-      .stakeholder-tag {
-        display: inline-block;
-        padding: 4px 10px;
-        font-size: 11px;
-        background: var(--vscode-badge-background);
-        color: var(--vscode-badge-foreground);
-        border-radius: 12px;
-      }
-      .refined-badge {
-        font-size: 10px;
-        font-weight: 400;
-        color: var(--vscode-descriptionForeground);
-        font-style: italic;
-      }
-      .empty-hint {
-        font-size: 12px;
-        color: var(--vscode-descriptionForeground);
-        font-style: italic;
-      }
-      .suggestion-card .accept-btn {
-        width: 100%;
-        margin-top: 4px;
-        padding: 10px 16px;
-        font-size: 13px;
-        font-weight: 500;
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .suggestion-card .accept-btn:hover:not(:disabled) {
-        background: var(--vscode-button-hoverBackground);
-      }
-      .suggestion-card .accept-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      /* Phase 2: Accepted Banner */
-      .accepted-banner {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        padding: 10px 16px;
-        margin-bottom: 16px;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--vscode-testing-iconPassed, #73c991);
-        background: var(--vscode-input-background);
-        border: 1px solid var(--vscode-testing-iconPassed, #73c991);
-        border-radius: 4px;
-      }
-
-      /* Refine Input Hints */
-      .refine-hints {
-        margin: 8px 0 0 0;
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-      }
-    `;
-  }
 
   /**
    * Get Demo styles
@@ -2307,656 +932,6 @@ Please provide practical security considerations specific to this demo scenario.
     `;
   }
 
-  /**
-   * Get Ideation content HTML
-   */
-  private getIdeationContentHtml(): string {
-    return `
-      ${this.getStepIndicatorHtml()}
-      ${this.getStepContentHtml()}
-      ${this.getNavigationButtonsHtml()}
-    `;
-  }
-
-  /**
-   * Get step indicator HTML
-   */
-  private getStepIndicatorHtml(): string {
-    const steps = WIZARD_STEPS.map(step => {
-      const isCompleted = step.step < this._ideationState.currentStep;
-      const isCurrent = step.step === this._ideationState.currentStep;
-      const isClickable = step.step <= this._ideationState.highestStepReached && step.step !== this._ideationState.currentStep;
-
-      let stateClass = 'pending';
-      if (isCompleted) stateClass = 'completed';
-      else if (isCurrent) stateClass = 'current';
-
-      const clickHandler = isClickable ? `onclick="goToStep(${step.step})"` : '';
-      const clickableClass = isClickable ? 'clickable' : '';
-
-      const icon = isCompleted
-        ? '<svg class="step-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>'
-        : `<span>${step.step}</span>`;
-
-      return `
-        <div class="step-item ${stateClass} ${clickableClass}" ${clickHandler}>
-          <div class="step-tooltip">${step.label}</div>
-          <div class="step-circle">${icon}</div>
-          <div class="step-label">${step.label}</div>
-        </div>
-      `;
-    }).join('');
-
-    return `<div class="step-indicator">${steps}</div>`;
-  }
-
-  /**
-   * Get step content HTML
-   */
-  private getStepContentHtml(): string {
-    if (this._ideationState.currentStep === 1) {
-      return this.getStep1Html();
-    }
-    if (this._ideationState.currentStep === 2) {
-      return this.getStep2Html();
-    }
-    if (this._ideationState.currentStep === 3) {
-      return this.getStep3Html();
-    }
-    if (this._ideationState.currentStep === 4) {
-      return this.getStep4Html();
-    }
-    return `
-      <div class="placeholder-content">
-        <p>Step ${this._ideationState.currentStep} - Coming Soon</p>
-        <p style="font-size: 12px; margin-top: 8px;">This step will be implemented in a future update.</p>
-      </div>
-    `;
-  }
-
-  /**
-   * Get Step 1 HTML
-   */
-  private getStep1Html(): string {
-    const showBusinessObjectiveError = this._ideationState.validationAttempted &&
-      this._ideationValidation.errors.some(e => e.type === 'businessObjective');
-    const showIndustryError = this._ideationState.validationAttempted &&
-      this._ideationValidation.errors.some(e => e.type === 'industry');
-    const showSystemsWarning = this._ideationValidation.errors.some(e => e.type === 'systems' && e.severity === 'warning');
-
-    const industryOptions = INDUSTRY_OPTIONS.map(opt =>
-      `<option value="${opt}" ${this._ideationState.industry === opt ? 'selected' : ''}>${opt}</option>`
-    ).join('');
-
-    const systemsHtml = Object.entries(SYSTEM_OPTIONS).map(([category, systems]) => `
-      <div class="system-category">
-        <h4>${category}</h4>
-        ${systems.map(sys => `
-          <label class="system-option">
-            <input type="checkbox" ${this._ideationState.systems.includes(sys) ? 'checked' : ''} onchange="toggleSystem('${sys}')">
-            ${sys}
-          </label>
-        `).join('')}
-      </div>
-    `).join('');
-
-    const fileHtml = this._ideationState.uploadedFile
-      ? `<div class="file-info">
-          <span>${this.escapeHtml(this._ideationState.uploadedFile.name)} (${this.formatFileSize(this._ideationState.uploadedFile.size)})</span>
-          <button class="remove-file" onclick="removeFile()">Remove</button>
-        </div>`
-      : `<div class="file-upload-area" onclick="document.getElementById('file-input').click()">
-          <p>Click to upload a file</p>
-          <p style="font-size: 11px; color: var(--vscode-descriptionForeground);">PDF, DOCX, TXT, MD (max 5MB)</p>
-          <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" style="display: none" onchange="handleFileUpload(event)">
-        </div>`;
-
-    return `
-      ${showSystemsWarning ? `<div class="warning-banner">${this._ideationValidation.errors.find(e => e.type === 'systems')?.message}</div>` : ''}
-
-      <div class="form-section">
-        <label class="form-label required">Business Objective</label>
-        <textarea
-          placeholder="Describe the business problem or objective..."
-          oninput="updateBusinessObjective(this.value)"
-        >${this.escapeHtml(this._ideationState.businessObjective)}</textarea>
-        ${showBusinessObjectiveError ? '<div class="error-message">Business objective is required</div>' : ''}
-      </div>
-
-      <div class="form-section">
-        <label class="form-label required">Industry</label>
-        <select onchange="updateIndustry(this.value)">
-          <option value="">Select an industry...</option>
-          ${industryOptions}
-        </select>
-        ${showIndustryError ? '<div class="error-message">Please select an industry</div>' : ''}
-        ${this._ideationState.industry === 'Other' ? `
-          <input type="text"
-            placeholder="Specify your industry..."
-            style="margin-top: 8px;"
-            value="${this.escapeHtml(this._ideationState.customIndustry || '')}"
-            oninput="updateCustomIndustry(this.value)">
-        ` : ''}
-      </div>
-
-      <div class="form-section">
-        <label class="form-label">Systems to Integrate</label>
-        <div class="systems-grid">
-          ${systemsHtml}
-        </div>
-        <div class="other-systems-label">Other Systems</div>
-        <input type="text"
-          placeholder="e.g., Mainframe, Custom API, Legacy DB..."
-          value="${this.escapeHtml(this._ideationState.customSystems || '')}"
-          oninput="updateCustomSystems(this.value)">
-      </div>
-
-      <div class="form-section">
-        <label class="form-label">Supporting Document</label>
-        ${fileHtml}
-      </div>
-    `;
-  }
-
-  /**
-   * Get Step 2 (AI Gap-Filling) HTML
-   */
-  private getStep2Html(): string {
-    const state = this._ideationState.aiGapFillingState;
-    const isStreaming = state?.isStreaming ?? false;
-    const hasError = !!state?.streamingError;
-    const assumptionsAccepted = state?.assumptionsAccepted ?? false;
-    const conversationHistory = state?.conversationHistory ?? [];
-    const conversationCount = conversationHistory.filter((m: { role: string }) => m.role === 'user').length;
-    const showHint = conversationCount >= 3 && !assumptionsAccepted;
-
-    // Render conversation messages
-    const messagesHtml = conversationHistory
-      .map((msg: { role: string; content: string; parsedAssumptions?: Array<{ system: string; modules: string[]; integrations: string[]; source: string }> }) => {
-        if (msg.role === 'user') {
-          return `
-            <div class="chat-message user-message">
-              <div class="message-content">
-                <div class="message-text">${this.escapeHtml(msg.content)}</div>
-              </div>
-            </div>
-          `;
-        } else {
-          // Claude message with optional assumption cards
-          let assumptionsHtml = '';
-          if (msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
-            const cardsHtml = msg.parsedAssumptions.map((a: { system: string; modules: string[]; integrations: string[]; source: string }) => {
-              const modulesHtml = a.modules.map((m: string) => `<span class="module-chip">${this.escapeHtml(m)}</span>`).join('');
-              const integrationsHtml = a.integrations.map((i: string) => `<li>${this.escapeHtml(i)}</li>`).join('');
-              const sourceClass = a.source === 'user-corrected' ? 'user-corrected' : '';
-              return `
-                <div class="assumption-card ${sourceClass}">
-                  <div class="assumption-header">${this.escapeHtml(a.system)}</div>
-                  ${modulesHtml ? `<div class="assumption-modules">${modulesHtml}</div>` : ''}
-                  ${integrationsHtml ? `<ul class="assumption-integrations">${integrationsHtml}</ul>` : ''}
-                </div>
-              `;
-            }).join('');
-
-            const acceptDisabled = assumptionsAccepted || isStreaming;
-            const acceptLabel = assumptionsAccepted ? 'Accepted ✓' : 'Accept Assumptions';
-
-            assumptionsHtml = `
-              <div class="assumptions-container">
-                ${cardsHtml}
-                <button class="accept-btn" onclick="acceptAssumptions()" ${acceptDisabled ? 'disabled' : ''}>
-                  ${acceptLabel}
-                </button>
-              </div>
-            `;
-          }
-
-          return `
-            <div class="chat-message claude-message">
-              <div class="message-avatar">🤖</div>
-              <div class="message-content">
-                <div class="message-text">${this.escapeHtml(msg.content)}</div>
-                ${assumptionsHtml}
-              </div>
-            </div>
-          `;
-        }
-      })
-      .join('');
-
-    // Render streaming indicator or error
-    let statusHtml = '';
-    if (isStreaming) {
-      statusHtml = `
-        <div class="chat-message claude-message streaming">
-          <div class="message-avatar">🤖</div>
-          <div class="message-content">
-            <div class="message-text streaming-text"></div>
-            <div class="typing-indicator">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
-            </div>
-          </div>
-        </div>
-      `;
-    } else if (hasError) {
-      statusHtml = `
-        <div class="chat-message error-message">
-          <div class="error-content">
-            <div class="error-text">Response interrupted: ${this.escapeHtml(state?.streamingError || '')}</div>
-            <button class="retry-btn" onclick="retryLastMessage()">Try Again</button>
-          </div>
-        </div>
-      `;
-    }
-
-    // Render finalization hint
-    const hintHtml = showHint
-      ? '<div class="finalization-hint">Ready to finalize? Click Confirm & Continue.</div>'
-      : '';
-
-    return `
-      <div class="step2-header">
-        <p class="step-description">Claude will analyze your context and propose assumptions about your environment.</p>
-        <button class="regenerate-btn" onclick="regenerateAssumptions()" ${isStreaming ? 'disabled' : ''}>
-          ↻ Regenerate
-        </button>
-      </div>
-
-      <div class="chat-container">
-        <div class="chat-messages" id="chatMessages">
-          ${messagesHtml}
-          ${statusHtml}
-        </div>
-      </div>
-
-      ${hintHtml}
-
-      <div class="chat-input-area">
-        <input
-          type="text"
-          id="chatInput"
-          class="chat-input"
-          placeholder="Refine assumptions..."
-          ${isStreaming ? 'disabled' : ''}
-          onkeydown="handleChatKeydown(event)"
-        >
-        <button class="send-btn" onclick="sendChatMessage()" ${isStreaming ? 'disabled' : ''}>
-          Send
-        </button>
-      </div>
-    `;
-  }
-
-  /**
-   * Get Step 3 (Outcome Definition) HTML
-   */
-  private getStep3Html(): string {
-    const state = this._ideationState.outcome;
-    const showErrors = this._ideationState.validationAttempted;
-    const suggestionsAccepted = state.suggestionsAccepted ?? false;
-    const isLoading = state.isLoading ?? false;
-    const refinedSections = state.refinedSections ?? { outcome: false, kpis: false, stakeholders: false };
-
-    // Render loading indicator or error
-    let loadingHtml = '';
-    if (isLoading) {
-      loadingHtml = `
-        <div class="outcome-loading">
-          <div class="typing-indicator">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </div>
-          <span class="loading-text">Generating suggestions...</span>
-        </div>
-      `;
-    } else if (state.loadingError) {
-      loadingHtml = `
-        <div class="outcome-error">
-          <span class="error-text">${this.escapeHtml(state.loadingError)}</span>
-          <button class="dismiss-error-btn" onclick="dismissOutcomeError()">Dismiss</button>
-        </div>
-      `;
-    }
-
-    // Refine input (visible in both phases)
-    const refineInputHtml = `
-      <div class="chat-input-area">
-        <input
-          type="text"
-          id="outcomeRefineInput"
-          class="chat-input"
-          placeholder="Refine outcomes..."
-          ${isLoading ? 'disabled' : ''}
-          onkeydown="handleOutcomeRefineKeydown(event)"
-        >
-        <button class="send-btn" onclick="sendOutcomeRefinement()" ${isLoading ? 'disabled' : ''}>
-          Send
-        </button>
-      </div>
-      <p class="refine-hints">Try: "Add a metric for cost savings" or "Make the outcome more specific to risk"</p>
-    `;
-
-    // Phase 1: Suggestion Review (read-only card)
-    if (!suggestionsAccepted) {
-      // Build KPIs list for suggestion card
-      const kpisListHtml = state.successMetrics.length > 0
-        ? state.successMetrics.map((metric) => `
-            <li>${this.escapeHtml(metric.name)}${metric.targetValue ? `: ${this.escapeHtml(metric.targetValue)}` : ''}${metric.unit ? ` ${this.escapeHtml(metric.unit)}` : ''}</li>
-          `).join('')
-        : '<li class="empty-hint">No KPIs suggested yet</li>';
-
-      // Build stakeholders tags for suggestion card
-      const stakeholdersTagsHtml = state.stakeholders.length > 0
-        ? state.stakeholders.map((s) => `<span class="stakeholder-tag">${this.escapeHtml(s)}</span>`).join('')
-        : '<span class="empty-hint">No stakeholders suggested yet</span>';
-
-      // Refined indicators
-      const outcomeRefinedBadge = refinedSections.outcome ? '<span class="refined-badge">(refined)</span>' : '';
-      const kpisRefinedBadge = refinedSections.kpis ? '<span class="refined-badge">(refined)</span>' : '';
-      const stakeholdersRefinedBadge = refinedSections.stakeholders ? '<span class="refined-badge">(refined)</span>' : '';
-
-      return `
-        <div class="step3-header">
-          <p class="step-description">Review AI-generated outcome suggestions, refine if needed, then accept to edit.</p>
-          <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${isLoading ? 'disabled' : ''}>
-            ↻ Regenerate
-          </button>
-        </div>
-
-        ${loadingHtml}
-
-        <div class="suggestion-card">
-          <div class="suggestion-section">
-            <div class="suggestion-header">Primary Outcome ${outcomeRefinedBadge}</div>
-            <div class="suggestion-content">
-              ${state.primaryOutcome ? this.escapeHtml(state.primaryOutcome) : '<span class="empty-hint">Waiting for AI suggestions...</span>'}
-            </div>
-          </div>
-
-          <div class="suggestion-section">
-            <div class="suggestion-header">Suggested KPIs ${kpisRefinedBadge}</div>
-            <ul class="suggestion-kpis">
-              ${kpisListHtml}
-            </ul>
-          </div>
-
-          <div class="suggestion-section">
-            <div class="suggestion-header">Suggested Stakeholders ${stakeholdersRefinedBadge}</div>
-            <div class="suggestion-stakeholders">
-              ${stakeholdersTagsHtml}
-            </div>
-          </div>
-
-          <button class="accept-btn" onclick="acceptOutcomeSuggestions()" ${isLoading || !state.primaryOutcome ? 'disabled' : ''}>
-            Accept Suggestions
-          </button>
-        </div>
-
-        ${refineInputHtml}
-      `;
-    }
-
-    // Phase 2: Editable Form (after acceptance)
-    const primaryOutcomeError = showErrors && !state.primaryOutcome.trim();
-    const metricsWarning = state.successMetrics.length === 0;
-
-    // Render metrics list (editable)
-    const metricsHtml = state.successMetrics.map((metric, index) => `
-      <div class="metric-row" data-index="${index}">
-        <input
-          type="text"
-          class="metric-input metric-name"
-          placeholder="Metric name"
-          value="${this.escapeHtml(metric.name)}"
-          oninput="updateMetric(${index}, 'name', this.value)"
-        >
-        <input
-          type="text"
-          class="metric-input metric-target"
-          placeholder="Target"
-          value="${this.escapeHtml(metric.targetValue)}"
-          oninput="updateMetric(${index}, 'targetValue', this.value)"
-        >
-        <input
-          type="text"
-          class="metric-input metric-unit"
-          placeholder="Unit"
-          value="${this.escapeHtml(metric.unit)}"
-          oninput="updateMetric(${index}, 'unit', this.value)"
-        >
-        <button class="remove-metric-btn" onclick="removeMetric(${index})" title="Remove metric">✕</button>
-      </div>
-    `).join('');
-
-    // Combine static stakeholders with AI-suggested custom stakeholders
-    const allStakeholders = [...STAKEHOLDER_OPTIONS];
-    const aiSuggestedStakeholders = state.customStakeholders.filter(
-      (s) => !STAKEHOLDER_OPTIONS.includes(s)
-    );
-
-    // Render stakeholder checkboxes
-    const stakeholderCheckboxesHtml = allStakeholders.map((stakeholder) => {
-      const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
-      const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-      return `
-        <label class="stakeholder-checkbox">
-          <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${stakeholder}')">
-          <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
-        </label>
-      `;
-    }).join('');
-
-    // Render AI-suggested stakeholders with badge
-    const aiStakeholderCheckboxesHtml = aiSuggestedStakeholders.map((stakeholder) => {
-      const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
-      const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-      return `
-        <label class="stakeholder-checkbox ai-suggested">
-          <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${this.escapeHtml(stakeholder)}')">
-          <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
-          <span class="ai-badge">AI suggested</span>
-        </label>
-      `;
-    }).join('');
-
-    return `
-      <div class="step3-header">
-        <p class="step-description">Define measurable business outcomes and success metrics for your workflow.</p>
-        <button class="regenerate-btn" onclick="regenerateOutcomeSuggestions()" ${isLoading ? 'disabled' : ''}>
-          ↻ Regenerate
-        </button>
-      </div>
-
-      ${loadingHtml}
-
-      <div class="accepted-banner">Accepted ✓</div>
-
-      <div class="form-section">
-        <label class="form-label required">Primary Outcome</label>
-        <textarea
-          class="${primaryOutcomeError ? 'error' : ''}"
-          placeholder="Describe the measurable business result you want to achieve..."
-          oninput="updatePrimaryOutcome(this.value)"
-        >${this.escapeHtml(state.primaryOutcome)}</textarea>
-        ${primaryOutcomeError ? '<div class="error-message">Primary outcome is required</div>' : ''}
-      </div>
-
-      <div class="form-section">
-        <label class="form-label">Success Metrics</label>
-        ${metricsWarning && showErrors ? '<div class="warning-banner">Consider adding at least one success metric to measure outcomes</div>' : ''}
-        <div class="metrics-list">
-          ${metricsHtml}
-        </div>
-        <button class="add-metric-btn" onclick="addMetric()">+ Add Metric</button>
-      </div>
-
-      <div class="form-section">
-        <label class="form-label">Stakeholders</label>
-        <p class="field-hint">Select stakeholders who will benefit from or be impacted by this workflow.</p>
-        <div class="stakeholders-grid">
-          ${stakeholderCheckboxesHtml}
-          ${aiStakeholderCheckboxesHtml}
-        </div>
-        <div class="custom-stakeholder-input">
-          <input
-            type="text"
-            id="customStakeholderInput"
-            placeholder="Add custom stakeholder..."
-            onkeydown="handleCustomStakeholderKeydown(event)"
-          >
-          <button class="add-stakeholder-btn" onclick="addCustomStakeholder()">Add</button>
-        </div>
-      </div>
-
-      ${refineInputHtml}
-    `;
-  }
-
-  /**
-   * Get Step 4 HTML - Security & Guardrails
-   */
-  private getStep4Html(): string {
-    const state = this._ideationState.securityGuardrails;
-    const isLoading = state.isLoading;
-
-    // Loading indicator
-    let loadingHtml = '';
-    if (isLoading) {
-      loadingHtml = `
-        <div class="guardrail-loading">
-          <div class="typing-indicator">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </div>
-          <span class="loading-text">Generating guardrail suggestions...</span>
-        </div>
-      `;
-    }
-
-    // Data Sensitivity radio buttons
-    const sensitivityOptionsHtml = DATA_SENSITIVITY_OPTIONS.map(opt => `
-      <label class="sensitivity-radio-option">
-        <input
-          type="radio"
-          name="dataSensitivity"
-          value="${opt.value}"
-          ${state.dataSensitivity === opt.value ? 'checked' : ''}
-          onchange="updateDataSensitivity('${opt.value}')"
-        >
-        <div class="sensitivity-radio-content">
-          <span class="sensitivity-label">${opt.label}</span>
-          <span class="sensitivity-helper">${opt.helperText}</span>
-        </div>
-      </label>
-    `).join('');
-
-    // Compliance Frameworks checkboxes
-    const complianceOptionsHtml = COMPLIANCE_FRAMEWORK_OPTIONS.map(framework => `
-      <label class="system-option">
-        <input
-          type="checkbox"
-          ${state.complianceFrameworks.includes(framework) ? 'checked' : ''}
-          onchange="toggleComplianceFramework('${this.escapeHtml(framework)}')"
-        >
-        <span>${this.escapeHtml(framework)}</span>
-      </label>
-    `).join('');
-
-    // Approval Gates checkboxes
-    const approvalGatesHtml = APPROVAL_GATE_OPTIONS.map(gate => `
-      <label class="system-option">
-        <input
-          type="checkbox"
-          ${state.approvalGates.includes(gate) ? 'checked' : ''}
-          onchange="toggleApprovalGate('${this.escapeHtml(gate)}')"
-        >
-        <span>${this.escapeHtml(gate)}</span>
-      </label>
-    `).join('');
-
-    // AI suggested badge
-    const aiSuggestedBadge = state.aiSuggested
-      ? '<span class="ai-suggested-badge">✨ AI suggested</span>'
-      : '';
-
-    return `
-      <div class="step-content">
-        <h2>Security & Guardrails</h2>
-        <p class="step-description">Configure security settings and compliance requirements for your demo. This step is optional.</p>
-
-        ${loadingHtml}
-
-        <div class="form-section">
-          <label class="form-label">Data Sensitivity</label>
-          <div class="sensitivity-radio-group">
-            ${sensitivityOptionsHtml}
-          </div>
-        </div>
-
-        <div class="form-section">
-          <label class="form-label">Compliance Frameworks</label>
-          <p class="field-description">Select applicable compliance frameworks based on your industry.</p>
-          <div class="systems-grid">
-            ${complianceOptionsHtml}
-          </div>
-        </div>
-
-        <div class="form-section">
-          <label class="form-label">Human Approval Gates</label>
-          <p class="field-description">Select workflow stages that require human approval.</p>
-          <div class="systems-grid">
-            ${approvalGatesHtml}
-          </div>
-        </div>
-
-        <div class="form-section">
-          <label class="form-label">
-            Guardrail Notes
-            ${aiSuggestedBadge}
-          </label>
-          <p class="field-description">Additional security constraints for this demo.</p>
-          <textarea
-            class="guardrail-notes-input"
-            rows="4"
-            placeholder="Additional security constraints..."
-            oninput="updateGuardrailNotes(this.value)"
-            ${isLoading ? 'disabled' : ''}
-          >${this.escapeHtml(state.guardrailNotes)}</textarea>
-        </div>
-      </div>
-    `;
-  }
-
-  /**
-   * Get navigation buttons HTML
-   */
-  private getNavigationButtonsHtml(): string {
-    const isFirstStep = this._ideationState.currentStep === 1;
-    const isLastStep = this._ideationState.currentStep === 6;
-    const isStep4 = this._ideationState.currentStep === 4;
-
-    // Skip button for Step 4 (optional step)
-    const skipButton = isStep4
-      ? '<button class="nav-btn skip-btn" onclick="skipSecurityStep()">Skip</button>'
-      : '';
-
-    return `
-      <div class="nav-buttons">
-        ${isFirstStep ? '<div></div>' : '<button class="nav-btn secondary" onclick="previousStep()">Back</button>'}
-        <div class="nav-buttons-right">
-          ${skipButton}
-          ${isLastStep
-            ? '<button class="nav-btn primary">Generate</button>'
-            : '<button class="nav-btn primary" onclick="nextStep()">Next</button>'
-          }
-        </div>
-      </div>
-    `;
-  }
 
   /**
    * Get Demo content HTML
@@ -2980,7 +955,7 @@ Please provide practical security considerations specific to this demo scenario.
           <textarea class="prompt-textarea"
             placeholder="Enter your prompt for the AI agent..."
             oninput="updatePrompt(this.value)"
-          >${this.escapeHtml(this._demoState.promptText)}</textarea>
+          >${escapeHtml(this._demoState.promptText)}</textarea>
         </div>
         <button class="run-btn" onclick="runWorkflow()">
           ▶ Run Workflow
@@ -2995,163 +970,6 @@ Please provide practical security considerations specific to this demo scenario.
     `;
   }
 
-  /**
-   * Get Ideation script
-   */
-  private getIdeationScript(): string {
-    return `
-      function nextStep() {
-        vscode.postMessage({ command: 'nextStep' });
-      }
-      function previousStep() {
-        vscode.postMessage({ command: 'previousStep' });
-      }
-      function goToStep(step) {
-        vscode.postMessage({ command: 'goToStep', step });
-      }
-      function updateBusinessObjective(value) {
-        vscode.postMessage({ command: 'updateBusinessObjective', value });
-      }
-      function updateIndustry(value) {
-        vscode.postMessage({ command: 'updateIndustry', value });
-      }
-      function updateCustomIndustry(value) {
-        vscode.postMessage({ command: 'updateCustomIndustry', value });
-      }
-      function toggleSystem(system) {
-        vscode.postMessage({ command: 'toggleSystem', value: system });
-      }
-      function updateCustomSystems(value) {
-        vscode.postMessage({ command: 'updateCustomSystems', value });
-      }
-      function handleFileUpload(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          const arrayBuffer = e.target.result;
-          const uint8Array = new Uint8Array(arrayBuffer);
-          vscode.postMessage({
-            command: 'uploadFile',
-            file: {
-              name: file.name,
-              size: file.size,
-              data: Array.from(uint8Array)
-            }
-          });
-        };
-        reader.readAsArrayBuffer(file);
-      }
-      function removeFile() {
-        vscode.postMessage({ command: 'removeFile' });
-      }
-      function handleStateSync(message) {
-        // State sync handled by full re-render
-        // Auto-scroll chat to bottom after sync
-        scrollChatToBottom();
-      }
-      function scrollChatToBottom() {
-        const chatContainer = document.querySelector('.chat-container');
-        if (chatContainer) {
-          chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-      }
-      // Auto-scroll on initial load
-      setTimeout(scrollChatToBottom, 100);
-      // Step 2: AI Gap-Filling functions
-      function sendChatMessage() {
-        const input = document.getElementById('chatInput');
-        if (input && input.value.trim()) {
-          vscode.postMessage({ command: 'sendChatMessage', value: input.value.trim() });
-          input.value = '';
-        }
-      }
-      function handleChatKeydown(event) {
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          sendChatMessage();
-        }
-      }
-      function acceptAssumptions() {
-        vscode.postMessage({ command: 'acceptAssumptions' });
-      }
-      function regenerateAssumptions() {
-        vscode.postMessage({ command: 'regenerateAssumptions' });
-      }
-      function retryLastMessage() {
-        vscode.postMessage({ command: 'retryLastMessage' });
-      }
-      // Step 3: Outcome Definition functions
-      function updatePrimaryOutcome(value) {
-        vscode.postMessage({ command: 'updatePrimaryOutcome', value });
-      }
-      function addMetric() {
-        vscode.postMessage({ command: 'addMetric' });
-      }
-      function removeMetric(index) {
-        vscode.postMessage({ command: 'removeMetric', index });
-      }
-      function updateMetric(index, field, value) {
-        vscode.postMessage({ command: 'updateMetric', index, field, value });
-      }
-      function toggleStakeholder(stakeholder) {
-        vscode.postMessage({ command: 'toggleStakeholder', value: stakeholder });
-      }
-      function addCustomStakeholder() {
-        const input = document.getElementById('customStakeholderInput');
-        if (input && input.value.trim()) {
-          vscode.postMessage({ command: 'addCustomStakeholder', value: input.value.trim() });
-          input.value = '';
-        }
-      }
-      function handleCustomStakeholderKeydown(event) {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          addCustomStakeholder();
-        }
-      }
-      function regenerateOutcomeSuggestions() {
-        vscode.postMessage({ command: 'regenerateOutcomeSuggestions' });
-      }
-      function dismissOutcomeError() {
-        vscode.postMessage({ command: 'dismissOutcomeError' });
-      }
-      function acceptOutcomeSuggestions() {
-        vscode.postMessage({ command: 'acceptOutcomeSuggestions' });
-      }
-      function sendOutcomeRefinement() {
-        const input = document.getElementById('outcomeRefineInput');
-        if (input && input.value.trim()) {
-          vscode.postMessage({ command: 'sendOutcomeRefinement', value: input.value.trim() });
-          input.value = '';
-        }
-      }
-      function handleOutcomeRefineKeydown(event) {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          sendOutcomeRefinement();
-        }
-      }
-
-      // Step 4: Security & Guardrails functions
-      function updateDataSensitivity(value) {
-        vscode.postMessage({ command: 'updateDataSensitivity', value });
-      }
-      function toggleComplianceFramework(framework) {
-        vscode.postMessage({ command: 'toggleComplianceFramework', value: framework });
-      }
-      function toggleApprovalGate(gate) {
-        vscode.postMessage({ command: 'toggleApprovalGate', value: gate });
-      }
-      function updateGuardrailNotes(value) {
-        vscode.postMessage({ command: 'updateGuardrailNotes', value });
-      }
-      function skipSecurityStep() {
-        vscode.postMessage({ command: 'skipSecurityStep' });
-      }
-    `;
-  }
 
   /**
    * Get Demo script
@@ -3174,26 +992,6 @@ Please provide practical security considerations specific to this demo scenario.
     `;
   }
 
-  /**
-   * Escape HTML
-   */
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  /**
-   * Format file size
-   */
-  private formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
 
   /**
    * Refresh the panel
@@ -3226,10 +1024,9 @@ Please provide practical security considerations specific to this demo scenario.
    */
   public dispose(): void {
     this._configChangeDisposable?.dispose();
-    this._bedrockDisposables.forEach(d => d.dispose());
-    this._bedrockDisposables = [];
-    this._outcomeDisposables.forEach(d => d.dispose());
-    this._outcomeDisposables = [];
+    this._step2Handler?.dispose();
+    this._step3Handler?.dispose();
+    this._step5Handler?.dispose();
   }
 }
 
@@ -3237,67 +1034,8 @@ Please provide practical security considerations specific to this demo scenario.
 // Supporting Types and Constants
 // ============================================
 
-interface SystemAssumption {
-  system: string;
-  modules: string[];
-  integrations: string[];
-  source: 'ai-proposed' | 'user-corrected';
-}
-
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-  parsedAssumptions?: SystemAssumption[];
-}
-
-interface AIGapFillingState {
-  conversationHistory: ConversationMessage[];
-  confirmedAssumptions: SystemAssumption[];
-  assumptionsAccepted: boolean;
-  isStreaming: boolean;
-  step1InputHash?: string;
-  streamingError?: string;
-}
-
-interface SuccessMetric {
-  name: string;
-  targetValue: string;
-  unit: string;
-}
-
-interface RefinedSectionsState {
-  outcome: boolean;
-  kpis: boolean;
-  stakeholders: boolean;
-}
-
-interface OutcomeDefinitionState {
-  primaryOutcome: string;
-  successMetrics: SuccessMetric[];
-  stakeholders: string[];
-  isLoading: boolean;
-  loadingError?: string;
-  primaryOutcomeEdited: boolean;
-  metricsEdited: boolean;
-  stakeholdersEdited: boolean;
-  customStakeholders: string[];
-  suggestionsAccepted: boolean;
-  step2AssumptionsHash?: string;
-  refinedSections: RefinedSectionsState;
-}
-
-interface SecurityGuardrailsState {
-  dataSensitivity: string;
-  complianceFrameworks: string[];
-  approvalGates: string[];
-  guardrailNotes: string;
-  aiSuggested: boolean;
-  aiCalled: boolean;
-  skipped: boolean;
-  industryDefaultsApplied: boolean;
-  isLoading: boolean;
-}
+// Re-export types from step logic modules
+export { SystemAssumption, ConversationMessage, AIGapFillingState };
 
 interface IdeationState {
   currentStep: number;
@@ -3316,6 +1054,7 @@ interface IdeationState {
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
+  agentDesign: AgentDesignState;
 }
 
 interface IdeationValidationError {
@@ -3343,36 +1082,10 @@ function createDefaultIdeationState(): IdeationState {
     businessObjective: '',
     industry: '',
     systems: [],
-    aiGapFillingState: {
-      conversationHistory: [],
-      confirmedAssumptions: [],
-      assumptionsAccepted: false,
-      isStreaming: false,
-    },
-    outcome: {
-      primaryOutcome: '',
-      successMetrics: [],
-      stakeholders: [],
-      isLoading: false,
-      primaryOutcomeEdited: false,
-      metricsEdited: false,
-      stakeholdersEdited: false,
-      customStakeholders: [],
-      suggestionsAccepted: false,
-      step2AssumptionsHash: undefined,
-      refinedSections: { outcome: false, kpis: false, stakeholders: false },
-    },
-    securityGuardrails: {
-      dataSensitivity: 'Internal',
-      complianceFrameworks: [],
-      approvalGates: [],
-      guardrailNotes: '',
-      aiSuggested: false,
-      aiCalled: false,
-      skipped: false,
-      industryDefaultsApplied: false,
-      isLoading: false,
-    },
+    aiGapFillingState: createDefaultAIGapFillingState(),
+    outcome: createDefaultOutcomeDefinitionState(),
+    securityGuardrails: createDefaultSecurityGuardrailsState(),
+    agentDesign: createDefaultAgentDesignState(),
   };
 }
 
@@ -3382,79 +1095,3 @@ function createDefaultDemoState(): DemoState {
     promptText: '',
   };
 }
-
-const WIZARD_STEPS = [
-  { step: 1, label: 'Business Context' },
-  { step: 2, label: 'AI Gap Filling' },
-  { step: 3, label: 'Outcomes' },
-  { step: 4, label: 'Security' },
-  { step: 5, label: 'Agent Design' },
-  { step: 6, label: 'Mock Data' },
-  { step: 7, label: 'Demo Strategy' },
-  { step: 8, label: 'Generate' },
-];
-
-const DATA_SENSITIVITY_OPTIONS = [
-  { value: 'Public', label: 'Public', helperText: 'Data that can be shown to anyone. Example: product catalog, public pricing' },
-  { value: 'Internal', label: 'Internal', helperText: 'Business data not for external sharing. Example: sales forecasts, inventory levels' },
-  { value: 'Confidential', label: 'Confidential', helperText: 'Sensitive business data. Example: customer lists, financial reports' },
-  { value: 'Restricted', label: 'Restricted', helperText: 'Highly sensitive, regulatory implications. Example: PII, health records, payment data' },
-];
-
-const COMPLIANCE_FRAMEWORK_OPTIONS = ['SOC 2', 'HIPAA', 'PCI-DSS', 'GDPR', 'FedRAMP', 'None/Not specified'];
-
-const APPROVAL_GATE_OPTIONS = [
-  'Before external API calls',
-  'Before data modification',
-  'Before sending recommendations',
-  'Before financial transactions',
-];
-
-const INDUSTRY_COMPLIANCE_MAPPING: Record<string, string[]> = {
-  'Healthcare': ['HIPAA'],
-  'Life Sciences': ['HIPAA'],
-  'FSI': ['PCI-DSS', 'SOC 2'],
-  'Retail': ['PCI-DSS'],
-  'Public Sector': ['FedRAMP'],
-  'Energy': ['SOC 2'],
-  'Telecom': ['SOC 2'],
-  'Manufacturing': [],
-  'Media & Entertainment': [],
-  'Travel & Hospitality': ['PCI-DSS'],
-  'Other': [],
-};
-
-const INDUSTRY_OPTIONS = [
-  'Retail',
-  'FSI',
-  'Healthcare',
-  'Life Sciences',
-  'Manufacturing',
-  'Energy',
-  'Telecom',
-  'Public Sector',
-  'Media & Entertainment',
-  'Travel & Hospitality',
-  'Other',
-];
-
-const SYSTEM_OPTIONS: Record<string, string[]> = {
-  CRM: ['Salesforce', 'HubSpot', 'Dynamics'],
-  ERP: ['SAP S/4HANA', 'Oracle', 'NetSuite'],
-  Data: ['Databricks', 'Snowflake', 'Redshift'],
-  HR: ['Workday', 'SuccessFactors'],
-  Service: ['ServiceNow', 'Zendesk'],
-};
-
-const STAKEHOLDER_OPTIONS = [
-  'Operations',
-  'Finance',
-  'Supply Chain',
-  'Customer Service',
-  'Executive',
-  'IT',
-  'Sales',
-  'Marketing',
-  'HR',
-  'Legal',
-];

@@ -365,6 +365,100 @@ export interface SecurityState {
   skipped: boolean;
 }
 
+// ============================================================================
+// Step 5: Agent Design Proposal Types (Roadmap Item 18)
+// ============================================================================
+
+/**
+ * Orchestration pattern type for agent workflows
+ * - graph: Complex, conditional workflows with decision points
+ * - swarm: Parallel, autonomous agents with emergent coordination
+ * - workflow: Sequential, linear pipelines with defined steps
+ */
+export type OrchestrationPattern = 'graph' | 'swarm' | 'workflow';
+
+/**
+ * Proposed agent in the AI-generated agent team
+ * Contains the agent's identity, role description, and assigned tools
+ */
+export interface ProposedAgent {
+  /** Lowercase agent identifier (e.g., 'planner', 'executor') used in flow notation */
+  id: string;
+  /** Display name for the agent (e.g., 'Planning Agent') */
+  name: string;
+  /** Description of the agent's role and responsibilities */
+  role: string;
+  /** Array of tools assigned to this agent in snake_case format (e.g., 'sap_get_inventory') */
+  tools: string[];
+}
+
+/**
+ * Edge representing a relationship between two agents in the workflow
+ * Used to define the execution flow between agents
+ */
+export interface ProposedEdge {
+  /** Source agent ID (lowercase) */
+  from: string;
+  /** Target agent ID (lowercase) */
+  to: string;
+  /** Optional condition for conditional edges (e.g., 'requires_approval') */
+  condition?: string;
+}
+
+/**
+ * Agent design state for Step 5
+ * Tracks AI-proposed agent team, orchestration pattern, and user acceptance
+ */
+export interface AgentDesignState {
+  // -------------------------------------------------------------------------
+  // AI Proposal Fields
+  // -------------------------------------------------------------------------
+
+  /** Array of proposed agents from AI */
+  proposedAgents: ProposedAgent[];
+  /** Orchestration pattern selected by AI ('graph', 'swarm', or 'workflow') */
+  proposedOrchestration: OrchestrationPattern;
+  /** Array of edges defining agent relationships */
+  proposedEdges: ProposedEdge[];
+  /** AI's reasoning for the selected orchestration pattern (2-3 sentences) */
+  orchestrationReasoning: string;
+
+  // -------------------------------------------------------------------------
+  // Accept/Edit State
+  // -------------------------------------------------------------------------
+
+  /** Whether the user has accepted the proposal */
+  proposalAccepted: boolean;
+  /** Whether AI is currently generating a proposal */
+  isLoading: boolean;
+  /** Error message if AI proposal failed */
+  error?: string;
+
+  // -------------------------------------------------------------------------
+  // Change Detection
+  // -------------------------------------------------------------------------
+
+  /** Hash of Steps 1-4 inputs for change detection */
+  step4Hash?: string;
+  /** Whether AI has been called for this step */
+  aiCalled: boolean;
+}
+
+/**
+ * AI response structure for agent design proposals
+ * Represents the JSON structure returned by Claude
+ */
+export interface AgentProposalResponse {
+  /** Array of proposed agents */
+  agents: ProposedAgent[];
+  /** Selected orchestration pattern */
+  orchestrationPattern: OrchestrationPattern;
+  /** Array of edges defining workflow */
+  edges: ProposedEdge[];
+  /** Reasoning for the selected pattern */
+  reasoning: string;
+}
+
 /**
  * Wizard state interface
  * Holds all form data and navigation state for the ideation wizard
@@ -445,6 +539,16 @@ export interface WizardState {
    * Contains data sensitivity, compliance, approval gates, and notes
    */
   security: SecurityState;
+
+  // -------------------------------------------------------------------------
+  // Step 5: Agent Design (Roadmap Item 18)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Agent design state
+   * Contains proposed agents, orchestration pattern, and acceptance state
+   */
+  agentDesign: AgentDesignState;
 
   // -------------------------------------------------------------------------
   // Navigation State
@@ -580,6 +684,15 @@ export const WIZARD_COMMANDS = {
   ACCEPT_OUTCOME_SUGGESTIONS: 'acceptOutcomeSuggestions',
   /** Reset outcome suggestions and return to Phase 1 */
   RESET_OUTCOME_SUGGESTIONS: 'resetOutcomeSuggestions',
+  // Step 5: Agent Design commands (Roadmap Item 18)
+  /** Regenerate agent design proposal */
+  REGENERATE_AGENT_PROPOSAL: 'regenerateAgentProposal',
+  /** Accept agent design proposal and navigate to Step 6 */
+  ACCEPT_AGENT_PROPOSAL: 'acceptAgentProposal',
+  /** Signal intent to adjust agent design (placeholder for Item 19) */
+  ADJUST_AGENT_PROPOSAL: 'adjustAgentProposal',
+  /** Toggle orchestration reasoning expand/collapse */
+  TOGGLE_ORCHESTRATION_REASONING: 'toggleOrchestrationReasoning',
 } as const;
 
 /**
@@ -646,6 +759,27 @@ export function createDefaultOutcomeDefinitionState(): OutcomeDefinitionState {
 }
 
 /**
+ * Creates default agent design state
+ * Used to initialize or reset Step 5 state
+ */
+export function createDefaultAgentDesignState(): AgentDesignState {
+  return {
+    // AI Proposal - empty until AI generates
+    proposedAgents: [],
+    proposedOrchestration: 'workflow',
+    proposedEdges: [],
+    orchestrationReasoning: '',
+    // Accept/Edit State
+    proposalAccepted: false,
+    isLoading: false,
+    error: undefined,
+    // Change Detection
+    step4Hash: undefined,
+    aiCalled: false,
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -671,6 +805,8 @@ export function createDefaultWizardState(): WizardState {
       guardrailNotes: '',
       skipped: false,
     },
+    // Step 5: Agent Design
+    agentDesign: createDefaultAgentDesignState(),
     // Navigation
     highestStepReached: 1,
     validationAttempted: false,
