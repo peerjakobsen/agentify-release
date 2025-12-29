@@ -10,16 +10,19 @@ import {
   WIZARD_STEPS,
   INDUSTRY_OPTIONS,
   SYSTEM_OPTIONS,
+  STAKEHOLDER_OPTIONS,
   WIZARD_COMMANDS,
   FILE_UPLOAD_CONSTRAINTS,
   createDefaultWizardState,
   createDefaultAIGapFillingState,
+  createDefaultOutcomeDefinitionState,
   type WizardState,
   type WizardValidationState,
   type WizardValidationError,
   type WizardStepConfig,
   type ConversationMessage,
   type SystemAssumption,
+  type SuccessMetric,
 } from '../types/wizardPanel';
 import {
   buildContextMessage,
@@ -28,6 +31,10 @@ import {
   hasStep1Changed,
 } from '../services/gapFillingService';
 import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
+import {
+  getOutcomeDefinitionService,
+  OutcomeDefinitionService,
+} from '../services/outcomeDefinitionService';
 
 /**
  * View ID for the Ideation Wizard panel
@@ -57,9 +64,19 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   private _validationState: WizardValidationState;
 
   /**
-   * Bedrock conversation service for AI gap-filling
+   * Bedrock conversation service for AI gap-filling (Step 2)
    */
   private _bedrockService?: BedrockConversationService;
+
+  /**
+   * Outcome definition service for AI suggestions (Step 3)
+   */
+  private _outcomeService?: OutcomeDefinitionService;
+
+  /**
+   * Accumulated streaming response for Step 3 outcome suggestions
+   */
+  private _outcomeStreamingResponse = '';
 
   /**
    * VS Code extension context for service initialization
@@ -230,6 +247,51 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Validate Step 3 (Outcome Definition) state
+   * @returns WizardValidationState with errors and warnings
+   */
+  private validateStep3(): WizardValidationState {
+    const errors: WizardValidationError[] = [];
+    const state = this._wizardState.outcome;
+
+    // Block navigation while AI is loading
+    if (state.isLoading) {
+      errors.push({
+        type: 'primaryOutcome',
+        message: 'Please wait for AI suggestions to load',
+        severity: 'error',
+      });
+    }
+
+    // Primary outcome is required (blocking)
+    if (!state.primaryOutcome.trim()) {
+      errors.push({
+        type: 'primaryOutcome',
+        message: 'Primary outcome is required',
+        severity: 'error',
+      });
+    }
+
+    // At least one success metric is recommended (warning, non-blocking)
+    if (state.successMetrics.length === 0) {
+      errors.push({
+        type: 'successMetrics',
+        message: 'Consider adding at least one success metric to measure outcomes',
+        severity: 'warning',
+      });
+    }
+
+    const blockingErrors = errors.filter((e) => e.severity === 'error');
+    const hasWarnings = errors.some((e) => e.severity === 'warning');
+
+    return {
+      isValid: blockingErrors.length === 0,
+      errors,
+      hasWarnings,
+    };
+  }
+
+  /**
    * Validate current step
    * @returns WizardValidationState
    */
@@ -239,7 +301,9 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
         return this.validateStep1();
       case WizardStep.AIGapFilling:
         return this.validateStep2();
-      // Steps 3-8 have placeholder validation (always valid for now)
+      case WizardStep.OutcomeDefinition:
+        return this.validateStep3();
+      // Steps 4-8 have placeholder validation (always valid for now)
       default:
         return { isValid: true, errors: [], hasWarnings: false };
     }
@@ -301,6 +365,11 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
     // Auto-send context to Claude when entering Step 2 from Step 1
     if (previousStep === WizardStep.BusinessContext && nextStep === WizardStep.AIGapFilling) {
       this.triggerAutoSendForStep2();
+    }
+
+    // Auto-send context to Claude when entering Step 3 from Step 2
+    if (previousStep === WizardStep.AIGapFilling && nextStep === WizardStep.OutcomeDefinition) {
+      this.triggerAutoSendForStep3();
     }
   }
 
@@ -623,6 +692,180 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Generate Step 3 (Outcome Definition) form HTML
+   */
+  private generateStep3Html(): string {
+    const state = this._wizardState.outcome;
+    const showErrors = this._wizardState.validationAttempted;
+    const validation = this._validationState;
+
+    const primaryOutcomeError = validation.errors.find(
+      (e) => e.type === 'primaryOutcome' && e.severity === 'error'
+    );
+    const metricsWarning = validation.errors.find(
+      (e) => e.type === 'successMetrics' && e.severity === 'warning'
+    );
+
+    // Render loading indicator or error
+    let loadingHtml = '';
+    if (state.isLoading) {
+      loadingHtml = `
+        <div class="outcome-loading">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating suggestions...</span>
+        </div>
+      `;
+    } else if (state.loadingError) {
+      loadingHtml = `
+        <div class="outcome-error">
+          <span class="error-text">${this.escapeHtml(state.loadingError)}</span>
+          <button class="dismiss-error-button" onclick="dismissOutcomeError()">Dismiss</button>
+        </div>
+      `;
+    }
+
+    // Render metrics list
+    const metricsHtml = state.successMetrics
+      .map((metric, index) => this.renderMetricRow(metric, index))
+      .join('');
+
+    const metricCountGuidance =
+      state.successMetrics.length >= 10
+        ? '<div class="metric-guidance">Consider focusing on fewer metrics for clarity</div>'
+        : '';
+
+    // Combine static stakeholders with AI-suggested custom stakeholders
+    const allStakeholders = [...STAKEHOLDER_OPTIONS];
+    const aiSuggestedStakeholders = state.customStakeholders.filter(
+      (s) => !STAKEHOLDER_OPTIONS.includes(s)
+    );
+
+    // Render stakeholder checkboxes
+    const stakeholderCheckboxesHtml = allStakeholders
+      .map((stakeholder) => {
+        const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
+        const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        return `
+          <label class="stakeholder-checkbox">
+            <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${stakeholder}')">
+            <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
+          </label>
+        `;
+      })
+      .join('');
+
+    // Render AI-suggested stakeholders with badge
+    const aiStakeholderCheckboxesHtml = aiSuggestedStakeholders
+      .map((stakeholder) => {
+        const checked = state.stakeholders.includes(stakeholder) ? 'checked' : '';
+        const stakeholderId = stakeholder.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        return `
+          <label class="stakeholder-checkbox ai-suggested">
+            <input type="checkbox" id="stakeholder-${stakeholderId}" value="${stakeholder}" ${checked} onchange="toggleStakeholder('${this.escapeHtml(stakeholder)}')">
+            <span class="checkbox-label">${this.escapeHtml(stakeholder)}</span>
+            <span class="ai-badge">AI suggested</span>
+          </label>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="step-content step3-content">
+        <div class="step-header">
+          <h2>Outcome Definition</h2>
+          <p class="step-description">Define measurable business outcomes and success metrics for your workflow.</p>
+        </div>
+
+        <div class="chat-actions">
+          <button class="action-button regenerate" onclick="regenerateOutcomeSuggestions()" ${state.isLoading ? 'disabled' : ''}>
+            Regenerate Suggestions
+          </button>
+        </div>
+
+        ${loadingHtml}
+
+        <div class="form-group">
+          <label for="primaryOutcome">Primary Outcome <span class="required">*</span></label>
+          <textarea
+            id="primaryOutcome"
+            class="textarea ${showErrors && primaryOutcomeError ? 'error' : ''}"
+            placeholder="Describe the measurable business result you want to achieve..."
+            oninput="updatePrimaryOutcome(this.value)"
+          >${this.escapeHtml(state.primaryOutcome)}</textarea>
+          ${showErrors && primaryOutcomeError ? `<div class="field-error">${primaryOutcomeError.message}</div>` : ''}
+        </div>
+
+        <div class="form-group">
+          <label>Success Metrics</label>
+          ${showErrors && metricsWarning ? `<div class="field-warning">${metricsWarning.message}</div>` : ''}
+          <div class="metrics-list">
+            ${metricsHtml}
+          </div>
+          ${metricCountGuidance}
+          <button class="add-metric-button" onclick="addMetric()">+ Add Metric</button>
+        </div>
+
+        <div class="form-group">
+          <label>Stakeholders</label>
+          <p class="field-hint">Select stakeholders who will benefit from or be impacted by this workflow.</p>
+          <div class="stakeholders-grid">
+            ${stakeholderCheckboxesHtml}
+            ${aiStakeholderCheckboxesHtml}
+          </div>
+          <div class="custom-stakeholder-input">
+            <input
+              type="text"
+              id="customStakeholderInput"
+              class="text-input"
+              placeholder="Add custom stakeholder..."
+              onkeydown="handleCustomStakeholderKeydown(event)"
+            >
+            <button class="add-stakeholder-button" onclick="addCustomStakeholder()">Add</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render a metric row with name, target value, and unit inputs
+   */
+  private renderMetricRow(metric: SuccessMetric, index: number): string {
+    return `
+      <div class="metric-row" data-index="${index}">
+        <input
+          type="text"
+          class="metric-input metric-name"
+          placeholder="Metric name"
+          value="${this.escapeHtml(metric.name)}"
+          oninput="updateMetric(${index}, 'name', this.value)"
+        >
+        <input
+          type="text"
+          class="metric-input metric-target"
+          placeholder="Target"
+          value="${this.escapeHtml(metric.targetValue)}"
+          oninput="updateMetric(${index}, 'targetValue', this.value)"
+        >
+        <input
+          type="text"
+          class="metric-input metric-unit"
+          placeholder="Unit"
+          value="${this.escapeHtml(metric.unit)}"
+          oninput="updateMetric(${index}, 'unit', this.value)"
+        >
+        <button class="remove-metric-button" onclick="removeMetric(${index})" title="Remove metric">
+          ✕
+        </button>
+      </div>
+    `;
+  }
+
+  /**
    * Render a Claude (assistant) message
    */
   private renderClaudeMessage(
@@ -738,6 +981,10 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
         return this.generateStep1Html();
       case WizardStep.AIGapFilling:
         return this.generateStep2Html();
+      case WizardStep.OutcomeDefinition:
+        return this.generateStep3Html();
+      case WizardStep.Security:
+        return this.generatePlaceholderStepHtml('Security & Guardrails', 'Configure security and compliance settings.');
       case WizardStep.AgentDesign:
         return this.generatePlaceholderStepHtml('Agent Design', 'Design your agent architecture and workflows here.');
       case WizardStep.MockData:
@@ -1553,6 +1800,207 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       background-color: var(--vscode-input-background);
       border-radius: 4px;
     }
+
+    /* =====================================================================
+       Step 3: Outcome Definition Styles
+       ===================================================================== */
+
+    .step3-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .outcome-loading {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      background-color: var(--vscode-input-background);
+      border-radius: 4px;
+    }
+
+    .outcome-loading .loading-text {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .outcome-error {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      border-radius: 4px;
+    }
+
+    .outcome-error .error-text {
+      font-size: 12px;
+      color: var(--vscode-errorForeground, #f48771);
+    }
+
+    .dismiss-error-button {
+      background: transparent;
+      border: none;
+      color: var(--vscode-errorForeground, #f48771);
+      font-size: 11px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    .dismiss-error-button:hover {
+      text-decoration: underline;
+    }
+
+    /* Metrics List */
+    .metrics-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .metric-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .metric-input {
+      padding: 8px 10px;
+      font-family: var(--vscode-font-family);
+      font-size: 13px;
+      background-color: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+    }
+
+    .metric-input:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .metric-input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    .metric-name {
+      flex: 2;
+    }
+
+    .metric-target {
+      flex: 1;
+    }
+
+    .metric-unit {
+      flex: 1;
+    }
+
+    .remove-metric-button {
+      background: transparent;
+      border: none;
+      color: var(--vscode-errorForeground, #f48771);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .remove-metric-button:hover {
+      background-color: var(--vscode-input-background);
+    }
+
+    .add-metric-button {
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      padding: 8px 16px;
+      font-size: 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      align-self: flex-start;
+    }
+
+    .add-metric-button:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .metric-guidance {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      padding: 8px 0;
+    }
+
+    /* Stakeholders Grid */
+    .stakeholders-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 300px) {
+      .stakeholders-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .stakeholder-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 6px 8px;
+      background-color: var(--vscode-input-background);
+      border-radius: 4px;
+    }
+
+    .stakeholder-checkbox input[type="checkbox"] {
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .stakeholder-checkbox.ai-suggested {
+      border: 1px solid var(--vscode-button-background);
+    }
+
+    .ai-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-radius: 10px;
+      margin-left: auto;
+    }
+
+    /* Custom Stakeholder Input */
+    .custom-stakeholder-input {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .custom-stakeholder-input .text-input {
+      flex: 1;
+    }
+
+    .add-stakeholder-button {
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      padding: 8px 16px;
+      font-size: 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .add-stakeholder-button:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
     `;
   }
 
@@ -1666,6 +2114,50 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ command: '${WIZARD_COMMANDS.RETRY_LAST_MESSAGE}' });
     }
 
+    // Step 3: Outcome Definition functions
+    function updatePrimaryOutcome(value) {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.UPDATE_PRIMARY_OUTCOME}', value: value });
+    }
+
+    function addMetric() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.ADD_METRIC}' });
+    }
+
+    function removeMetric(index) {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.REMOVE_METRIC}', index: index });
+    }
+
+    function updateMetric(index, field, value) {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.UPDATE_METRIC}', index: index, field: field, value: value });
+    }
+
+    function toggleStakeholder(stakeholder) {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.TOGGLE_STAKEHOLDER}', stakeholder: stakeholder });
+    }
+
+    function addCustomStakeholder() {
+      const input = document.getElementById('customStakeholderInput');
+      if (input && input.value.trim()) {
+        vscode.postMessage({ command: '${WIZARD_COMMANDS.ADD_CUSTOM_STAKEHOLDER}', value: input.value.trim() });
+        input.value = '';
+      }
+    }
+
+    function handleCustomStakeholderKeydown(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addCustomStakeholder();
+      }
+    }
+
+    function regenerateOutcomeSuggestions() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.REGENERATE_OUTCOME_SUGGESTIONS}' });
+    }
+
+    function dismissOutcomeError() {
+      vscode.postMessage({ command: '${WIZARD_COMMANDS.DISMISS_OUTCOME_ERROR}' });
+    }
+
     // Handle messages from extension
     window.addEventListener('message', event => {
       const message = event.data;
@@ -1697,6 +2189,10 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
       name?: string;
       size?: number;
       data?: number[];
+      // Step 3: Outcome Definition fields
+      index?: number;
+      field?: string;
+      stakeholder?: string;
     };
 
     switch (msg.command) {
@@ -1790,6 +2286,97 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
 
       case WIZARD_COMMANDS.RETRY_LAST_MESSAGE:
         this.handleRetryLastMessage();
+        break;
+
+      // Step 3: Outcome Definition commands
+      case WIZARD_COMMANDS.UPDATE_PRIMARY_OUTCOME:
+        this._wizardState.outcome.primaryOutcome = msg.value || '';
+        this._wizardState.outcome.primaryOutcomeEdited = true;
+        this._validationState = this.validateCurrentStep();
+        this.syncStateToWebview();
+        break;
+
+      case WIZARD_COMMANDS.ADD_METRIC:
+        this._wizardState.outcome.successMetrics.push({
+          name: '',
+          targetValue: '',
+          unit: '',
+        });
+        this._wizardState.outcome.metricsEdited = true;
+        this._validationState = this.validateCurrentStep();
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+
+      case WIZARD_COMMANDS.REMOVE_METRIC:
+        if (typeof msg.index === 'number' && msg.index >= 0) {
+          this._wizardState.outcome.successMetrics.splice(msg.index, 1);
+          this._wizardState.outcome.metricsEdited = true;
+          this._validationState = this.validateCurrentStep();
+          this.updateWebviewContent();
+          this.syncStateToWebview();
+        }
+        break;
+
+      case WIZARD_COMMANDS.UPDATE_METRIC:
+        if (typeof msg.index === 'number' && msg.index >= 0 && msg.field) {
+          const metric = this._wizardState.outcome.successMetrics[msg.index];
+          if (metric) {
+            if (msg.field === 'name') {
+              metric.name = msg.value || '';
+            } else if (msg.field === 'targetValue') {
+              metric.targetValue = msg.value || '';
+            } else if (msg.field === 'unit') {
+              metric.unit = msg.value || '';
+            }
+            this._wizardState.outcome.metricsEdited = true;
+            this.syncStateToWebview();
+          }
+        }
+        break;
+
+      case WIZARD_COMMANDS.TOGGLE_STAKEHOLDER:
+        if (msg.stakeholder) {
+          const stakeholders = this._wizardState.outcome.stakeholders;
+          const index = stakeholders.indexOf(msg.stakeholder);
+          if (index === -1) {
+            stakeholders.push(msg.stakeholder);
+          } else {
+            stakeholders.splice(index, 1);
+          }
+          this._wizardState.outcome.stakeholdersEdited = true;
+          this.syncStateToWebview();
+        }
+        break;
+
+      case WIZARD_COMMANDS.ADD_CUSTOM_STAKEHOLDER:
+        if (msg.value && msg.value.trim()) {
+          const trimmedValue = msg.value.trim();
+          // Add to custom stakeholders if not already in static list or custom list
+          if (
+            !STAKEHOLDER_OPTIONS.includes(trimmedValue) &&
+            !this._wizardState.outcome.customStakeholders.includes(trimmedValue)
+          ) {
+            this._wizardState.outcome.customStakeholders.push(trimmedValue);
+          }
+          // Also add to selected stakeholders
+          if (!this._wizardState.outcome.stakeholders.includes(trimmedValue)) {
+            this._wizardState.outcome.stakeholders.push(trimmedValue);
+          }
+          this._wizardState.outcome.stakeholdersEdited = true;
+          this.updateWebviewContent();
+          this.syncStateToWebview();
+        }
+        break;
+
+      case WIZARD_COMMANDS.REGENERATE_OUTCOME_SUGGESTIONS:
+        this.handleRegenerateOutcomeSuggestions();
+        break;
+
+      case WIZARD_COMMANDS.DISMISS_OUTCOME_ERROR:
+        this._wizardState.outcome.loadingError = undefined;
+        this.updateWebviewContent();
+        this.syncStateToWebview();
         break;
 
       default:
@@ -1943,6 +2530,46 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
     );
 
     return this._bedrockService;
+  }
+
+  /**
+   * Initialize the OutcomeDefinitionService for Step 3 AI suggestions
+   * Sets up event listeners for streaming tokens, completion, and errors
+   *
+   * @returns The initialized service, or undefined if context is not available
+   */
+  private initOutcomeService(): OutcomeDefinitionService | undefined {
+    if (this._outcomeService) {
+      return this._outcomeService;
+    }
+
+    if (!this._extensionContext) {
+      console.warn('[IdeationWizard] Extension context not available for Outcome service');
+      return undefined;
+    }
+
+    this._outcomeService = getOutcomeDefinitionService(this._extensionContext);
+
+    // Subscribe to streaming events for Step 3
+    this._disposables.push(
+      this._outcomeService.onToken((token) => {
+        this.handleOutcomeStreamingToken(token);
+      })
+    );
+
+    this._disposables.push(
+      this._outcomeService.onComplete((response) => {
+        this.handleOutcomeStreamingComplete(response);
+      })
+    );
+
+    this._disposables.push(
+      this._outcomeService.onError((error) => {
+        this.handleOutcomeStreamingError(error.message);
+      })
+    );
+
+    return this._outcomeService;
   }
 
   /**
@@ -2184,5 +2811,175 @@ export class IdeationWizardPanelProvider implements vscode.WebviewViewProvider {
         break;
       }
     }
+  }
+
+  /**
+   * Handle REGENERATE_OUTCOME_SUGGESTIONS command - reset and re-trigger AI for Step 3
+   */
+  private handleRegenerateOutcomeSuggestions(): void {
+    const state = this._wizardState.outcome;
+
+    // Log if user has edits (confirmation dialog could be added later)
+    const hasEdits = state.primaryOutcomeEdited || state.metricsEdited || state.stakeholdersEdited;
+    if (hasEdits) {
+      console.log('[IdeationWizard] User has edits, regenerating will replace them');
+    }
+
+    // Reset the outcome definition state but keep custom stakeholders
+    const customStakeholders = [...state.customStakeholders];
+    this._wizardState.outcome = createDefaultOutcomeDefinitionState();
+    this._wizardState.outcome.customStakeholders = customStakeholders;
+
+    // Reset the outcome service conversation
+    if (this._outcomeService) {
+      this._outcomeService.resetConversation();
+    }
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Trigger new AI suggestions
+    this.sendOutcomeContextToClaude();
+  }
+
+  // =========================================================================
+  // Step 3: Outcome Definition AI Methods
+  // =========================================================================
+
+  /**
+   * Trigger auto-send of context to Claude when entering Step 3
+   * Only sends if Step 3 is fresh (no prior suggestions loaded)
+   */
+  private triggerAutoSendForStep3(): void {
+    const state = this._wizardState.outcome;
+
+    // Only auto-send if outcome is fresh (no primaryOutcome yet) and not currently loading
+    if (!state.primaryOutcome && !state.isLoading) {
+      this.sendOutcomeContextToClaude();
+    }
+  }
+
+  /**
+   * Build and send context message to Claude for Step 3 outcome suggestions
+   */
+  private async sendOutcomeContextToClaude(): Promise<void> {
+    const service = this.initOutcomeService();
+    if (!service) {
+      this._wizardState.outcome.loadingError =
+        'Claude service not available. Please check your configuration.';
+      this.syncStateToWebview();
+      return;
+    }
+
+    // Build context message from Steps 1-2 inputs
+    const contextMessage = service.buildOutcomeContextMessage(
+      this._wizardState.businessObjective,
+      this._wizardState.industry,
+      this._wizardState.systems,
+      this._wizardState.aiGapFillingState.confirmedAssumptions,
+      this._wizardState.customSystems
+    );
+
+    // Set loading state
+    this._wizardState.outcome.isLoading = true;
+    this._wizardState.outcome.loadingError = undefined;
+    this._outcomeStreamingResponse = '';
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude (streaming will be handled by event handlers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(contextMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  /**
+   * Handle incoming streaming token from Claude for Step 3
+   */
+  private handleOutcomeStreamingToken(token: string): void {
+    this._outcomeStreamingResponse += token;
+    // Note: We don't show streaming tokens for Step 3, just wait for complete response
+  }
+
+  /**
+   * Handle streaming complete from Claude for Step 3
+   * Parses the response and populates form fields (if not already edited by user)
+   */
+  private handleOutcomeStreamingComplete(fullResponse: string): void {
+    const state = this._wizardState.outcome;
+
+    // Parse outcome suggestions from response
+    const service = this._outcomeService;
+    if (!service) {
+      this.handleOutcomeStreamingError('Service not available');
+      return;
+    }
+
+    const suggestions = service.parseOutcomeSuggestionsFromResponse(fullResponse);
+
+    if (suggestions) {
+      // Populate primary outcome (if not edited by user)
+      if (!state.primaryOutcomeEdited && suggestions.primaryOutcome) {
+        state.primaryOutcome = suggestions.primaryOutcome;
+      }
+
+      // Populate success metrics (if not edited by user)
+      if (!state.metricsEdited && suggestions.suggestedKPIs.length > 0) {
+        state.successMetrics = suggestions.suggestedKPIs;
+      }
+
+      // Populate stakeholders (if not edited by user)
+      if (!state.stakeholdersEdited && suggestions.stakeholders.length > 0) {
+        // Separate into static stakeholders and custom AI suggestions
+        const staticOptions = STAKEHOLDER_OPTIONS;
+        const selectedStakeholders: string[] = [];
+        const customAiStakeholders: string[] = [];
+
+        for (const stakeholder of suggestions.stakeholders) {
+          if (staticOptions.includes(stakeholder)) {
+            selectedStakeholders.push(stakeholder);
+          } else {
+            // AI suggested a stakeholder outside the static list
+            customAiStakeholders.push(stakeholder);
+            selectedStakeholders.push(stakeholder);
+          }
+        }
+
+        state.stakeholders = selectedStakeholders;
+        // Add AI-suggested custom stakeholders to the custom list
+        state.customStakeholders = [
+          ...state.customStakeholders,
+          ...customAiStakeholders.filter((s) => !state.customStakeholders.includes(s)),
+        ];
+      }
+    }
+
+    // Clear loading state
+    state.isLoading = false;
+    state.loadingError = undefined;
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle streaming error from Claude for Step 3
+   */
+  private handleOutcomeStreamingError(errorMessage: string): void {
+    this._wizardState.outcome.isLoading = false;
+    this._wizardState.outcome.loadingError = errorMessage;
+
+    this._validationState = this.validateCurrentStep();
+    this.updateWebviewContent();
+    this.syncStateToWebview();
   }
 }
