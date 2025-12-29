@@ -5,9 +5,6 @@
  */
 
 import * as vscode from 'vscode';
-import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
-import { buildContextMessage, parseAssumptionsFromResponse, generateStep1Hash, hasStep1Changed } from '../services/gapFillingService';
-import { getOutcomeDefinitionService, OutcomeDefinitionService } from '../services/outcomeDefinitionService';
 import { getIdeationStyles } from './ideationStyles';
 import { getIdeationScript } from './ideationScript';
 import {
@@ -18,14 +15,31 @@ import {
 } from './ideationStepHtml';
 import {
   WIZARD_STEPS,
-  DATA_SENSITIVITY_OPTIONS,
-  COMPLIANCE_FRAMEWORK_OPTIONS,
-  APPROVAL_GATE_OPTIONS,
-  INDUSTRY_COMPLIANCE_MAPPING,
-  INDUSTRY_OPTIONS,
-  SYSTEM_OPTIONS,
   STAKEHOLDER_OPTIONS,
 } from './ideationConstants';
+
+// Step logic handlers
+import {
+  Step2LogicHandler,
+  createDefaultAIGapFillingState,
+  AIGapFillingState,
+  SystemAssumption,
+  ConversationMessage,
+} from './ideationStep2Logic';
+import {
+  Step3LogicHandler,
+  createDefaultOutcomeDefinitionState,
+} from './ideationStep3Logic';
+import {
+  Step4LogicHandler,
+  createDefaultSecurityGuardrailsState,
+  SecurityGuardrailsState,
+} from './ideationStep4Logic';
+import {
+  Step5LogicHandler,
+  generateStep4Hash,
+} from './ideationStep5Logic';
+import { createDefaultAgentDesignState, AgentDesignState, OutcomeDefinitionState, SuccessMetric, RefinedSectionsState } from '../types/wizardPanel';
 
 /**
  * View ID for the Tabbed Panel
@@ -72,17 +86,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   // Config change listener
   private _configChangeDisposable?: vscode.Disposable;
 
-  // Bedrock service for AI gap-filling (Step 2)
-  private _bedrockService?: BedrockConversationService;
-  private _bedrockDisposables: vscode.Disposable[] = [];
-  private _streamingResponse = '';
-
-  // Outcome service for AI suggestions (Step 3)
-  private _outcomeService?: OutcomeDefinitionService;
-  private _outcomeDisposables: vscode.Disposable[] = [];
-  private _outcomeStreamingResponse = '';
-  private _isOutcomeRefinement = false;
-  private _step2AssumptionsHash?: string;
+  // Step logic handlers
+  private _step2Handler?: Step2LogicHandler;
+  private _step3Handler?: Step3LogicHandler;
+  private _step4Handler?: Step4LogicHandler;
+  private _step5Handler?: Step5LogicHandler;
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
@@ -94,6 +102,64 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
     // Initialize Demo state
     this._demoState = createDefaultDemoState();
+
+    // Initialize step handlers
+    this.initStepHandlers();
+  }
+
+  /**
+   * Initialize step logic handlers
+   */
+  private initStepHandlers(): void {
+    const callbacks = {
+      updateWebviewContent: () => this.updateWebviewContent(),
+      syncStateToWebview: () => this.syncStateToWebview(),
+      postStreamingToken: (content: string) => this.postStreamingToken(content),
+    };
+
+    this._step2Handler = new Step2LogicHandler(
+      this._context,
+      this._ideationState.aiGapFillingState,
+      callbacks
+    );
+
+    this._step3Handler = new Step3LogicHandler(
+      this._context,
+      this._ideationState.outcome,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    this._step4Handler = new Step4LogicHandler(
+      this._ideationState.securityGuardrails,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    this._step5Handler = new Step5LogicHandler(
+      this._context,
+      this._ideationState.agentDesign,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+  }
+
+  /**
+   * Post streaming token to webview
+   */
+  private postStreamingToken(content: string): void {
+    if (this._view) {
+      this._view.webview.postMessage({
+        type: 'streamingToken',
+        content,
+      });
+    }
   }
 
   resolveWebviewView(
@@ -204,7 +270,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           this._ideationState.customIndustry = undefined;
         }
         // Reset Step 4 industry defaults so they can be reapplied for new industry
-        this._ideationState.securityGuardrails.industryDefaultsApplied = false;
+        this._step4Handler?.resetIndustryDefaults();
         this.validateIdeationStep1();
         this.updateWebviewContent();
         this.syncStateToWebview();
@@ -251,16 +317,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
       // Step 2: AI Gap-Filling commands
       case 'sendChatMessage':
-        this.handleSendChatMessage(message.value as string);
+        this._step2Handler?.handleSendChatMessage(message.value as string);
         break;
       case 'acceptAssumptions':
-        this.handleAcceptAssumptions();
+        this._step2Handler?.handleAcceptAssumptions();
         break;
       case 'regenerateAssumptions':
-        this.handleRegenerateAssumptions();
+        this._step2Handler?.handleRegenerateAssumptions(this.getStep1Inputs());
         break;
       case 'retryLastMessage':
-        this.handleRetryLastMessage();
+        this._step2Handler?.handleRetryLastMessage(this.getStep1Inputs());
         break;
 
       // Step 3: Outcome Definition commands
@@ -337,26 +403,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'regenerateOutcomeSuggestions':
-        // Reset outcome state (preserve customStakeholders) and fetch fresh AI suggestions
-        const customStakeholdersToPreserve = this._ideationState.outcome.customStakeholders;
-        this._ideationState.outcome = {
-          primaryOutcome: '',
-          successMetrics: [],
-          stakeholders: [],
-          customStakeholders: customStakeholdersToPreserve,
-          primaryOutcomeEdited: false,
-          metricsEdited: false,
-          stakeholdersEdited: false,
-          isLoading: false,
-          loadingError: undefined,
-          suggestionsAccepted: false,
-          step2AssumptionsHash: this._ideationState.outcome.step2AssumptionsHash,
-          refinedSections: { outcome: false, kpis: false, stakeholders: false },
-        };
-        // Reset outcome service conversation
-        this._outcomeService?.resetConversation();
-        // Fetch fresh AI suggestions
-        this.sendOutcomeContextToClaude();
+        this._step3Handler?.handleRegenerateSuggestions(this.getStep1And2Inputs());
         break;
       case 'acceptOutcomeSuggestions':
         // Transition from Phase 1 to Phase 2
@@ -369,7 +416,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         break;
       case 'sendOutcomeRefinement':
-        this.handleSendOutcomeRefinement(message.value as string);
+        this._step3Handler?.handleSendOutcomeRefinement(message.value as string);
         break;
       case 'dismissOutcomeError':
         this._ideationState.outcome.loadingError = undefined;
@@ -425,6 +472,27 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.updateWebviewContent();
         this.syncStateToWebview();
         break;
+
+      // Step 5: Agent Design commands
+      case 'regenerateAgentProposal':
+        this._step5Handler?.handleRegenerateProposal(this.getStep5Inputs());
+        break;
+      case 'acceptAgentProposal':
+        this._step5Handler?.handleAcceptProposal();
+        // Navigate to Step 6
+        this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
+        this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        break;
+      case 'adjustAgentProposal':
+        this._step5Handler?.handleAdjustProposal();
+        // Show placeholder message - stay on Step 5
+        break;
+      case 'toggleOrchestrationReasoning':
+        // Toggle handled in JS, just sync state
+        this.syncStateToWebview();
+        break;
     }
   }
 
@@ -447,6 +515,51 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         break;
     }
+  }
+
+  /**
+   * Get Step 1 inputs for Step 2
+   */
+  private getStep1Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+    };
+  }
+
+  /**
+   * Get Steps 1-2 inputs for Step 3
+   */
+  private getStep1And2Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      customIndustry: this._ideationState.customIndustry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+      confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+    };
+  }
+
+  /**
+   * Get Steps 1-4 inputs for Step 5
+   */
+  private getStep5Inputs() {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry,
+      customIndustry: this._ideationState.customIndustry,
+      systems: this._ideationState.systems,
+      customSystems: this._ideationState.customSystems,
+      confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+      primaryOutcome: this._ideationState.outcome.primaryOutcome,
+      successMetrics: this._ideationState.outcome.successMetrics,
+      dataSensitivity: this._ideationState.securityGuardrails.dataSensitivity,
+      complianceFrameworks: this._ideationState.securityGuardrails.complianceFrameworks,
+      approvalGates: this._ideationState.securityGuardrails.approvalGates,
+    };
   }
 
   /**
@@ -505,18 +618,35 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
       // Auto-send context to Claude when entering Step 2
       if (previousStep === 1 && this._ideationState.currentStep === 2) {
-        this.triggerAutoSendForStep2();
+        this._step2Handler?.triggerAutoSend(this.getStep1Inputs());
       }
 
       // Auto-send context to Claude when entering Step 3
       if (previousStep === 2 && this._ideationState.currentStep === 3) {
-        this.triggerAutoSendForStep3();
+        this._step3Handler?.triggerAutoSend(this.getStep1And2Inputs());
       }
 
       // Apply industry defaults and trigger AI suggestions when entering Step 4
       if (this._ideationState.currentStep === 4) {
-        this.applyIndustryDefaultsForStep4();
-        this.triggerAutoSendForStep4();
+        this._step4Handler?.applyIndustryDefaults(
+          this._ideationState.industry,
+          this._ideationState.customIndustry
+        );
+        this._step4Handler?.triggerAutoSend(
+          {
+            businessObjective: this._ideationState.businessObjective,
+            industry: this._ideationState.industry,
+            customIndustry: this._ideationState.customIndustry,
+            systems: this._ideationState.systems,
+            confirmedAssumptions: this._ideationState.aiGapFillingState.confirmedAssumptions,
+          },
+          this._step3Handler?.getService()
+        );
+      }
+
+      // Auto-send context to Claude when entering Step 5
+      if (previousStep === 4 && this._ideationState.currentStep === 5) {
+        this._step5Handler?.triggerAutoSend(this.getStep5Inputs());
       }
     }
   }
@@ -571,686 +701,6 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         state: this._demoState,
       },
     });
-  }
-
-  // =========================================================================
-  // Step 2: AI Gap-Filling Methods
-  // =========================================================================
-
-  /**
-   * Trigger auto-send when entering Step 2
-   */
-  private triggerAutoSendForStep2(): void {
-    const state = this._ideationState.aiGapFillingState;
-
-    // Check if Step 1 inputs have changed since last visit
-    if (hasStep1Changed(
-      state.step1InputHash,
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    )) {
-      // Reset conversation state due to input changes
-      this._ideationState.aiGapFillingState = {
-        conversationHistory: [],
-        confirmedAssumptions: [],
-        assumptionsAccepted: false,
-        isStreaming: false,
-      };
-    }
-
-    // Only auto-send if conversation is empty
-    if (this._ideationState.aiGapFillingState.conversationHistory.length === 0 && !this._ideationState.aiGapFillingState.isStreaming) {
-      this.sendContextToClaude();
-    }
-  }
-
-  /**
-   * Initialize Bedrock service if needed
-   */
-  private initBedrockService(): BedrockConversationService | undefined {
-    if (this._bedrockService) {
-      return this._bedrockService;
-    }
-
-    if (!this._context) {
-      console.warn('[TabbedPanel] Extension context not available for Bedrock service');
-      return undefined;
-    }
-
-    this._bedrockService = getBedrockConversationService(this._context);
-
-    // Subscribe to streaming events
-    this._bedrockDisposables.push(
-      this._bedrockService.onToken((token) => {
-        this.handleStreamingToken(token);
-      })
-    );
-
-    this._bedrockDisposables.push(
-      this._bedrockService.onComplete((response) => {
-        this.handleStreamingComplete(response);
-      })
-    );
-
-    this._bedrockDisposables.push(
-      this._bedrockService.onError((error) => {
-        this.handleStreamingError(error.message);
-      })
-    );
-
-    return this._bedrockService;
-  }
-
-  /**
-   * Initialize OutcomeDefinitionService for Step 3 AI suggestions
-   * Follows same pattern as initBedrockService()
-   */
-  private initOutcomeService(): OutcomeDefinitionService | undefined {
-    if (this._outcomeService) {
-      return this._outcomeService;
-    }
-
-    if (!this._context) {
-      console.warn('[TabbedPanel] Extension context not available for Outcome service');
-      return undefined;
-    }
-
-    this._outcomeService = getOutcomeDefinitionService(this._context);
-
-    // Subscribe to streaming events
-    this._outcomeDisposables.push(
-      this._outcomeService.onToken((token) => {
-        this.handleOutcomeStreamingToken(token);
-      })
-    );
-
-    this._outcomeDisposables.push(
-      this._outcomeService.onComplete((response) => {
-        this.handleOutcomeStreamingComplete(response);
-      })
-    );
-
-    this._outcomeDisposables.push(
-      this._outcomeService.onError((error) => {
-        this.handleOutcomeStreamingError(error.message);
-      })
-    );
-
-    return this._outcomeService;
-  }
-
-  /**
-   * Build and send context to Claude via Bedrock
-   */
-  private async sendContextToClaude(): Promise<void> {
-    const service = this.initBedrockService();
-    if (!service) {
-      this._ideationState.aiGapFillingState.streamingError =
-        'Claude service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Build context message from Step 1 inputs (including custom systems)
-    const contextMessage = buildContextMessage(
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    );
-
-    // Store hash for change detection (include custom systems)
-    this._ideationState.aiGapFillingState.step1InputHash = generateStep1Hash(
-      this._ideationState.businessObjective,
-      this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.customSystems
-    );
-
-    // Add user message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'user',
-      content: contextMessage,
-      timestamp: Date.now(),
-    });
-
-    // Set streaming state
-    this._ideationState.aiGapFillingState.isStreaming = true;
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude (streaming handled by event handlers)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(contextMessage)) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle incoming streaming token from Claude
-   */
-  private handleStreamingToken(token: string): void {
-    this._streamingResponse += token;
-
-    // Send incremental update to webview
-    if (this._view) {
-      this._view.webview.postMessage({
-        type: 'streamingToken',
-        content: this._streamingResponse,
-      });
-    }
-  }
-
-  /**
-   * Handle streaming completion from Claude
-   */
-  private handleStreamingComplete(fullResponse: string): void {
-    // Parse assumptions from response
-    const parsedAssumptions = parseAssumptionsFromResponse(fullResponse);
-
-    // Add assistant message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'assistant',
-      content: fullResponse,
-      timestamp: Date.now(),
-      parsedAssumptions,
-    });
-
-    // Update streaming state
-    this._ideationState.aiGapFillingState.isStreaming = false;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Handle streaming error from Claude
-   */
-  private handleStreamingError(errorMessage: string): void {
-    this._ideationState.aiGapFillingState.isStreaming = false;
-    this._ideationState.aiGapFillingState.streamingError = errorMessage;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  // =========================================================================
-  // Step 3: Outcome Definition AI Methods
-  // =========================================================================
-
-  /**
-   * Handle incoming streaming token for outcome suggestions
-   */
-  private handleOutcomeStreamingToken(token: string): void {
-    this._outcomeStreamingResponse += token;
-    // Note: Step 3 doesn't show streaming preview, just accumulates
-  }
-
-  /**
-   * Handle streaming complete for outcome suggestions
-   * Parses response and populates form fields (respecting edited flags)
-   */
-  private handleOutcomeStreamingComplete(response: string): void {
-    this._ideationState.outcome.isLoading = false;
-
-    const service = this._outcomeService;
-    if (!service) {
-      this._outcomeStreamingResponse = '';
-      this.updateWebviewContent();
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Handle refinement response differently from initial suggestions
-    if (this._isOutcomeRefinement) {
-      // Try to parse as refinement changes first
-      const changes = service.parseRefinementChangesFromResponse(response);
-      if (changes) {
-        // Apply changes and track which sections were refined
-        if (changes.outcome !== undefined) {
-          // In Phase 1 (not accepted) or Phase 2 with no manual edits: apply the change
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.primaryOutcomeEdited) {
-            this._ideationState.outcome.primaryOutcome = changes.outcome;
-            this._ideationState.outcome.refinedSections.outcome = true;
-          }
-        }
-        if (changes.kpis !== undefined) {
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.metricsEdited) {
-            this._ideationState.outcome.successMetrics = changes.kpis;
-            this._ideationState.outcome.refinedSections.kpis = true;
-          }
-        }
-        if (changes.stakeholders !== undefined) {
-          if (!this._ideationState.outcome.suggestionsAccepted || !this._ideationState.outcome.stakeholdersEdited) {
-            this.applyStakeholderChanges(changes.stakeholders);
-            this._ideationState.outcome.refinedSections.stakeholders = true;
-          }
-        }
-      } else {
-        // Fall back to parsing as full suggestions (AI might return full response)
-        this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
-      }
-    } else {
-      // Initial suggestions request - parse and apply full suggestions
-      this.applyOutcomeSuggestions(service.parseOutcomeSuggestionsFromResponse(response));
-    }
-
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = false;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Apply full outcome suggestions to state (for initial requests)
-   */
-  private applyOutcomeSuggestions(suggestions: ReturnType<OutcomeDefinitionService['parseOutcomeSuggestionsFromResponse']>): void {
-    if (!suggestions) return;
-
-    // Only update fields that haven't been manually edited
-    if (!this._ideationState.outcome.primaryOutcomeEdited && suggestions.primaryOutcome) {
-      this._ideationState.outcome.primaryOutcome = suggestions.primaryOutcome;
-    }
-    if (!this._ideationState.outcome.metricsEdited && suggestions.suggestedKPIs) {
-      this._ideationState.outcome.successMetrics = suggestions.suggestedKPIs;
-    }
-    if (!this._ideationState.outcome.stakeholdersEdited && suggestions.stakeholders) {
-      this.applyStakeholderChanges(suggestions.stakeholders);
-    }
-  }
-
-  /**
-   * Apply stakeholder changes, separating standard and custom stakeholders
-   */
-  private applyStakeholderChanges(stakeholders: string[]): void {
-    const standardOptions = ['Operations', 'Finance', 'IT', 'HR', 'Sales', 'Marketing', 'Customer Service', 'Executive Leadership'];
-    const customFromAI = stakeholders.filter(s => !standardOptions.includes(s));
-    const standardFromAI = stakeholders.filter(s => standardOptions.includes(s));
-
-    this._ideationState.outcome.stakeholders = standardFromAI;
-    // Add custom AI stakeholders to customStakeholders array (if not already there)
-    customFromAI.forEach(s => {
-      if (!this._ideationState.outcome.customStakeholders.includes(s)) {
-        this._ideationState.outcome.customStakeholders.push(s);
-      }
-      if (!this._ideationState.outcome.stakeholders.includes(s)) {
-        this._ideationState.outcome.stakeholders.push(s);
-      }
-    });
-  }
-
-  /**
-   * Handle streaming error for outcome suggestions
-   */
-  private handleOutcomeStreamingError(errorMessage: string): void {
-    this._ideationState.outcome.isLoading = false;
-    this._ideationState.outcome.loadingError = errorMessage;
-    this._outcomeStreamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Generate a hash of Step 2 confirmed assumptions for change detection
-   * Uses the same djb2 hash algorithm as generateStep1Hash
-   */
-  private generateStep2AssumptionsHash(): string {
-    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions;
-    // Sort by system name for consistent hash
-    const sorted = [...assumptions].sort((a, b) => a.system.localeCompare(b.system));
-    const combined = JSON.stringify(sorted);
-
-    // djb2 hash algorithm
-    let hash = 5381;
-    for (let i = 0; i < combined.length; i++) {
-      hash = (hash * 33) ^ combined.charCodeAt(i);
-    }
-
-    return (hash >>> 0).toString(16);
-  }
-
-  /**
-   * Trigger auto-send when entering Step 3
-   * Re-triggers AI if Step 2 assumptions have changed, or if fresh entry
-   */
-  private triggerAutoSendForStep3(): void {
-    const currentHash = this.generateStep2AssumptionsHash();
-
-    // Check if assumptions have changed since last visit
-    if (this._step2AssumptionsHash !== currentHash) {
-      // Reset outcome state (preserve customStakeholders)
-      const customStakeholders = this._ideationState.outcome.customStakeholders;
-      this._ideationState.outcome = {
-        primaryOutcome: '',
-        successMetrics: [],
-        stakeholders: [],
-        customStakeholders: customStakeholders,
-        primaryOutcomeEdited: false,
-        metricsEdited: false,
-        stakeholdersEdited: false,
-        isLoading: false,
-        loadingError: undefined,
-        suggestionsAccepted: false,
-        step2AssumptionsHash: currentHash,
-        refinedSections: { outcome: false, kpis: false, stakeholders: false },
-      };
-
-      // Update hash
-      this._step2AssumptionsHash = currentHash;
-
-      // Trigger AI
-      this.sendOutcomeContextToClaude();
-    } else if (!this._ideationState.outcome.primaryOutcome && !this._ideationState.outcome.isLoading) {
-      // Fresh entry with no outcome yet
-      this.sendOutcomeContextToClaude();
-    }
-  }
-
-  /**
-   * Apply industry-aware compliance defaults for Step 4
-   */
-  private applyIndustryDefaultsForStep4(): void {
-    const state = this._ideationState.securityGuardrails;
-
-    // Only apply defaults on first visit or if industry changed
-    if (state.industryDefaultsApplied) {
-      return;
-    }
-
-    // Get industry (handle "Other" case)
-    const industry = this._ideationState.industry === 'Other'
-      ? (this._ideationState.customIndustry || 'Other')
-      : this._ideationState.industry;
-
-    // Look up compliance defaults for this industry
-    const complianceDefaults = INDUSTRY_COMPLIANCE_MAPPING[industry] || [];
-
-    // Apply defaults
-    state.complianceFrameworks = [...complianceDefaults];
-    state.industryDefaultsApplied = true;
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Trigger AI guardrail suggestions for Step 4
-   */
-  private triggerAutoSendForStep4(): void {
-    const state = this._ideationState.securityGuardrails;
-
-    // Only trigger if guardrailNotes is empty AND AI hasn't been called yet
-    if (state.guardrailNotes === '' && !state.aiCalled) {
-      this.sendGuardrailSuggestionRequest();
-    }
-  }
-
-  /**
-   * Send guardrail suggestion request to Claude
-   */
-  private async sendGuardrailSuggestionRequest(): Promise<void> {
-    const state = this._ideationState.securityGuardrails;
-
-    // Mark AI as called to prevent repeated calls
-    state.aiCalled = true;
-    state.isLoading = true;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    try {
-      // Build context from Steps 1-2
-      const context = this.buildGuardrailContextMessage();
-
-      // Get service
-      const service = this.initOutcomeService();
-      if (!service) {
-        throw new Error('Service not available');
-      }
-
-      // Send request using the conversation service and collect response
-      let fullResponse = '';
-      for await (const chunk of service.sendMessage(context)) {
-        fullResponse += chunk;
-      }
-
-      // Parse response - it's plain text
-      if (fullResponse.trim()) {
-        state.guardrailNotes = fullResponse.trim();
-        state.aiSuggested = true;
-      } else {
-        // Use fallback
-        state.guardrailNotes = 'No PII in demo data, mask account numbers...';
-        state.aiSuggested = false;
-      }
-    } catch (error) {
-      // Use fallback on error
-      state.guardrailNotes = 'No PII in demo data, mask account numbers...';
-      state.aiSuggested = false;
-      console.error('Guardrail suggestion error:', error);
-    } finally {
-      state.isLoading = false;
-      this.updateWebviewContent();
-      this.syncStateToWebview();
-    }
-  }
-
-  /**
-   * Build context message for guardrail suggestions
-   */
-  private buildGuardrailContextMessage(): string {
-    const industry = this._ideationState.industry === 'Other'
-      ? (this._ideationState.customIndustry || 'Other')
-      : this._ideationState.industry;
-
-    const systems = this._ideationState.systems.join(', ') || 'No specific systems';
-
-    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions
-      .map(a => `${a.system}: ${a.modules?.join(', ') || 'N/A'}`)
-      .join('; ') || 'No confirmed assumptions';
-
-    return `Based on the following context, suggest 2-3 brief security guardrail notes for an AI demo:
-
-Business Objective: ${this._ideationState.businessObjective}
-Industry: ${industry}
-Systems: ${systems}
-Integration Details: ${assumptions}
-
-Please provide practical security considerations specific to this demo scenario. Keep suggestions concise (2-3 bullet points). Focus on data handling, privacy concerns, and demo-appropriate safeguards. Do not include extensive explanations - just the key guardrail notes.`;
-  }
-
-  /**
-   * Build and send context to Claude for outcome suggestions
-   */
-  private async sendOutcomeContextToClaude(): Promise<void> {
-    const service = this.initOutcomeService();
-    if (!service) {
-      this._ideationState.outcome.loadingError =
-        'Outcome service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Build context message from Steps 1-2 inputs
-    const contextMessage = service.buildOutcomeContextMessage(
-      this._ideationState.businessObjective,
-      this._ideationState.industry === 'Other'
-        ? (this._ideationState.customIndustry || this._ideationState.industry)
-        : this._ideationState.industry,
-      this._ideationState.systems,
-      this._ideationState.aiGapFillingState.confirmedAssumptions,
-      this._ideationState.customSystems
-    );
-
-    // Set loading state (initial request, not refinement)
-    this._ideationState.outcome.isLoading = true;
-    this._ideationState.outcome.loadingError = undefined;
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = false;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude (streaming handled by event handlers)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(contextMessage)) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle send outcome refinement message
-   */
-  private async handleSendOutcomeRefinement(content: string): Promise<void> {
-    if (!content.trim()) return;
-
-    const service = this.initOutcomeService();
-    if (!service) {
-      this._ideationState.outcome.loadingError =
-        'Outcome service not available. Please check your configuration.';
-      this.syncStateToWebview();
-      return;
-    }
-
-    // Set loading state (this is a refinement request)
-    this._ideationState.outcome.isLoading = true;
-    this._ideationState.outcome.loadingError = undefined;
-    this._outcomeStreamingResponse = '';
-    this._isOutcomeRefinement = true;
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send refinement message to Claude
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendRefinementMessage(
-        content.trim(),
-        this._ideationState.outcome
-      )) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle send chat message command
-   */
-  private async handleSendChatMessage(content: string): Promise<void> {
-    if (!content.trim()) return;
-
-    const service = this.initBedrockService();
-    if (!service) {
-      return;
-    }
-
-    // Add user message to conversation history
-    this._ideationState.aiGapFillingState.conversationHistory.push({
-      role: 'user',
-      content: content.trim(),
-      timestamp: Date.now(),
-    });
-
-    // Set streaming state
-    this._ideationState.aiGapFillingState.isStreaming = true;
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-    this._streamingResponse = '';
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Send message to Claude
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _token of service.sendMessage(content.trim())) {
-        // Tokens are handled by onToken event handler
-      }
-    } catch (error) {
-      this.handleStreamingError(error instanceof Error ? error.message : 'Unknown error');
-    }
-  }
-
-  /**
-   * Handle accept assumptions command
-   */
-  private handleAcceptAssumptions(): void {
-    const history = this._ideationState.aiGapFillingState.conversationHistory;
-
-    // Find last assistant message with assumptions
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i];
-      if (msg.role === 'assistant' && msg.parsedAssumptions && msg.parsedAssumptions.length > 0) {
-        this._ideationState.aiGapFillingState.confirmedAssumptions = [...msg.parsedAssumptions];
-        this._ideationState.aiGapFillingState.assumptionsAccepted = true;
-        break;
-      }
-    }
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-  }
-
-  /**
-   * Handle regenerate assumptions command
-   */
-  private handleRegenerateAssumptions(): void {
-    // Reset conversation but keep the hash
-    const hash = this._ideationState.aiGapFillingState.step1InputHash;
-    this._ideationState.aiGapFillingState = {
-      conversationHistory: [],
-      confirmedAssumptions: [],
-      assumptionsAccepted: false,
-      isStreaming: false,
-    };
-    this._ideationState.aiGapFillingState.step1InputHash = hash;
-
-    // Reset the Bedrock service conversation history
-    if (this._bedrockService) {
-      this._bedrockService.resetConversation();
-    }
-
-    this.updateWebviewContent();
-    this.syncStateToWebview();
-
-    // Trigger new conversation
-    this.sendContextToClaude();
-  }
-
-  /**
-   * Handle retry last message command
-   */
-  private handleRetryLastMessage(): void {
-    const history = this._ideationState.aiGapFillingState.conversationHistory;
-
-    // Clear the error
-    this._ideationState.aiGapFillingState.streamingError = undefined;
-
-    // If there's no history or only one message, resend context
-    if (history.length <= 1) {
-      this.sendContextToClaude();
-      return;
-    }
-
-    // Find the last user message and resend it
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i];
-      if (msg.role === 'user') {
-        // Remove this message from history (it will be re-added by handleSendChatMessage)
-        history.splice(i, 1);
-        this.handleSendChatMessage(msg.content);
-        break;
-      }
-    }
   }
 
   /**
@@ -1575,10 +1025,9 @@ Please provide practical security considerations specific to this demo scenario.
    */
   public dispose(): void {
     this._configChangeDisposable?.dispose();
-    this._bedrockDisposables.forEach(d => d.dispose());
-    this._bedrockDisposables = [];
-    this._outcomeDisposables.forEach(d => d.dispose());
-    this._outcomeDisposables = [];
+    this._step2Handler?.dispose();
+    this._step3Handler?.dispose();
+    this._step5Handler?.dispose();
   }
 }
 
@@ -1586,67 +1035,8 @@ Please provide practical security considerations specific to this demo scenario.
 // Supporting Types and Constants
 // ============================================
 
-interface SystemAssumption {
-  system: string;
-  modules: string[];
-  integrations: string[];
-  source: 'ai-proposed' | 'user-corrected';
-}
-
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-  parsedAssumptions?: SystemAssumption[];
-}
-
-interface AIGapFillingState {
-  conversationHistory: ConversationMessage[];
-  confirmedAssumptions: SystemAssumption[];
-  assumptionsAccepted: boolean;
-  isStreaming: boolean;
-  step1InputHash?: string;
-  streamingError?: string;
-}
-
-interface SuccessMetric {
-  name: string;
-  targetValue: string;
-  unit: string;
-}
-
-interface RefinedSectionsState {
-  outcome: boolean;
-  kpis: boolean;
-  stakeholders: boolean;
-}
-
-interface OutcomeDefinitionState {
-  primaryOutcome: string;
-  successMetrics: SuccessMetric[];
-  stakeholders: string[];
-  isLoading: boolean;
-  loadingError?: string;
-  primaryOutcomeEdited: boolean;
-  metricsEdited: boolean;
-  stakeholdersEdited: boolean;
-  customStakeholders: string[];
-  suggestionsAccepted: boolean;
-  step2AssumptionsHash?: string;
-  refinedSections: RefinedSectionsState;
-}
-
-interface SecurityGuardrailsState {
-  dataSensitivity: string;
-  complianceFrameworks: string[];
-  approvalGates: string[];
-  guardrailNotes: string;
-  aiSuggested: boolean;
-  aiCalled: boolean;
-  skipped: boolean;
-  industryDefaultsApplied: boolean;
-  isLoading: boolean;
-}
+// Re-export types from step logic modules
+export { SystemAssumption, ConversationMessage, AIGapFillingState };
 
 interface IdeationState {
   currentStep: number;
@@ -1665,6 +1055,7 @@ interface IdeationState {
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
+  agentDesign: AgentDesignState;
 }
 
 interface IdeationValidationError {
@@ -1692,36 +1083,10 @@ function createDefaultIdeationState(): IdeationState {
     businessObjective: '',
     industry: '',
     systems: [],
-    aiGapFillingState: {
-      conversationHistory: [],
-      confirmedAssumptions: [],
-      assumptionsAccepted: false,
-      isStreaming: false,
-    },
-    outcome: {
-      primaryOutcome: '',
-      successMetrics: [],
-      stakeholders: [],
-      isLoading: false,
-      primaryOutcomeEdited: false,
-      metricsEdited: false,
-      stakeholdersEdited: false,
-      customStakeholders: [],
-      suggestionsAccepted: false,
-      step2AssumptionsHash: undefined,
-      refinedSections: { outcome: false, kpis: false, stakeholders: false },
-    },
-    securityGuardrails: {
-      dataSensitivity: 'Internal',
-      complianceFrameworks: [],
-      approvalGates: [],
-      guardrailNotes: '',
-      aiSuggested: false,
-      aiCalled: false,
-      skipped: false,
-      industryDefaultsApplied: false,
-      isLoading: false,
-    },
+    aiGapFillingState: createDefaultAIGapFillingState(),
+    outcome: createDefaultOutcomeDefinitionState(),
+    securityGuardrails: createDefaultSecurityGuardrailsState(),
+    agentDesign: createDefaultAgentDesignState(),
   };
 }
 
@@ -1731,4 +1096,3 @@ function createDefaultDemoState(): DemoState {
     promptText: '',
   };
 }
-
