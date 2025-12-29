@@ -291,7 +291,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 
 This step is optional — "Skip" button available with sensible defaults applied. `S`
 
-18. [ ] Agent Design Proposal — Create wizard step 5 where model proposes agent team:
+18. [x] Agent Design Proposal — Create wizard step 5 where model proposes agent team:
 
 **State Structure:**
 Add `agentDesign: AgentDesignState` to IdeationState following existing patterns:
