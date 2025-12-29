@@ -39,7 +39,14 @@ import {
   Step5LogicHandler,
   generateStep4Hash,
 } from './ideationStep5Logic';
-import { createDefaultAgentDesignState, AgentDesignState, OutcomeDefinitionState, SuccessMetric, RefinedSectionsState } from '../types/wizardPanel';
+import {
+  createDefaultAgentDesignState,
+  AgentDesignState,
+  OutcomeDefinitionState,
+  SuccessMetric,
+  RefinedSectionsState,
+  OrchestrationPattern,
+} from '../types/wizardPanel';
 
 /**
  * View ID for the Tabbed Panel
@@ -473,7 +480,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         break;
 
-      // Step 5: Agent Design commands
+      // Step 5: Agent Design commands (Phase 1)
       case 'regenerateAgentProposal':
         this._step5Handler?.handleRegenerateProposal(this.getStep5Inputs());
         break;
@@ -491,6 +498,121 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       case 'toggleOrchestrationReasoning':
         // Toggle handled in JS, just sync state
         this.syncStateToWebview();
+        break;
+
+      // =========================================================================
+      // Step 5 Phase 2: Agent Design Editing commands (Task Group 3)
+      // =========================================================================
+
+      // Phase transition commands
+      case 'acceptSuggestionsPhase2':
+        // Transition from Phase 1 to Phase 2 (stays on Step 5 in editable mode)
+        this._step5Handler?.handleAcceptSuggestionsPhase2();
+        break;
+
+      case 'acceptAndContinue':
+        // Accept proposal and continue directly to Step 6 (skip manual editing)
+        if (this._step5Handler) {
+          const success = this._step5Handler.handleAcceptAndContinue();
+          if (success) {
+            this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
+            this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+            this.updateWebviewContent();
+            this.syncStateToWebview();
+          }
+        }
+        break;
+
+      // Agent editing commands
+      case 'updateAgentName':
+        this._step5Handler?.handleUpdateAgentName(
+          message.agentId as string,
+          message.value as string
+        );
+        break;
+
+      case 'updateAgentRole':
+        this._step5Handler?.handleUpdateAgentRole(
+          message.agentId as string,
+          message.value as string
+        );
+        break;
+
+      case 'addAgentTool':
+        this._step5Handler?.handleAddAgentTool(
+          message.agentId as string,
+          message.value as string
+        );
+        break;
+
+      case 'removeAgentTool':
+        this._step5Handler?.handleRemoveAgentTool(
+          message.agentId as string,
+          message.index as number
+        );
+        break;
+
+      // Agent add/remove commands
+      case 'addAgent':
+        this._step5Handler?.handleAddAgent();
+        break;
+
+      case 'removeAgent':
+        this.handleRemoveAgentWithConfirmation(message.agentId as string);
+        break;
+
+      // Handle confirmation response for agent removal
+      case 'confirmRemoveAgent':
+        this._step5Handler?.handleRemoveAgent(message.agentId as string);
+        break;
+
+      // Orchestration commands
+      case 'updateOrchestration':
+        if (this._step5Handler) {
+          const pattern = message.value as OrchestrationPattern;
+          this._step5Handler.handleUpdateOrchestration(pattern);
+          // Trigger AI edge suggestion for the new pattern
+          this.triggerEdgeSuggestionForPattern(pattern);
+        }
+        break;
+
+      // Edge commands
+      case 'addEdge':
+        this._step5Handler?.handleAddEdge();
+        break;
+
+      case 'removeEdge':
+        this._step5Handler?.handleRemoveEdge(message.index as number);
+        break;
+
+      case 'updateEdge':
+        this._step5Handler?.handleUpdateEdge(
+          message.index as number,
+          message.field as 'from' | 'to',
+          message.value as string
+        );
+        break;
+
+      // Edge suggestion commands
+      case 'applyEdgeSuggestion':
+        this._step5Handler?.handleApplyEdgeSuggestion();
+        break;
+
+      case 'dismissEdgeSuggestion':
+        this._step5Handler?.handleDismissEdgeSuggestion();
+        break;
+
+      // Confirmation command
+      case 'confirmDesign':
+        if (this._step5Handler) {
+          const success = this._step5Handler.handleConfirmDesign();
+          if (success) {
+            this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
+            this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+            this.updateWebviewContent();
+            this.syncStateToWebview();
+          }
+        }
         break;
     }
   }
@@ -513,6 +635,82 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._demoState.promptText = message.value as string;
         this.syncStateToWebview();
         break;
+    }
+  }
+
+  // =========================================================================
+  // Task 3.3: Agent Removal Confirmation Dialog Handling
+  // =========================================================================
+
+  /**
+   * Handle agent removal with confirmation if agent has edges
+   * Task 3.3: Shows confirmation dialog before removing agent with connections
+   */
+  private async handleRemoveAgentWithConfirmation(agentId: string): Promise<void> {
+    if (!this._step5Handler) return;
+
+    // Check if agent has edges
+    const edgeCount = this._step5Handler.getAgentEdgeCount(agentId);
+
+    if (edgeCount > 0) {
+      // Agent has edges - show confirmation dialog
+      const confirmMessage = `This agent has ${edgeCount} connection${edgeCount > 1 ? 's' : ''} that will be removed. Continue?`;
+
+      const result = await vscode.window.showWarningMessage(
+        confirmMessage,
+        { modal: true },
+        'Continue',
+        'Cancel'
+      );
+
+      if (result === 'Continue') {
+        this._step5Handler.handleRemoveAgent(agentId);
+      }
+    } else {
+      // No edges - remove directly
+      this._step5Handler.handleRemoveAgent(agentId);
+    }
+  }
+
+  // =========================================================================
+  // Task 3.4: Wire Orchestration Change to AI Edge Suggestion
+  // =========================================================================
+
+  /**
+   * Trigger AI edge suggestion when orchestration pattern changes
+   * Task 3.4: Calls AI service to suggest edges for the new pattern
+   */
+  private async triggerEdgeSuggestionForPattern(pattern: OrchestrationPattern): Promise<void> {
+    if (!this._step5Handler || !this._context) return;
+
+    const state = this._step5Handler.getState();
+
+    // Only suggest edges if we have agents
+    if (state.proposedAgents.length < 2) return;
+
+    // Get the AgentDesignService and request edge suggestions
+    try {
+      const { getAgentDesignService } = await import('../services/agentDesignService.js');
+      const service = getAgentDesignService(this._context);
+
+      // Call the edge suggestion method
+      const suggestedEdges = await service.suggestEdgesForPattern(
+        state.proposedAgents,
+        pattern
+      );
+
+      if (suggestedEdges && suggestedEdges.length > 0) {
+        // Store the suggestion in state (non-blocking)
+        state.edgeSuggestion = {
+          edges: suggestedEdges,
+          visible: true,
+        };
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+      }
+    } catch (error) {
+      // Edge suggestion is non-blocking - log error but don't show to user
+      console.warn('[TabbedPanel] Edge suggestion failed:', error);
     }
   }
 
@@ -655,6 +853,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    */
   private ideationNavigateBackward(): void {
     if (this._ideationState.currentStep > 1) {
+      // Task 2.5b: Handle back navigation from Step 6 to Step 5
+      if (this._ideationState.currentStep === 6) {
+        this._step5Handler?.handleBackNavigationToStep5();
+      }
+
       this._ideationState.currentStep--;
       this._ideationState.validationAttempted = false;
       this.updateWebviewContent();
@@ -667,6 +870,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    */
   private ideationNavigateToStep(step: number): void {
     if (step >= 1 && step <= this._ideationState.highestStepReached && step !== this._ideationState.currentStep) {
+      // Task 2.5b: Handle back navigation from Step 6 to Step 5
+      if (this._ideationState.currentStep === 6 && step === 5) {
+        this._step5Handler?.handleBackNavigationToStep5();
+      }
+
       this._ideationState.currentStep = step;
       this._ideationState.validationAttempted = false;
       this.updateWebviewContent();

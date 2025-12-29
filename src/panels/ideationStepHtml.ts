@@ -87,12 +87,22 @@ interface ProposedAgent {
   name: string;
   role: string;
   tools: string[];
+  // Task 5.2: Phase 2 edited flags
+  nameEdited?: boolean;
+  roleEdited?: boolean;
+  toolsEdited?: boolean;
 }
 
 interface ProposedEdge {
   from: string;
   to: string;
   condition?: string;
+}
+
+// Task 5.5: Edge suggestion interface
+interface EdgeSuggestion {
+  edges: ProposedEdge[];
+  visible: boolean;
 }
 
 interface AgentDesignState {
@@ -105,6 +115,12 @@ interface AgentDesignState {
   error?: string;
   step4Hash?: string;
   aiCalled: boolean;
+  // Task 5.4: Phase 2 fields
+  originalOrchestration?: OrchestrationPattern;
+  confirmedAgents?: ProposedAgent[];
+  confirmedOrchestration?: OrchestrationPattern;
+  confirmedEdges?: ProposedEdge[];
+  edgeSuggestion?: EdgeSuggestion;
 }
 
 export interface IdeationState {
@@ -244,6 +260,65 @@ function buildFlowSummary(edges: ProposedEdge[]): string {
 
   // Join with arrows
   return flowParts.join(' -> ');
+}
+
+/**
+ * Task 5.7: Get validation warnings for agent design
+ * Returns array of warning messages for orphan agents and missing entry points
+ */
+function getAgentDesignValidationWarnings(agents: ProposedAgent[], edges: ProposedEdge[]): string[] {
+  const warnings: string[] = [];
+
+  if (agents.length === 0) return warnings;
+
+  // Find connected agent IDs
+  const connectedAgentIds = new Set<string>();
+  for (const edge of edges) {
+    if (edge.from) connectedAgentIds.add(edge.from);
+    if (edge.to) connectedAgentIds.add(edge.to);
+  }
+
+  // Find orphan agents (agents not in any edge)
+  const orphanAgents = agents.filter(a => !connectedAgentIds.has(a.id));
+  if (orphanAgents.length > 0 && edges.length > 0) {
+    const orphanNames = orphanAgents.map(a => a.name || a.id).join(', ');
+    warnings.push(`Orphan agent(s) with no connections: ${orphanNames}`);
+  }
+
+  // Check for entry point (agent with no incoming edges)
+  if (edges.length > 0) {
+    const agentsWithIncomingEdges = new Set<string>();
+    for (const edge of edges) {
+      if (edge.to) agentsWithIncomingEdges.add(edge.to);
+    }
+
+    // Find agents in edges but without incoming edges
+    const agentIdsInEdges = new Set<string>();
+    for (const edge of edges) {
+      if (edge.from) agentIdsInEdges.add(edge.from);
+      if (edge.to) agentIdsInEdges.add(edge.to);
+    }
+
+    let hasEntryPoint = false;
+    for (const agentId of agentIdsInEdges) {
+      if (!agentsWithIncomingEdges.has(agentId)) {
+        hasEntryPoint = true;
+        break;
+      }
+    }
+
+    if (!hasEntryPoint && agentIdsInEdges.size > 0) {
+      warnings.push('No entry point detected: all agents have incoming edges (circular dependency)');
+    }
+  }
+
+  // Check for incomplete edges
+  const incompleteEdges = edges.filter(e => !e.from || !e.to);
+  if (incompleteEdges.length > 0) {
+    warnings.push(`${incompleteEdges.length} edge(s) have missing from/to values`);
+  }
+
+  return warnings;
 }
 
 // ============================================================================
@@ -868,12 +943,14 @@ export function getStep4Html(state: IdeationState): string {
 
 /**
  * Get Step 5 HTML - Agent Design Proposal
+ * Task Group 4 & 5: Full Phase 1/Phase 2 UI with editing capabilities
  */
 export function getStep5Html(state: IdeationState): string {
   const agentDesignState = state.agentDesign;
   const isLoading = agentDesignState?.isLoading ?? false;
   const hasAgents = agentDesignState?.proposedAgents?.length > 0;
   const proposalAccepted = agentDesignState?.proposalAccepted ?? false;
+  const originalOrchestration = agentDesignState?.originalOrchestration ?? agentDesignState?.proposedOrchestration ?? 'workflow';
 
   // Loading indicator
   let loadingHtml = '';
@@ -900,15 +977,76 @@ export function getStep5Html(state: IdeationState): string {
       `;
   }
 
-  // Agent cards grid
+  // Task 4.3: Accepted banner for Phase 2 (following Step 3 pattern)
+  const acceptedBannerHtml = proposalAccepted
+    ? '<div class="accepted-banner">Proposal Accepted - Now customize your agent design</div>'
+    : '';
+
+  // =========================================================================
+  // Phase 2: Editable Agent Cards
+  // =========================================================================
   let agentCardsHtml = '';
   if (hasAgents) {
-    const cardsHtml = agentDesignState.proposedAgents.map((agent) => {
-      const toolsHtml = agent.tools.map((tool) =>
-        `<span class="module-chip">${escapeHtml(tool)}</span>`
-      ).join('');
+    if (proposalAccepted) {
+      // Task 5.2: Phase 2 - Editable agent cards
+      const editableCardsHtml = agentDesignState.proposedAgents.map((agent) => {
+        // Task 5.2: Tool tags as chips with remove button
+        const toolsChipsHtml = agent.tools.map((tool, toolIndex) =>
+          `<span class="module-chip tool-chip">
+            ${escapeHtml(tool)}
+            <button class="remove-tool-btn" onclick="removeAgentTool('${escapeHtml(agent.id)}', ${toolIndex})" title="Remove tool">✕</button>
+          </span>`
+        ).join('');
 
-      return `
+        return `
+          <div class="agent-card agent-card-editable" data-agent-id="${escapeHtml(agent.id)}">
+            <div class="agent-header">
+              <input type="text"
+                class="agent-name-input"
+                value="${escapeHtml(agent.name)}"
+                placeholder="Agent name..."
+                oninput="updateAgentName('${escapeHtml(agent.id)}', this.value)">
+              <span class="agent-id-badge">#${escapeHtml(agent.id)}</span>
+            </div>
+            <textarea
+              class="agent-role-input"
+              placeholder="Describe agent role..."
+              oninput="updateAgentRole('${escapeHtml(agent.id)}', this.value)"
+            >${escapeHtml(agent.role)}</textarea>
+            <div class="agent-tools-section">
+              <label class="form-label">Tools</label>
+              <div class="agent-tools-editable">
+                ${toolsChipsHtml}
+              </div>
+              <div class="tool-input-group">
+                <input type="text"
+                  class="tool-input"
+                  placeholder="Add tool..."
+                  data-agent-id="${escapeHtml(agent.id)}"
+                  onkeydown="handleToolInputKeydown(event, '${escapeHtml(agent.id)}')">
+              </div>
+            </div>
+            <button class="remove-agent-btn" onclick="removeAgent('${escapeHtml(agent.id)}')" title="Remove agent">
+              <span class="trash-icon">🗑</span> Remove Agent
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      agentCardsHtml = `
+        <div class="agent-cards-grid">
+          ${editableCardsHtml}
+        </div>
+        <button class="add-agent-btn" onclick="addAgent()">+ Add Agent</button>
+      `;
+    } else {
+      // Phase 1 - Read-only agent cards
+      const readOnlyCardsHtml = agentDesignState.proposedAgents.map((agent) => {
+        const toolsHtml = agent.tools.map((tool) =>
+          `<span class="module-chip">${escapeHtml(tool)}</span>`
+        ).join('');
+
+        return `
           <div class="agent-card">
             <div class="agent-header">
               <span class="agent-name">${escapeHtml(agent.name)}</span>
@@ -918,22 +1056,67 @@ export function getStep5Html(state: IdeationState): string {
             ${toolsHtml ? `<div class="agent-tools">${toolsHtml}</div>` : ''}
           </div>
         `;
-    }).join('');
+      }).join('');
 
-    agentCardsHtml = `
+      agentCardsHtml = `
         <div class="agent-cards-grid">
-          ${cardsHtml}
+          ${readOnlyCardsHtml}
         </div>
       `;
+    }
   }
 
-  // Orchestration section with badge and expandable reasoning
+  // =========================================================================
+  // Task 5.4: Orchestration Section with Dropdown (Phase 2) or Badge (Phase 1)
+  // =========================================================================
   let orchestrationHtml = '';
   if (hasAgents) {
-    const patternName = capitalizeFirst(agentDesignState.proposedOrchestration);
-    const reasoningText = agentDesignState.orchestrationReasoning || 'No reasoning provided.';
+    if (proposalAccepted) {
+      // Task 5.4: Phase 2 - Orchestration dropdown with AI badge
+      // Pattern descriptions for tooltips (Item 20: Orchestration Pattern Help)
+      const patternDescriptions: Record<string, string> = {
+        graph: 'LLM picks path at runtime based on conditions. Best for: approval gates, decision trees, conditional workflows.',
+        swarm: 'Agents hand off autonomously. Best for: complex problem-solving, collaborative analysis, emergent behavior.',
+        workflow: 'Fixed DAG with parallel execution. Best for: predictable pipelines, batch processing, strict ordering.'
+      };
 
-    orchestrationHtml = `
+      const orchestrationOptions = ['graph', 'swarm', 'workflow'].map(pattern => {
+        const isSelected = agentDesignState.proposedOrchestration === pattern;
+        const isOriginal = originalOrchestration === pattern;
+        const badgeHtml = isOriginal ? ' (AI Suggested)' : '';
+        const tooltip = patternDescriptions[pattern] || '';
+        return `<option value="${pattern}" ${isSelected ? 'selected' : ''} title="${escapeHtml(tooltip)}">${capitalizeFirst(pattern)}${badgeHtml}</option>`;
+      }).join('');
+
+      // Show AI Suggested badge next to dropdown
+      const aiSuggestedBadgeHtml = `<span class="ai-suggested-badge">AI Suggested: ${capitalizeFirst(originalOrchestration)}</span>`;
+
+      orchestrationHtml = `
+        <div class="orchestration-section">
+          <div class="orchestration-header">
+            <label class="form-label">Orchestration Pattern</label>
+            ${aiSuggestedBadgeHtml}
+          </div>
+          <select class="orchestration-select" onchange="updateOrchestration(this.value)">
+            ${orchestrationOptions}
+          </select>
+          <div class="orchestration-reasoning">
+            <button class="expand-toggle" onclick="toggleOrchestrationReasoning()">
+              <span class="chevron">&#9654;</span>
+              <span>Why this pattern?</span>
+            </button>
+            <div class="reasoning-content">
+              <p>${escapeHtml(agentDesignState.orchestrationReasoning || 'No reasoning provided.')}</p>
+            </div>
+          </div>
+        </div>
+      `;
+    } else {
+      // Phase 1 - Read-only orchestration badge
+      const patternName = capitalizeFirst(agentDesignState.proposedOrchestration);
+      const reasoningText = agentDesignState.orchestrationReasoning || 'No reasoning provided.';
+
+      orchestrationHtml = `
         <div class="orchestration-section">
           <div class="orchestration-header">
             <span class="orchestration-label">Orchestration Pattern:</span>
@@ -950,50 +1133,181 @@ export function getStep5Html(state: IdeationState): string {
           </div>
         </div>
       `;
-  }
-
-  // Flow summary - don't escape the flow summary since it contains controlled characters only
-  // (agent IDs are alphanumeric, arrows and brackets are part of the notation)
-  let flowSummaryHtml = '';
-  if (hasAgents && agentDesignState.proposedEdges?.length > 0) {
-    const flowSummary = buildFlowSummary(agentDesignState.proposedEdges);
-    if (flowSummary) {
-      flowSummaryHtml = `
-          <div class="flow-summary-section">
-            <label class="form-label">Agent Flow</label>
-            <div class="flow-summary">
-              <code>${flowSummary}</code>
-            </div>
-          </div>
-        `;
     }
   }
 
-  // Accepted banner
-  const acceptedBannerHtml = proposalAccepted
-    ? '<div class="accepted-banner">Proposal Accepted ✓</div>'
-    : '';
+  // =========================================================================
+  // Task 5.5: Edge Suggestion Card (non-blocking, Phase 2 only)
+  // =========================================================================
+  let edgeSuggestionHtml = '';
+  if (proposalAccepted && agentDesignState?.edgeSuggestion?.visible) {
+    const suggestedEdgesHtml = agentDesignState.edgeSuggestion.edges.map(edge =>
+      `<li>${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}${edge.condition ? ` (${escapeHtml(edge.condition)})` : ''}</li>`
+    ).join('');
 
-  // Action buttons - hide Accept & Let me adjust when proposal is accepted
+    edgeSuggestionHtml = `
+      <div class="edge-suggestion-card">
+        <div class="edge-suggestion-header">
+          <span class="suggestion-icon">💡</span>
+          <span>Suggested edges for ${capitalizeFirst(agentDesignState.proposedOrchestration)} pattern:</span>
+        </div>
+        <ul class="edge-suggestion-list">
+          ${suggestedEdgesHtml}
+        </ul>
+        <div class="edge-suggestion-actions">
+          <button class="apply-suggestion-btn" onclick="applyEdgeSuggestion()">Apply</button>
+          <button class="dismiss-suggestion-btn" onclick="dismissEdgeSuggestion()">Dismiss</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // =========================================================================
+  // Task 5.6: Edge Editing Table (Phase 2 only)
+  // =========================================================================
+  let edgeTableHtml = '';
+  if (proposalAccepted && hasAgents) {
+    // Build agent options for dropdowns
+    const agentOptions = agentDesignState.proposedAgents.map(agent =>
+      `<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.name || agent.id)}</option>`
+    ).join('');
+
+    const edgeRowsHtml = agentDesignState.proposedEdges.map((edge, index) => {
+      const fromAgent = agentDesignState.proposedAgents.find(a => a.id === edge.from);
+      const toAgent = agentDesignState.proposedAgents.find(a => a.id === edge.to);
+      const fromName = fromAgent?.name || edge.from || 'source agent';
+      const toName = toAgent?.name || edge.to || 'target agent';
+      const arrowTooltip = `${fromName} passes its output to ${toName}`;
+
+      const fromOptions = agentDesignState.proposedAgents.map(agent =>
+        `<option value="${escapeHtml(agent.id)}" ${edge.from === agent.id ? 'selected' : ''}>${escapeHtml(agent.name || agent.id)}</option>`
+      ).join('');
+      const toOptions = agentDesignState.proposedAgents.map(agent =>
+        `<option value="${escapeHtml(agent.id)}" ${edge.to === agent.id ? 'selected' : ''}>${escapeHtml(agent.name || agent.id)}</option>`
+      ).join('');
+
+      return `
+        <tr class="edge-row" data-index="${index}">
+          <td>
+            <select class="edge-select" onchange="updateEdge(${index}, 'from', this.value)">
+              <option value="">Select agent...</option>
+              ${fromOptions}
+            </select>
+          </td>
+          <td class="edge-arrow" title="${escapeHtml(arrowTooltip)}">→</td>
+          <td>
+            <select class="edge-select" onchange="updateEdge(${index}, 'to', this.value)">
+              <option value="">Select agent...</option>
+              ${toOptions}
+            </select>
+          </td>
+          <td>
+            <button class="remove-edge-btn" onclick="removeEdge(${index})" title="Remove edge">✕</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    edgeTableHtml = `
+      <div class="edge-editing-section">
+        <label class="form-label">Agent Flow Edges</label>
+        <p class="edge-description">Define how agents pass data to each other. Each edge connects a source agent to a target agent.</p>
+        <table class="edge-table">
+          <thead>
+            <tr>
+              <th>From <span class="header-hint">(source)</span></th>
+              <th></th>
+              <th>To <span class="header-hint">(target)</span></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${edgeRowsHtml}
+          </tbody>
+        </table>
+        <button class="add-edge-btn" onclick="addEdge()">+ Add Edge</button>
+      </div>
+    `;
+  }
+
+  // Flow summary for Phase 1
+  let flowSummaryHtml = '';
+  if (!proposalAccepted && hasAgents && agentDesignState.proposedEdges?.length > 0) {
+    const flowSummary = buildFlowSummary(agentDesignState.proposedEdges);
+    if (flowSummary) {
+      flowSummaryHtml = `
+        <div class="flow-summary-section">
+          <label class="form-label">Agent Flow</label>
+          <div class="flow-summary">
+            <code>${flowSummary}</code>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // =========================================================================
+  // Task 5.7: Validation Warnings Display (Phase 2 only, non-blocking)
+  // =========================================================================
+  let validationWarningsHtml = '';
+  if (proposalAccepted && hasAgents) {
+    const warnings = getAgentDesignValidationWarnings(
+      agentDesignState.proposedAgents,
+      agentDesignState.proposedEdges
+    );
+
+    if (warnings.length > 0) {
+      const warningsListHtml = warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
+      validationWarningsHtml = `
+        <div class="validation-warnings">
+          <div class="validation-warnings-header">
+            <span class="warning-icon">⚠</span>
+            <span>Validation Warnings (non-blocking)</span>
+          </div>
+          <ul class="validation-warnings-list">
+            ${warningsListHtml}
+          </ul>
+        </div>
+      `;
+    }
+  }
+
+  // =========================================================================
+  // Action Buttons
+  // =========================================================================
   const buttonsDisabled = isLoading ? 'disabled' : '';
-  const actionButtonsHtml = proposalAccepted ? `
+  let actionButtonsHtml = '';
+
+  if (proposalAccepted) {
+    // Task 5.8: Phase 2 - Show Regenerate and Confirm Design buttons
+    actionButtonsHtml = `
       <div class="agent-design-actions">
         <button class="regenerate-btn" onclick="regenerateAgentProposal()" ${buttonsDisabled}>
           ↻ Regenerate
+        </button>
+        <button class="confirm-design-btn primary-btn" onclick="confirmDesign()" ${buttonsDisabled}>
+          Confirm Design
         </button>
       </div>
-    ` : `
+    `;
+  } else {
+    // Phase 1: Show "Accept Suggestions" and "Accept & Continue" buttons
+    actionButtonsHtml = `
       <div class="agent-design-actions">
         <button class="regenerate-btn" onclick="regenerateAgentProposal()" ${buttonsDisabled}>
           ↻ Regenerate
         </button>
-        <button class="accept-btn" onclick="acceptAgentProposal()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
+        <button class="accept-btn" onclick="acceptSuggestionsPhase2()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
+          Accept Suggestions
+        </button>
+        <button class="secondary-btn" onclick="acceptAndContinue()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
           Accept &amp; Continue
         </button>
       </div>
     `;
+  }
 
-  // Adjustment input section - always visible when there are agents
+  // Adjustment input section - always visible when there are agents (both phases)
   const adjustmentInputHtml = hasAgents ? `
       <div class="adjustment-section">
         <div class="adjustment-input-group">
@@ -1024,7 +1338,10 @@ export function getStep5Html(state: IdeationState): string {
       ${acceptedBannerHtml}
       ${agentCardsHtml}
       ${orchestrationHtml}
+      ${edgeSuggestionHtml}
+      ${edgeTableHtml}
       ${flowSummaryHtml}
+      ${validationWarningsHtml}
       ${actionButtonsHtml}
       ${adjustmentInputHtml}
     `;

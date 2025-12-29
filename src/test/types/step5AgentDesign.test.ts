@@ -645,8 +645,172 @@ describe('Task Group 4: Step 5 UI Components', () => {
       // Verify buttons are disabled
       expect(html).toContain('disabled');
       expect(html).toContain('Regenerate');
+    });
+  });
+});
+
+// ============================================================================
+// Task Group 4.1: Phase 1 UI Tests (Step 5 Agent Design Editing)
+// ============================================================================
+
+describe('Task Group 4.1: Phase 1 UI Tests', () => {
+  // Helper to create a mock state with agents
+  const createMockStateWithAgents = (overrides: Record<string, unknown> = {}) => ({
+    currentStep: 5,
+    highestStepReached: 5,
+    validationAttempted: false,
+    businessObjective: 'Test objective',
+    industry: 'Retail',
+    systems: ['SAP S/4HANA'],
+    aiGapFillingState: {
+      conversationHistory: [],
+      confirmedAssumptions: [],
+      assumptionsAccepted: false,
+      isStreaming: false,
+    },
+    outcome: {
+      primaryOutcome: 'Test outcome',
+      successMetrics: [],
+      stakeholders: [],
+      isLoading: false,
+      primaryOutcomeEdited: false,
+      metricsEdited: false,
+      stakeholdersEdited: false,
+      customStakeholders: [],
+      suggestionsAccepted: false,
+      refinedSections: { outcome: false, kpis: false, stakeholders: false },
+    },
+    securityGuardrails: {
+      dataSensitivity: 'internal',
+      complianceFrameworks: [],
+      approvalGates: [],
+      guardrailNotes: '',
+      aiSuggested: false,
+      aiCalled: false,
+      skipped: false,
+      industryDefaultsApplied: false,
+      isLoading: false,
+    },
+    agentDesign: {
+      proposedAgents: [
+        {
+          id: 'planner',
+          name: 'Planning Agent',
+          role: 'Coordinates the workflow',
+          tools: ['sap_get_inventory'],
+          nameEdited: false,
+          roleEdited: false,
+          toolsEdited: false,
+        },
+      ],
+      proposedOrchestration: 'workflow' as const,
+      proposedEdges: [{ from: 'planner', to: 'executor' }],
+      orchestrationReasoning: 'Workflow is best for linear processes.',
+      proposalAccepted: false,
+      isLoading: false,
+      aiCalled: true,
+      confirmedAgents: [],
+      confirmedOrchestration: 'workflow' as const,
+      confirmedEdges: [],
+      originalOrchestration: 'workflow' as const,
+      edgeSuggestion: undefined,
+      ...overrides,
+    },
+  });
+
+  describe('Phase 1 button layout', () => {
+    it('should show "Accept Suggestions" and "Accept & Continue" buttons in Phase 1', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      const mockState = createMockStateWithAgents();
+      const html = getStep5Html(mockState as any);
+
+      // Verify both buttons are present in Phase 1 (proposalAccepted: false)
+      expect(html).toContain('Accept Suggestions');
       expect(html).toContain('Accept &amp; Continue');
-      expect(html).toContain('Let me adjust');
+      expect(html).toContain('acceptSuggestionsPhase2');
+      expect(html).toContain('acceptAndContinue');
+    });
+
+    it('should have "Accept Suggestions" button that sets proposalAccepted: true and stays on Step 5', async () => {
+      // This test verifies the button configuration
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      const mockState = createMockStateWithAgents();
+      const html = getStep5Html(mockState as any);
+
+      // Verify Accept Suggestions button calls the correct command
+      expect(html).toContain('acceptSuggestionsPhase2');
+
+      // Verify it's a primary button (first action button)
+      expect(html).toMatch(/accept-btn[^>]*onclick="acceptSuggestionsPhase2\(\)"/);
+    });
+
+    it('should have "Accept & Continue" button that navigates directly to Step 6', async () => {
+      // This test verifies the button configuration
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      const mockState = createMockStateWithAgents();
+      const html = getStep5Html(mockState as any);
+
+      // Verify Accept & Continue button calls the correct command
+      expect(html).toContain('acceptAndContinue');
+
+      // Verify it's a secondary style button
+      expect(html).toMatch(/secondary-btn[^>]*onclick="acceptAndContinue\(\)"/);
+    });
+  });
+
+  describe('Phase 2 Accepted banner', () => {
+    it('should show "Accepted" banner when proposalAccepted is true (Phase 2)', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      // Create state in Phase 2 (proposalAccepted: true)
+      const mockState = createMockStateWithAgents({ proposalAccepted: true });
+      const html = getStep5Html(mockState as any);
+
+      // Verify accepted banner is present in Phase 2
+      expect(html).toContain('accepted-banner');
+      expect(html).toContain('Proposal Accepted');
+      expect(html).toContain('customize your agent design');
+    });
+
+    it('should NOT show "Accepted" banner in Phase 1', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      // Create state in Phase 1 (proposalAccepted: false)
+      const mockState = createMockStateWithAgents({ proposalAccepted: false });
+      const html = getStep5Html(mockState as any);
+
+      // Verify accepted banner is NOT present in Phase 1
+      // The banner text should not appear
+      expect(html).not.toContain('customize your agent design');
+    });
+  });
+
+  describe('Refine input visibility', () => {
+    it('should show refine input in Phase 1', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      const mockState = createMockStateWithAgents({ proposalAccepted: false });
+      const html = getStep5Html(mockState as any);
+
+      // Verify adjustment input is present
+      expect(html).toContain('adjustment-input');
+      expect(html).toContain('Adjust agent design');
+      expect(html).toContain('sendAgentDesignAdjustment');
+    });
+
+    it('should show refine input in Phase 2', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
+
+      const mockState = createMockStateWithAgents({ proposalAccepted: true });
+      const html = getStep5Html(mockState as any);
+
+      // Verify adjustment input is still present in Phase 2
+      expect(html).toContain('adjustment-input');
+      expect(html).toContain('Adjust agent design');
+      expect(html).toContain('sendAgentDesignAdjustment');
     });
   });
 });

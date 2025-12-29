@@ -122,7 +122,7 @@ All loan decisions require human approval before communication to customer. Agen
 
 ### Step 5: Agent Design Proposal
 
-#### AI-Proposed Agent Team
+#### Phase 1: AI-Proposed Agent Team (Read-Only)
 
 | Agent | Role | Tools |
 |-------|------|-------|
@@ -150,6 +150,38 @@ Document Extractor → [Credit Analyzer | Compliance Checker] → Risk Assessor 
 ```
 Add a Fraud Detection agent between Document Extractor and Credit Analyzer. It should use the mainframe transaction history and Experian fraud indicators. Also rename Output Formatter to Underwriting Report Generator.
 ```
+
+---
+
+#### Phase 2: Accepted & Edited Design
+
+After clicking "Accept Suggestions" and applying refinements:
+
+**Edited Agents:**
+
+| Agent | Role | Tools | Edited |
+|-------|------|-------|--------|
+| **Document Extractor** | Extract financial metrics from loan documents | `salesforce_get_application`, `docusign_get_documents`, `mainframe_get_customer_data` | — |
+| **Fraud Detector** *(new)* | Analyze transaction patterns for fraud indicators | `mainframe_get_transaction_history`, `experian_get_fraud_indicators` | name, role, tools |
+| **Credit Analyzer** | Pull credit reports and analyze creditworthiness | `experian_get_credit_report`, `moodys_get_risk_score`, `snowflake_query_loan_history` | — |
+| **Compliance Checker** | Verify regulatory compliance and flag issues | `mainframe_get_account_balances`, `basel_calculate_capital_adequacy`, `bloomberg_get_market_risk` | — |
+| **Risk Assessor** | Generate preliminary risk scores and recommendations | `snowflake_query_performance_data`, `salesforce_get_relationship_notes` | — |
+| **Underwriting Report Generator** | Compile final underwriting report | `salesforce_update_opportunity`, `los_create_assessment` | name |
+
+**Orchestration Pattern:** `workflow` *(AI Suggested)*
+
+**Edge Configuration:**
+
+| From | To |
+|------|----|
+| Document Extractor | Fraud Detector |
+| Fraud Detector | Credit Analyzer |
+| Fraud Detector | Compliance Checker |
+| Credit Analyzer | Risk Assessor |
+| Compliance Checker | Risk Assessor |
+| Risk Assessor | Underwriting Report Generator |
+
+**Validation Warnings:** None
 
 ---
 
@@ -271,7 +303,7 @@ Agent cannot directly control equipment - all actions must be recommendations to
 
 ### Step 5: Agent Design Proposal
 
-#### AI-Proposed Agent Team
+#### Phase 1: AI-Proposed Agent Team (Read-Only)
 
 | Agent | Role | Tools |
 |-------|------|-------|
@@ -299,6 +331,38 @@ Sensor Monitor → Failure Predictor → [Work Order Creator | Notification Agen
 ```
 Add an OEE Calculator agent that tracks Overall Equipment Effectiveness metrics. It should pull data from FactoryTalk and feed into the Failure Predictor for correlation. Also, the Parts Optimizer should integrate with our supplier portal for automated reorder suggestions.
 ```
+
+---
+
+#### Phase 2: Accepted & Edited Design
+
+After clicking "Accept Suggestions" and applying refinements:
+
+**Edited Agents:**
+
+| Agent | Role | Tools | Edited |
+|-------|------|-------|--------|
+| **Sensor Monitor** | Continuously monitor IoT sensor data for anomalies | `mindsphere_get_sensor_data`, `osisoft_query_pi_tags`, `factorytalk_get_plc_status` | — |
+| **OEE Calculator** *(new)* | Track Overall Equipment Effectiveness metrics | `factorytalk_get_oee_data`, `factorytalk_get_availability`, `factorytalk_get_performance` | name, role, tools |
+| **Failure Predictor** | Run ML models to predict equipment failures | `databricks_run_prediction`, `mindsphere_get_asset_health`, `sap_get_maintenance_history` | — |
+| **Work Order Creator** | Generate and route maintenance work orders | `sap_create_work_order`, `servicenow_create_incident`, `maximo_schedule_maintenance` | — |
+| **Parts Optimizer** | Analyze spare parts inventory and recommend orders | `sap_get_inventory_levels`, `sap_create_purchase_requisition`, `kronos_get_shift_schedule`, `supplier_portal_get_availability` | tools |
+| **Notification Agent** | Alert technicians and supervisors of predicted failures | `servicenow_dispatch_technician`, `sap_notify_supervisor` | — |
+
+**Orchestration Pattern:** `graph` *(AI Suggested)*
+
+**Edge Configuration:**
+
+| From | To |
+|------|----|
+| Sensor Monitor | OEE Calculator |
+| OEE Calculator | Failure Predictor |
+| Failure Predictor | Work Order Creator |
+| Failure Predictor | Notification Agent |
+| Work Order Creator | Parts Optimizer |
+| Notification Agent | Parts Optimizer |
+
+**Validation Warnings:** None
 
 ---
 
@@ -363,7 +427,7 @@ Accelerate NDA/BLA submission preparation while improving document quality and e
 
 **Sample Refinement Prompt:**
 ```
-Target 50% reduction in prep time (down to 100 hours). Add cross-reference accuracy as a metric - we need 99.5% minimum. Include deficiency letter reduction since that's a key executive metric. Add Clinical Operations, Medical Writing, and Quality Assurance as stakeholders - they're critical for this workflow.
+Target 90% reduction in prep time. Add cross-reference accuracy as a metric - we need 99.5% minimum. Include deficiency letter reduction since that's a key executive metric. Add Clinical Operations, Medical Writing, and Quality Assurance as stakeholders - they're critical for this workflow.
 ```
 
 ---
@@ -426,7 +490,7 @@ All patient data must be de-identified before AI processing. 21 CFR Part 11 comp
 
 ### Step 5: Agent Design Proposal
 
-#### AI-Proposed Agent Team
+#### Phase 1: AI-Proposed Agent Team (Read-Only)
 
 | Agent | Role | Tools |
 |-------|------|-------|
@@ -454,6 +518,42 @@ Data Extractor → Document Compiler → [Cross-Reference Validator | Compliance
 ```
 Add a De-identification Agent at the start that anonymizes all patient data according to HIPAA Safe Harbor. It should run before Data Extractor. Also add a Medical Writing Assistant agent that helps format clinical narratives - it should work alongside Document Compiler.
 ```
+
+---
+
+#### Phase 2: Accepted & Edited Design
+
+After clicking "Accept Suggestions" and applying refinements:
+
+**Edited Agents:**
+
+| Agent | Role | Tools | Edited |
+|-------|------|-------|--------|
+| **De-identification Agent** *(new)* | Anonymize patient data per HIPAA Safe Harbor | `medidata_get_patient_ids`, `hipaa_apply_safe_harbor`, `veeva_log_deidentification` | name, role, tools |
+| **Data Extractor** | Extract structured data from clinical databases | `medidata_query_study_data`, `oracle_get_patient_demographics`, `lims_get_bioanalytical_data` | — |
+| **Document Compiler** | Generate CSR sections from templates | `veeva_get_template`, `snowflake_query_historical_submissions`, `sas_get_statistical_outputs` | — |
+| **Medical Writing Assistant** *(new)* | Format clinical narratives and summaries | `veeva_get_narrative_template`, `sas_get_summary_statistics`, `oracle_get_adverse_events` | name, role, tools |
+| **Cross-Reference Validator** | Identify inconsistencies across documents | `veeva_compare_documents`, `oracle_validate_references`, `snowflake_check_data_consistency` | — |
+| **Compliance Auditor** | Verify FDA/EMA format compliance | `veeva_validate_ectd_structure`, `oracle_audit_signatures`, `veeva_check_21cfr11` | — |
+| **Submission Packager** | Assemble final eCTD submission package | `veeva_create_submission`, `ectd_publish_package`, `veeva_generate_audit_trail` | — |
+
+**Orchestration Pattern:** `workflow` *(AI Suggested)*
+
+**Edge Configuration:**
+
+| From | To |
+|------|----|
+| De-identification Agent | Data Extractor |
+| Data Extractor | Document Compiler |
+| Data Extractor | Medical Writing Assistant |
+| Document Compiler | Cross-Reference Validator |
+| Medical Writing Assistant | Cross-Reference Validator |
+| Document Compiler | Compliance Auditor |
+| Medical Writing Assistant | Compliance Auditor |
+| Cross-Reference Validator | Submission Packager |
+| Compliance Auditor | Submission Packager |
+
+**Validation Warnings:** None
 
 ---
 

@@ -9,7 +9,7 @@
  */
 
 import * as vscode from 'vscode';
-import { ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
+import { ConverseStreamCommand, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getBedrockClientAsync } from './bedrockClient';
 import { getConfigService } from './configService';
 import type {
@@ -62,6 +62,47 @@ const BACKOFF_MULTIPLIER = 2;
  * Maximum number of retry attempts before giving up
  */
 const MAX_RETRY_ATTEMPTS = 3;
+
+/**
+ * System prompt for edge suggestion based on orchestration pattern
+ * Task 3.4: Explains pattern characteristics and asks for appropriate edge suggestions
+ */
+const EDGE_SUGGESTION_SYSTEM_PROMPT = `You are an AI agent workflow architect. Your task is to suggest appropriate edges (connections) between agents based on the selected orchestration pattern.
+
+Orchestration Pattern Characteristics:
+
+**Graph Pattern:**
+- Complex, conditional workflows with decision points
+- Edges can have conditions that determine when they are followed
+- Multiple paths possible based on runtime conditions
+- Best for workflows with branching logic and multiple outcomes
+- Typical edges: conditional transitions, approval gates, fallback paths
+
+**Swarm Pattern:**
+- Parallel, autonomous agents with emergent coordination
+- Agents can communicate with multiple other agents
+- No strict hierarchy - peer-to-peer communication
+- Best for collaborative tasks where agents share information
+- Typical edges: bidirectional communication, broadcast connections
+
+**Workflow Pattern:**
+- Sequential, linear pipelines with defined steps
+- Each agent hands off to the next in a chain
+- Clear start and end points
+- Best for straightforward processes with predictable steps
+- Typical edges: single direction, sequential flow
+
+When suggesting edges, provide them in JSON format:
+\`\`\`json
+{
+  "edges": [
+    { "from": "agent_id_1", "to": "agent_id_2" },
+    { "from": "agent_id_2", "to": "agent_id_3" }
+  ]
+}
+\`\`\`
+
+Use the exact agent IDs provided in the input.`;
 
 // ============================================================================
 // Context Message Building
@@ -224,6 +265,54 @@ export function parseAgentProposalFromResponse(response: string): AgentProposalR
 }
 
 /**
+ * Parse edge suggestion from a Claude response
+ * Task 3.4: Extracts edges array from JSON response
+ *
+ * @param response The full Claude response text
+ * @returns Array of ProposedEdge, or null if parsing fails
+ */
+export function parseEdgeSuggestionFromResponse(response: string): ProposedEdge[] | null {
+  try {
+    // Find JSON block in the response
+    const regex = /```json\s*([\s\S]*?)```/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(response)) !== null) {
+      const jsonString = match[1].trim();
+
+      try {
+        const parsed = JSON.parse(jsonString);
+
+        // Check if this JSON has edges array
+        if (parsed && Array.isArray(parsed.edges)) {
+          const validEdges: ProposedEdge[] = [];
+
+          for (const edge of parsed.edges) {
+            if (isValidEdge(edge)) {
+              validEdges.push({
+                from: edge.from.toLowerCase(),
+                to: edge.to.toLowerCase(),
+              });
+            }
+          }
+
+          if (validEdges.length > 0) {
+            return validEdges;
+          }
+        }
+      } catch {
+        // This JSON block didn't parse, try next one
+        continue;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Type guard to check if a parsed object has the required agent proposal fields
  *
  * @param obj Unknown object to validate
@@ -249,6 +338,7 @@ function isValidAgentProposal(
 /**
  * Validate and transform raw agent proposal into typed AgentProposalResponse
  * Ensures all required fields exist and are properly typed
+ * Initializes edited flags to false for AI-generated agents
  *
  * @param raw Raw agent proposal object from JSON
  * @returns Validated and transformed AgentProposalResponse object
@@ -257,6 +347,7 @@ function validateAndTransformAgentProposal(
   raw: { agents: unknown[]; orchestrationPattern: string; edges: unknown[]; reasoning: string }
 ): AgentProposalResponse {
   // Transform agents, filtering out invalid ones
+  // Initialize edited flags to false since these are AI-generated agents
   const validAgents: ProposedAgent[] = [];
   for (const agent of raw.agents) {
     if (isValidAgent(agent)) {
@@ -265,6 +356,10 @@ function validateAndTransformAgentProposal(
         name: agent.name,
         role: agent.role,
         tools: agent.tools.map((t) => t.toLowerCase()),
+        // Phase 2: Initialize edited flags to false for AI-generated agents
+        nameEdited: false,
+        roleEdited: false,
+        toolsEdited: false,
       });
     }
   }
@@ -509,6 +604,74 @@ export class AgentDesignService implements vscode.Disposable {
     } catch (error) {
       this._isStreaming = false;
       throw error;
+    }
+  }
+
+  // =========================================================================
+  // Task 3.4: Suggest Edges for Pattern Method
+  // =========================================================================
+
+  /**
+   * Suggest appropriate edges for a given orchestration pattern
+   * Task 3.4: Uses AI to suggest edges based on pattern characteristics
+   *
+   * @param agents Current list of proposed agents
+   * @param pattern The selected orchestration pattern
+   * @returns Array of suggested edges, or null if suggestion fails
+   */
+  public async suggestEdgesForPattern(
+    agents: ProposedAgent[],
+    pattern: OrchestrationPattern
+  ): Promise<ProposedEdge[] | null> {
+    // Build the prompt with agent information and selected pattern
+    const agentsList = agents
+      .map(a => `- ${a.id}: ${a.name} (${a.role})`)
+      .join('\n');
+
+    const userMessage = `Given the following agents:
+
+${agentsList}
+
+The user has selected the "${pattern}" orchestration pattern.
+
+Please suggest appropriate edges (connections) between these agents that would be suitable for a ${pattern} pattern. Consider the pattern characteristics and the agents' roles when determining the connections.
+
+Provide your suggested edges in JSON format.`;
+
+    try {
+      // Get model ID from config
+      const modelId = await this._getModelId();
+
+      // Get Bedrock client
+      const client = await getBedrockClientAsync();
+
+      // Use non-streaming Converse API for this quick request
+      const command = new ConverseCommand({
+        modelId,
+        system: [{ text: EDGE_SUGGESTION_SYSTEM_PROMPT }],
+        messages: [
+          {
+            role: 'user',
+            content: [{ text: userMessage }],
+          },
+        ],
+      });
+
+      const response = await client.send(command);
+
+      // Extract text from response
+      const responseText = response.output?.message?.content?.[0]?.text;
+
+      if (responseText) {
+        // Parse the edge suggestion from the response
+        return parseEdgeSuggestionFromResponse(responseText);
+      }
+
+      return null;
+    } catch (error) {
+      // Edge suggestion is non-blocking - log and return null
+      console.warn('[AgentDesignService] Edge suggestion failed:', error);
+      return null;
     }
   }
 

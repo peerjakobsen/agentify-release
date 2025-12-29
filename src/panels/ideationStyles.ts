@@ -922,6 +922,134 @@ export function getIdeationStyles(): string {
         gap: 4px;
       }
 
+      /* Task 5.2: Editable Agent Card Styles */
+      .agent-card-editable {
+        position: relative;
+      }
+      .agent-name-input {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 13px;
+        font-weight: 600;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .agent-name-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .agent-role-input {
+        width: 100%;
+        min-height: 60px;
+        padding: 8px;
+        font-size: 12px;
+        font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        resize: vertical;
+        margin-bottom: 8px;
+      }
+      .agent-role-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .agent-tools-section {
+        margin-bottom: 12px;
+      }
+      .agent-tools-section .form-label {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .agent-tools-editable {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+      .tool-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        border-radius: 12px;
+      }
+      .remove-tool-btn {
+        background: transparent;
+        border: none;
+        color: var(--vscode-badge-foreground);
+        font-size: 10px;
+        cursor: pointer;
+        padding: 0 2px;
+        opacity: 0.7;
+      }
+      .remove-tool-btn:hover {
+        opacity: 1;
+      }
+      .tool-input-group {
+        display: flex;
+        gap: 4px;
+      }
+      .tool-input {
+        flex: 1;
+        padding: 4px 8px;
+        font-size: 11px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .tool-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .remove-agent-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 11px;
+        background: transparent;
+        color: var(--vscode-errorForeground, #f48771);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .remove-agent-btn:hover {
+        background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+        border-color: var(--vscode-errorForeground, #f48771);
+      }
+      .trash-icon {
+        font-size: 12px;
+      }
+
+      /* Task 5.3: Add Agent Button */
+      .add-agent-btn {
+        display: block;
+        width: 100%;
+        padding: 10px 16px;
+        font-size: 12px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: 1px dashed var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 8px;
+      }
+      .add-agent-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+        border-style: solid;
+      }
+
       /* Orchestration Section */
       .orchestration-section {
         margin-bottom: 16px;
@@ -935,6 +1063,7 @@ export function getIdeationStyles(): string {
         align-items: center;
         gap: 8px;
         margin-bottom: 8px;
+        flex-wrap: wrap;
       }
       .orchestration-label {
         font-size: 12px;
@@ -949,6 +1078,23 @@ export function getIdeationStyles(): string {
         color: var(--vscode-badge-foreground);
         border-radius: 12px;
       }
+
+      /* Task 5.4: Orchestration Dropdown */
+      .orchestration-select {
+        width: 100%;
+        padding: 8px 12px;
+        font-size: 13px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        margin-bottom: 8px;
+      }
+      .orchestration-select:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+
       .orchestration-reasoning {
         position: relative;
       }
@@ -989,6 +1135,174 @@ export function getIdeationStyles(): string {
         padding-left: 16px;
       }
 
+      /* Task 5.5: Edge Suggestion Card */
+      .edge-suggestion-card {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--vscode-inputValidation-infoBackground, rgba(0, 122, 204, 0.1));
+        border: 1px solid var(--vscode-inputValidation-infoBorder, #007acc);
+        border-radius: 6px;
+      }
+      .edge-suggestion-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+        margin-bottom: 8px;
+      }
+      .suggestion-icon {
+        font-size: 14px;
+      }
+      .edge-suggestion-list {
+        margin: 0 0 12px 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--vscode-foreground);
+      }
+      .edge-suggestion-list li {
+        margin-bottom: 4px;
+      }
+      .edge-suggestion-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .apply-suggestion-btn {
+        padding: 6px 12px;
+        font-size: 11px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .apply-suggestion-btn:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .dismiss-suggestion-btn {
+        padding: 6px 12px;
+        font-size: 11px;
+        background: transparent;
+        color: var(--vscode-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .dismiss-suggestion-btn:hover {
+        background: var(--vscode-input-background);
+      }
+
+      /* Task 5.6: Edge Editing Table */
+      .edge-editing-section {
+        margin-bottom: 16px;
+      }
+      .edge-description {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin: 4px 0 12px 0;
+        line-height: 1.4;
+      }
+      .header-hint {
+        font-weight: 400;
+        color: var(--vscode-descriptionForeground);
+        opacity: 0.8;
+      }
+      .edge-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      .edge-table th {
+        text-align: left;
+        padding: 8px;
+        font-weight: 500;
+        color: var(--vscode-descriptionForeground);
+        border-bottom: 1px solid var(--vscode-input-border);
+      }
+      .edge-row td {
+        padding: 6px 8px;
+        vertical-align: middle;
+      }
+      .edge-arrow {
+        text-align: center;
+        color: var(--vscode-descriptionForeground);
+        font-size: 14px;
+        padding: 0 4px !important;
+        cursor: help;
+      }
+      .edge-select {
+        width: 100%;
+        padding: 6px 8px;
+        font-size: 12px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .edge-select:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .remove-edge-btn {
+        background: transparent;
+        border: none;
+        color: var(--vscode-errorForeground, #f48771);
+        font-size: 14px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      .remove-edge-btn:hover {
+        background: var(--vscode-input-background);
+      }
+      .add-edge-btn {
+        display: block;
+        width: 100%;
+        padding: 8px 16px;
+        font-size: 12px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: 1px dashed var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .add-edge-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+        border-style: solid;
+      }
+
+      /* Task 5.7: Validation Warnings */
+      .validation-warnings {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--vscode-inputValidation-warningBackground, rgba(205, 145, 0, 0.1));
+        border: 1px solid var(--vscode-inputValidation-warningBorder, #cca700);
+        border-radius: 6px;
+      }
+      .validation-warnings-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--vscode-inputValidation-warningForeground, #cca700);
+        margin-bottom: 8px;
+      }
+      .warning-icon {
+        font-size: 14px;
+      }
+      .validation-warnings-list {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--vscode-foreground);
+      }
+      .validation-warnings-list li {
+        margin-bottom: 4px;
+      }
+
       /* Flow Summary */
       .flow-summary-section {
         margin-bottom: 16px;
@@ -1024,6 +1338,49 @@ export function getIdeationStyles(): string {
         font-size: 12px;
         margin-top: 0;
       }
+
+      /* Task 5.8: Secondary and Confirm Design Buttons */
+      .secondary-btn {
+        padding: 8px 16px;
+        font-size: 12px;
+        background: transparent;
+        color: var(--vscode-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .secondary-btn:hover:not(:disabled) {
+        background: var(--vscode-input-background);
+      }
+      .secondary-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .confirm-design-btn {
+        padding: 8px 16px;
+        font-size: 12px;
+        font-weight: 500;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .confirm-design-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .confirm-design-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .primary-btn {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .primary-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+
       .adjust-btn {
         padding: 8px 16px;
         font-size: 12px;

@@ -302,12 +302,12 @@ interface AgentDesignState {
   proposedOrchestration: OrchestrationPattern;
   proposedEdges: ProposedEdge[];
   orchestrationReasoning: string;
-  
+
   // Accept/Edit State
   proposalAccepted: boolean;
   isLoading: boolean;
   error?: string;
-  
+
   // Change Detection
   step4Hash?: string;
   aiCalled: boolean;
@@ -352,7 +352,7 @@ interface ProposedEdge {
 - Format: `{system}_{operation}` (e.g., `sap_get_inventory`, `salesforce_query_accounts`)
 - Editable in item 19 `M`
 
-19. [ ] Agent Design Refinement — Enable editing when "Let me adjust..." selected:
+19. [x] Agent Design Refinement — Enable editing when "Let me adjust..." selected:
 
 **Transition:**
 - Same page, different UI mode (like Step 3's Phase 1 → Phase 2)
@@ -377,7 +377,7 @@ interface ProposedEdge {
   - Orphan agents (no connections)
   - No entry point
 
-**AI Assistance (Optional):**
+**AI Assistance (Optional — Deferred):**
 - "✨ Suggest tools" button per agent → quick AI call
 - "Validate Design" button → AI reviews, shows suggestions in toast
 
@@ -385,11 +385,11 @@ interface ProposedEdge {
 - "Confirm Design" copies to `confirmed*` fields, proceeds to Step 6
 - Edited flags prevent AI overwrite on back-navigation `L`
 
-20. [ ] Orchestration Pattern Help — Show pattern explanations (simplified from original):
+20. [x] Orchestration Pattern Help — Tooltips on dropdown options explaining each pattern:
 
-**In Item 19 Dropdown:**
-- Tooltip/popover on hover showing pattern description
-- Or expandable section below dropdown
+**Implementation:**
+- Added `title` attributes to orchestration dropdown `<option>` elements
+- Hover over any option (graph/swarm/workflow) to see description
 
 **Pattern Descriptions:**
 - **graph**: "LLM picks path at runtime based on conditions. Best for: approval gates, decision trees, conditional workflows."
@@ -398,10 +398,8 @@ interface ProposedEdge {
 
 **Deferred:**
 - Edge condition labels (Graph-specific)
-- Handoff limits (Swarm-specific)  
+- Handoff limits (Swarm-specific)
 - Parallel group config (Workflow-specific)
-
-These are demo-level configs; Kiro generates the actual implementation details. `S`
 
 21. [ ] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
 
@@ -513,6 +511,13 @@ These are demo-level configs; Kiro generates the actual implementation details. 
 
 ## Phase 3: Kiro Integration & Enforcement
 
+**Implementation Context:**
+- **Demo Scope:** This entire extension generates demos with mock integrations - no real system integrations (SAP, Salesforce, etc.)
+- **Local Entry:** `main.py` runs locally, triggers the agent workflow
+- **Agent Runtime:** Strands agents deploy to AgentCore Runtime via **AgentCore CLI**
+- **Tools:** Either inline with agent code OR as Lambda functions (for shared tools across agents)
+- **Orchestration:** Steering files describe the pattern (graph/swarm/workflow), agent definitions, edges, and entry point(s)
+
 28. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
 
 **Files Generated:**
@@ -520,13 +525,63 @@ These are demo-level configs; Kiro generates the actual implementation details. 
 | File | Source | Content |
 |------|--------|---------|
 | `product.md` | Item 13, 16 | Business objective as product description, success metrics, stakeholders |
-| `tech.md` | Item 18, 20 | Strands SDK, Python 3.12+, selected orchestration pattern, DynamoDB for events |
+| `tech.md` | Item 17, 18, 19, 20 | Strands SDK, Python 3.12+, orchestration pattern, agent definitions with roles/tools, edges defining data flow, entry point agent(s), **AgentCore features mapping** (see below), DynamoDB for observability events |
 | `structure.md` | Static template | Standard agentic project layout (`agents/`, `tools/`, `mocks/`, etc.) |
 | `customer-context.md` | Item 13, 15 | Industry, confirmed system assumptions, strategic priorities |
-| `integration-landscape.md` | Item 15, 21 | Systems, data sources, mock definitions with sample data |
+| `integration-landscape.md` | Item 15, 19, 21 | Systems, data sources, mock definitions with sample data, **shared tools analysis** (see below) |
 | `security-policies.md` | Item 17 | Data classification, compliance frameworks, approval gates, guardrails |
 | `demo-strategy.md` | Item 23 | Key aha moments, demo persona, narrative flow sequence |
 | `agentify-integration.md` | Static + Item 18 | Event emission patterns, CLI contract, agent IDs from design |
+
+**AgentCore Features Mapping (in `tech.md`):**
+
+Steering docs should guide Kiro on which AgentCore features to use:
+
+| AgentCore Feature | Demo Usage | Notes |
+|-------------------|------------|-------|
+| **Runtime** | ✅ Deploy agents via AgentCore CLI | Serverless, session isolation |
+| **Gateway** | ✅ Register shared Lambda tools | Auto-converts to MCP-compatible |
+| **Memory** | Optional | If agents need session context |
+| **Identity** | Skip | Mock tools don't need real auth |
+| **Policy** | ✅ Map Step 4 guardrails to Cedar policies | Approval gates → boundaries |
+| **Evaluations** | Optional | Test demo quality |
+| **Observability** | ✅ Agentify DynamoDB events | Powers the Agentify panel UI |
+
+**Policy Mapping from Step 4:**
+```markdown
+## AgentCore Policy Configuration
+Based on Security & Guardrails (Step 4):
+
+Approval Gates → Cedar Policies:
+- "Before external API calls" → require_approval(action == "external_api")
+- "Before data modification" → require_approval(action == "write")
+- "Before financial transactions" → require_approval(action == "financial")
+
+Data Sensitivity → Access Boundaries:
+- "Confidential" → restrict PII fields, audit all access
+- "Restricted" → encryption required, no external transmission
+```
+
+**Shared Tools Analysis (in `integration-landscape.md`):**
+
+When generating steering docs, analyze tools across all agents to identify shared vs per-agent tools:
+
+- **Identify duplicates:** If multiple agents use the same system integration (e.g., `databricks_query`, `salesforce_get_customer`), flag as shared tool
+- **Shared tools:** Deploy as Lambda functions, register with Gateway (auto-converts to MCP-compatible)
+- **Per-agent tools:** Inline with agent code
+- **Output format in steering doc:**
+```markdown
+## Shared Tools (Lambda functions, registered with Gateway)
+| Tool | Used By | Mock Data Source |
+|------|---------|------------------|
+| databricks_query | Credit Agent, Risk Agent, Compliance Agent | Item 21 mock definitions |
+| salesforce_get_customer | Document Agent, Credit Agent | Item 21 mock definitions |
+
+## Per-Agent Tools (inline with agent code)
+| Tool | Agent | Notes |
+|------|-------|-------|
+| fraud_score_calculator | Fraud Agent | Agent-specific logic |
+```
 
 **Generation Flow:**
 1. Validate all required wizard steps completed
@@ -555,8 +610,9 @@ agentify-power/
 **POWER.md Content:**
 - Best practices for Strands agent development
 - Event emission patterns (reference `agentify-integration.md`)
-- CLI contract requirements
-- Mock tool implementation guidelines
+- CLI contract requirements (Agentify CLI for local testing)
+- AgentCore CLI deployment patterns (deploy to Bedrock AgentCore Runtime)
+- Mock tool implementation guidelines (demo scope)
 - Common pitfalls and solutions
 
 **Activation Keywords:**
@@ -619,7 +675,7 @@ Flag any missing arguments or environment variable reads.
 Suggest argparse setup if not present.
 `````S`
 
-32. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook:
+32. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook (validates mock integrations for demo purposes, not real integrations):
 
 Trigger:
 

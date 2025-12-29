@@ -159,12 +159,18 @@ export function getIdeationScript(): string {
         vscode.postMessage({ command: 'skipSecurityStep' });
       }
 
-      // Step 5: Agent Design functions
+      // Step 5: Agent Design functions - Phase 1
       function regenerateAgentProposal() {
         vscode.postMessage({ command: 'regenerateAgentProposal' });
       }
       function acceptAgentProposal() {
         vscode.postMessage({ command: 'acceptAgentProposal' });
+      }
+      function acceptSuggestionsPhase2() {
+        vscode.postMessage({ command: 'acceptSuggestionsPhase2' });
+      }
+      function acceptAndContinue() {
+        vscode.postMessage({ command: 'acceptAndContinue' });
       }
       function sendAgentDesignAdjustment() {
         const input = document.getElementById('adjustment-input');
@@ -185,6 +191,73 @@ export function getIdeationScript(): string {
           reasoningElement.classList.toggle('expanded');
         }
         vscode.postMessage({ command: 'toggleOrchestrationReasoning' });
+      }
+
+      // Task 5.2: Step 5 Phase 2 - Agent Card Editing functions
+      function updateAgentName(agentId, value) {
+        vscode.postMessage({ command: 'updateAgentName', agentId, value });
+      }
+      function updateAgentRole(agentId, value) {
+        vscode.postMessage({ command: 'updateAgentRole', agentId, value });
+      }
+      function removeAgentTool(agentId, toolIndex) {
+        vscode.postMessage({ command: 'removeAgentTool', agentId, toolIndex });
+      }
+      function addAgentTool(agentId, tool) {
+        vscode.postMessage({ command: 'addAgentTool', agentId, tool });
+      }
+      function handleToolInputKeydown(event, agentId) {
+        // Handle Enter or comma to add tool
+        if (event.key === 'Enter' || event.key === ',') {
+          event.preventDefault();
+          const input = event.target;
+          let value = input.value.trim();
+          // Remove trailing comma if comma was pressed
+          if (value.endsWith(',')) {
+            value = value.slice(0, -1).trim();
+          }
+          if (value) {
+            addAgentTool(agentId, value);
+            input.value = '';
+          }
+        }
+      }
+
+      // Task 5.3: Add/Remove Agent functions
+      function addAgent() {
+        vscode.postMessage({ command: 'addAgent' });
+      }
+      function removeAgent(agentId) {
+        vscode.postMessage({ command: 'removeAgent', agentId });
+      }
+
+      // Task 5.4: Orchestration dropdown function
+      function updateOrchestration(value) {
+        vscode.postMessage({ command: 'updateOrchestration', value });
+      }
+
+      // Task 5.5: Edge suggestion functions
+      function applyEdgeSuggestion() {
+        vscode.postMessage({ command: 'applyEdgeSuggestion' });
+      }
+      function dismissEdgeSuggestion() {
+        vscode.postMessage({ command: 'dismissEdgeSuggestion' });
+      }
+
+      // Task 5.6: Edge editing functions
+      function updateEdge(index, field, value) {
+        vscode.postMessage({ command: 'updateEdge', index, field, value });
+      }
+      function removeEdge(index) {
+        vscode.postMessage({ command: 'removeEdge', index });
+      }
+      function addEdge() {
+        vscode.postMessage({ command: 'addEdge' });
+      }
+
+      // Task 5.8: Confirm Design function
+      function confirmDesign() {
+        vscode.postMessage({ command: 'confirmDesign' });
       }
     `;
 }

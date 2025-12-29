@@ -379,7 +379,10 @@ export type OrchestrationPattern = 'graph' | 'swarm' | 'workflow';
 
 /**
  * Proposed agent in the AI-generated agent team
- * Contains the agent's identity, role description, and assigned tools
+ * Contains the agent's identity, role description, assigned tools, and edit tracking flags
+ *
+ * Task 1.2: Extended with edited flags to track user modifications
+ * Following pattern from OutcomeDefinitionState edited flags
  */
 export interface ProposedAgent {
   /** Lowercase agent identifier (e.g., 'planner', 'executor') used in flow notation */
@@ -390,6 +393,12 @@ export interface ProposedAgent {
   role: string;
   /** Array of tools assigned to this agent in snake_case format (e.g., 'sap_get_inventory') */
   tools: string[];
+  /** Whether user has edited the agent's name (prevents AI overwrite on regeneration) */
+  nameEdited: boolean;
+  /** Whether user has edited the agent's role (prevents AI overwrite on regeneration) */
+  roleEdited: boolean;
+  /** Whether user has edited the agent's tools (prevents AI overwrite on regeneration) */
+  toolsEdited: boolean;
 }
 
 /**
@@ -406,8 +415,21 @@ export interface ProposedEdge {
 }
 
 /**
+ * Edge suggestion from AI when orchestration pattern changes
+ * Non-blocking suggestion card displayed below orchestration dropdown
+ */
+export interface EdgeSuggestion {
+  /** Proposed edges for the new orchestration pattern */
+  edges: ProposedEdge[];
+  /** Whether the suggestion card is visible */
+  visible: boolean;
+}
+
+/**
  * Agent design state for Step 5
  * Tracks AI-proposed agent team, orchestration pattern, and user acceptance
+ *
+ * Task 1.3: Extended with Phase 2 editing fields for confirmed state and edge suggestions
  */
 export interface AgentDesignState {
   // -------------------------------------------------------------------------
@@ -427,7 +449,7 @@ export interface AgentDesignState {
   // Accept/Edit State
   // -------------------------------------------------------------------------
 
-  /** Whether the user has accepted the proposal */
+  /** Whether the user has accepted the proposal (Phase 1 -> Phase 2 transition) */
   proposalAccepted: boolean;
   /** Whether AI is currently generating a proposal */
   isLoading: boolean;
@@ -442,6 +464,26 @@ export interface AgentDesignState {
   step4Hash?: string;
   /** Whether AI has been called for this step */
   aiCalled: boolean;
+
+  // -------------------------------------------------------------------------
+  // Phase 2: Confirmed State (for downstream consumption)
+  // -------------------------------------------------------------------------
+
+  /** Confirmed agents after user editing (copied from proposedAgents on confirm) */
+  confirmedAgents: ProposedAgent[];
+  /** Confirmed orchestration pattern (copied from proposedOrchestration on confirm) */
+  confirmedOrchestration: OrchestrationPattern;
+  /** Confirmed edges (copied from proposedEdges on confirm) */
+  confirmedEdges: ProposedEdge[];
+
+  // -------------------------------------------------------------------------
+  // Phase 2: Orchestration Tracking
+  // -------------------------------------------------------------------------
+
+  /** Original orchestration pattern from AI suggestion (for "AI Suggested" badge) */
+  originalOrchestration: OrchestrationPattern;
+  /** AI-suggested edges when orchestration pattern changes (non-blocking) */
+  edgeSuggestion?: EdgeSuggestion;
 }
 
 /**
@@ -627,6 +669,8 @@ export interface WizardValidationState {
 /**
  * Message commands for webview-extension communication
  * Ensures type-safe message handling
+ *
+ * Task 1.4: Extended with Phase 2 action commands for Step 5 Agent Design Editing
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -693,6 +737,40 @@ export const WIZARD_COMMANDS = {
   ADJUST_AGENT_PROPOSAL: 'adjustAgentProposal',
   /** Toggle orchestration reasoning expand/collapse */
   TOGGLE_ORCHESTRATION_REASONING: 'toggleOrchestrationReasoning',
+  // -------------------------------------------------------------------------
+  // Step 5 Phase 2: Agent Design Editing commands (Roadmap Item 19)
+  // Task 1.4: New commands for Phase 2 manual editing
+  // -------------------------------------------------------------------------
+  /** Accept suggestions and transition to Phase 2 (stays on Step 5 in editable mode) */
+  ACCEPT_SUGGESTIONS_PHASE2: 'acceptSuggestionsPhase2',
+  /** Accept proposal and continue directly to Step 6 (skip manual editing) */
+  ACCEPT_AND_CONTINUE: 'acceptAndContinue',
+  /** Update agent name field */
+  UPDATE_AGENT_NAME: 'updateAgentName',
+  /** Update agent role field */
+  UPDATE_AGENT_ROLE: 'updateAgentRole',
+  /** Add a tool to an agent */
+  ADD_AGENT_TOOL: 'addAgentTool',
+  /** Remove a tool from an agent */
+  REMOVE_AGENT_TOOL: 'removeAgentTool',
+  /** Add a new empty agent card */
+  ADD_AGENT: 'addAgent',
+  /** Remove an agent (and its associated edges) */
+  REMOVE_AGENT: 'removeAgent',
+  /** Update orchestration pattern selection */
+  UPDATE_ORCHESTRATION: 'updateOrchestration',
+  /** Add a new edge row */
+  ADD_EDGE: 'addEdge',
+  /** Remove an edge at specified index */
+  REMOVE_EDGE: 'removeEdge',
+  /** Update an edge's from or to field */
+  UPDATE_EDGE: 'updateEdge',
+  /** Apply AI-suggested edges from edge suggestion card */
+  APPLY_EDGE_SUGGESTION: 'applyEdgeSuggestion',
+  /** Dismiss edge suggestion card */
+  DISMISS_EDGE_SUGGESTION: 'dismissEdgeSuggestion',
+  /** Confirm design and navigate to Step 6 */
+  CONFIRM_DESIGN: 'confirmDesign',
 } as const;
 
 /**
@@ -761,6 +839,8 @@ export function createDefaultOutcomeDefinitionState(): OutcomeDefinitionState {
 /**
  * Creates default agent design state
  * Used to initialize or reset Step 5 state
+ *
+ * Task 1.5: Updated to include Phase 2 fields with defaults
  */
 export function createDefaultAgentDesignState(): AgentDesignState {
   return {
@@ -776,6 +856,13 @@ export function createDefaultAgentDesignState(): AgentDesignState {
     // Change Detection
     step4Hash: undefined,
     aiCalled: false,
+    // Phase 2: Confirmed State - empty until user confirms
+    confirmedAgents: [],
+    confirmedOrchestration: 'workflow',
+    confirmedEdges: [],
+    // Phase 2: Orchestration Tracking
+    originalOrchestration: 'workflow',
+    edgeSuggestion: undefined,
   };
 }
 
