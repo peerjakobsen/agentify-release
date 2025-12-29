@@ -158,5 +158,23 @@ export function getIdeationScript(): string {
       function skipSecurityStep() {
         vscode.postMessage({ command: 'skipSecurityStep' });
       }
+
+      // Step 5: Agent Design functions
+      function regenerateAgentProposal() {
+        vscode.postMessage({ command: 'regenerateAgentProposal' });
+      }
+      function acceptAgentProposal() {
+        vscode.postMessage({ command: 'acceptAgentProposal' });
+      }
+      function adjustAgentProposal() {
+        vscode.postMessage({ command: 'adjustAgentProposal' });
+      }
+      function toggleOrchestrationReasoning() {
+        const reasoningElement = document.querySelector('.orchestration-reasoning');
+        if (reasoningElement) {
+          reasoningElement.classList.toggle('expanded');
+        }
+        vscode.postMessage({ command: 'toggleOrchestrationReasoning' });
+      }
     `;
 }

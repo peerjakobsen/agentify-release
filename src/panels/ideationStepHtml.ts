@@ -79,6 +79,34 @@ interface SecurityGuardrailsState {
   isLoading: boolean;
 }
 
+// Step 5: Agent Design types
+type OrchestrationPattern = 'graph' | 'swarm' | 'workflow';
+
+interface ProposedAgent {
+  id: string;
+  name: string;
+  role: string;
+  tools: string[];
+}
+
+interface ProposedEdge {
+  from: string;
+  to: string;
+  condition?: string;
+}
+
+interface AgentDesignState {
+  proposedAgents: ProposedAgent[];
+  proposedOrchestration: OrchestrationPattern;
+  proposedEdges: ProposedEdge[];
+  orchestrationReasoning: string;
+  proposalAccepted: boolean;
+  isLoading: boolean;
+  error?: string;
+  step4Hash?: string;
+  aiCalled: boolean;
+}
+
 export interface IdeationState {
   currentStep: number;
   highestStepReached: number;
@@ -96,6 +124,7 @@ export interface IdeationState {
   aiGapFillingState: AIGapFillingState;
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
+  agentDesign: AgentDesignState;
 }
 
 interface IdeationValidationError {
@@ -133,6 +162,88 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Capitalize the first letter of a string
+ */
+function capitalizeFirst(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Build flow summary string from edges using arrow notation
+ * -> for sequential, [a | b] for parallel, ? suffix for conditional
+ */
+function buildFlowSummary(edges: ProposedEdge[]): string {
+  if (edges.length === 0) return '';
+
+  // Build adjacency map to detect parallel paths
+  const adjacencyMap = new Map<string, Array<{ to: string; condition?: string }>>();
+  const allNodes = new Set<string>();
+
+  edges.forEach((edge) => {
+    allNodes.add(edge.from);
+    allNodes.add(edge.to);
+    if (!adjacencyMap.has(edge.from)) {
+      adjacencyMap.set(edge.from, []);
+    }
+    adjacencyMap.get(edge.from)!.push({ to: edge.to, condition: edge.condition });
+  });
+
+  // Find starting nodes (nodes that are not targets of any edge)
+  const targetNodes = new Set(edges.map((e) => e.to));
+  const startNodes = Array.from(allNodes).filter((node) => !targetNodes.has(node));
+
+  if (startNodes.length === 0) {
+    // Fallback: use first edge's source
+    if (edges.length > 0) {
+      startNodes.push(edges[0].from);
+    } else {
+      return '';
+    }
+  }
+
+  // Build linear flow representation
+  const flowParts: string[] = [];
+  const visited = new Set<string>();
+
+  function traverse(node: string): void {
+    if (visited.has(node)) return;
+    visited.add(node);
+
+    const outEdges = adjacencyMap.get(node) || [];
+
+    if (outEdges.length === 0) {
+      // Terminal node
+      flowParts.push(node);
+    } else if (outEdges.length === 1) {
+      // Single path
+      const edge = outEdges[0];
+      const nodeStr = edge.condition ? `${node}?` : node;
+      flowParts.push(nodeStr);
+      traverse(edge.to);
+    } else {
+      // Multiple outgoing edges - parallel or branching
+      flowParts.push(node);
+      const parallelTargets = outEdges.map((e) => (e.condition ? `${e.to}?` : e.to));
+      flowParts.push(`[${parallelTargets.join(' | ')}]`);
+
+      // Continue traversing from parallel targets to find common endpoint
+      outEdges.forEach((e) => {
+        const nextEdges = adjacencyMap.get(e.to) || [];
+        if (nextEdges.length > 0 && !visited.has(e.to)) {
+          traverse(e.to);
+        }
+      });
+    }
+  }
+
+  // Start traversal from first start node
+  traverse(startNodes[0]);
+
+  // Join with arrows
+  return flowParts.join(' -> ');
 }
 
 // ============================================================================
@@ -186,6 +297,9 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
   }
   if (state.currentStep === 4) {
     return getStep4Html(state);
+  }
+  if (state.currentStep === 5) {
+    return getStep5Html(state);
   }
   return `
       <div class="placeholder-content">
@@ -749,6 +863,146 @@ export function getStep4Html(state: IdeationState): string {
           >${escapeHtml(securityState.guardrailNotes)}</textarea>
         </div>
       </div>
+    `;
+}
+
+/**
+ * Get Step 5 HTML - Agent Design Proposal
+ */
+export function getStep5Html(state: IdeationState): string {
+  const agentDesignState = state.agentDesign;
+  const isLoading = agentDesignState?.isLoading ?? false;
+  const hasAgents = agentDesignState?.proposedAgents?.length > 0;
+  const proposalAccepted = agentDesignState?.proposalAccepted ?? false;
+
+  // Loading indicator
+  let loadingHtml = '';
+  if (isLoading) {
+    loadingHtml = `
+        <div class="agent-design-loading">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating agent proposal...</span>
+        </div>
+      `;
+  }
+
+  // Error display
+  let errorHtml = '';
+  if (agentDesignState?.error) {
+    errorHtml = `
+        <div class="agent-design-error">
+          <span class="error-text">${escapeHtml(agentDesignState.error)}</span>
+        </div>
+      `;
+  }
+
+  // Agent cards grid
+  let agentCardsHtml = '';
+  if (hasAgents) {
+    const cardsHtml = agentDesignState.proposedAgents.map((agent) => {
+      const toolsHtml = agent.tools.map((tool) =>
+        `<span class="module-chip">${escapeHtml(tool)}</span>`
+      ).join('');
+
+      return `
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">${escapeHtml(agent.name)}</span>
+              <span class="agent-id-badge">#${escapeHtml(agent.id)}</span>
+            </div>
+            <p class="agent-role">${escapeHtml(agent.role)}</p>
+            ${toolsHtml ? `<div class="agent-tools">${toolsHtml}</div>` : ''}
+          </div>
+        `;
+    }).join('');
+
+    agentCardsHtml = `
+        <div class="agent-cards-grid">
+          ${cardsHtml}
+        </div>
+      `;
+  }
+
+  // Orchestration section with badge and expandable reasoning
+  let orchestrationHtml = '';
+  if (hasAgents) {
+    const patternName = capitalizeFirst(agentDesignState.proposedOrchestration);
+    const reasoningText = agentDesignState.orchestrationReasoning || 'No reasoning provided.';
+
+    orchestrationHtml = `
+        <div class="orchestration-section">
+          <div class="orchestration-header">
+            <span class="orchestration-label">Orchestration Pattern:</span>
+            <span class="orchestration-badge">${escapeHtml(patternName)}</span>
+          </div>
+          <div class="orchestration-reasoning">
+            <button class="expand-toggle" onclick="toggleOrchestrationReasoning()">
+              <span class="chevron">&#9654;</span>
+              <span>Why this pattern?</span>
+            </button>
+            <div class="reasoning-content">
+              <p>${escapeHtml(reasoningText)}</p>
+            </div>
+          </div>
+        </div>
+      `;
+  }
+
+  // Flow summary - don't escape the flow summary since it contains controlled characters only
+  // (agent IDs are alphanumeric, arrows and brackets are part of the notation)
+  let flowSummaryHtml = '';
+  if (hasAgents && agentDesignState.proposedEdges?.length > 0) {
+    const flowSummary = buildFlowSummary(agentDesignState.proposedEdges);
+    if (flowSummary) {
+      flowSummaryHtml = `
+          <div class="flow-summary-section">
+            <label class="form-label">Agent Flow</label>
+            <div class="flow-summary">
+              <code>${flowSummary}</code>
+            </div>
+          </div>
+        `;
+    }
+  }
+
+  // Accepted banner
+  const acceptedBannerHtml = proposalAccepted
+    ? '<div class="accepted-banner">Proposal Accepted ✓</div>'
+    : '';
+
+  // Action buttons
+  const buttonsDisabled = isLoading ? 'disabled' : '';
+  const actionButtonsHtml = `
+      <div class="agent-design-actions">
+        <button class="regenerate-btn" onclick="regenerateAgentProposal()" ${buttonsDisabled}>
+          ↻ Regenerate
+        </button>
+        <button class="accept-btn" onclick="acceptAgentProposal()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
+          Accept &amp; Continue
+        </button>
+        <button class="adjust-btn" onclick="adjustAgentProposal()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
+          Let me adjust...
+        </button>
+      </div>
+    `;
+
+  return `
+      <div class="step5-header">
+        <h2>Agent Design</h2>
+        <p class="step-description">Review the AI-proposed agent team for your workflow. Accept to continue or regenerate for a different design.</p>
+      </div>
+
+      ${loadingHtml}
+      ${errorHtml}
+      ${acceptedBannerHtml}
+      ${agentCardsHtml}
+      ${orchestrationHtml}
+      ${flowSummaryHtml}
+      ${actionButtonsHtml}
     `;
 }
 

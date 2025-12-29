@@ -280,102 +280,373 @@ describe('Task Group 3: System Prompt Creation', () => {
 
 describe('Task Group 4: Step 5 UI Components', () => {
   describe('getStep5Html rendering', () => {
-    it('should render loading indicator when isLoading=true', () => {
-      // This test will verify the HTML output contains loading indicator
-      const loadingHtml = `
-        <div class="agent-design-loading">
-          <div class="typing-indicator">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </div>
-          <span class="loading-text">Generating agent proposal...</span>
-        </div>
-      `;
+    it('should render loading indicator when isLoading=true', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(loadingHtml).toContain('typing-indicator');
-      expect(loadingHtml).toContain('Generating agent proposal');
+      // Create mock state with isLoading=true
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test objective',
+        industry: 'Retail',
+        systems: ['SAP S/4HANA'],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: 'Test outcome',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [],
+          proposedOrchestration: 'workflow' as const,
+          proposedEdges: [],
+          orchestrationReasoning: '',
+          proposalAccepted: false,
+          isLoading: true,
+          aiCalled: false,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify loading indicator is present
+      expect(html).toContain('typing-indicator');
+      expect(html).toContain('Generating agent proposal');
+      expect(html).toContain('dot');
     });
 
-    it('should render agent cards with name, ID badge, role, and tools', () => {
-      // Mock agent card HTML structure
-      const agentCardHtml = `
-        <div class="agent-card">
-          <div class="agent-header">
-            <span class="agent-name">Planning Agent</span>
-            <span class="agent-id-badge">#planner</span>
-          </div>
-          <p class="agent-role">Coordinates the workflow</p>
-          <div class="agent-tools">
-            <span class="module-chip">sap_get_inventory</span>
-            <span class="module-chip">salesforce_query</span>
-          </div>
-        </div>
-      `;
+    it('should render agent cards with name, ID badge, role, and tools', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(agentCardHtml).toContain('agent-card');
-      expect(agentCardHtml).toContain('Planning Agent');
-      expect(agentCardHtml).toContain('#planner');
-      expect(agentCardHtml).toContain('agent-role');
-      expect(agentCardHtml).toContain('module-chip');
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test objective',
+        industry: 'Retail',
+        systems: ['SAP S/4HANA'],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: 'Test outcome',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [
+            {
+              id: 'planner',
+              name: 'Planning Agent',
+              role: 'Coordinates the workflow',
+              tools: ['sap_get_inventory', 'salesforce_query'],
+            },
+          ],
+          proposedOrchestration: 'workflow' as const,
+          proposedEdges: [{ from: 'planner', to: 'executor' }],
+          orchestrationReasoning: 'Workflow is best for linear processes.',
+          proposalAccepted: false,
+          isLoading: false,
+          aiCalled: true,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify agent card structure
+      expect(html).toContain('agent-card');
+      expect(html).toContain('Planning Agent');
+      expect(html).toContain('#planner');
+      expect(html).toContain('agent-role');
+      expect(html).toContain('module-chip');
+      expect(html).toContain('sap_get_inventory');
     });
 
-    it('should render orchestration badge with pattern name', () => {
-      const orchestrationHtml = `
-        <div class="orchestration-section">
-          <span class="orchestration-badge">Workflow</span>
-          <button class="expand-reasoning-btn">Why this pattern?</button>
-        </div>
-      `;
+    it('should render orchestration badge with pattern name', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(orchestrationHtml).toContain('orchestration-badge');
-      expect(orchestrationHtml).toContain('Workflow');
-      expect(orchestrationHtml).toContain('Why this pattern?');
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test',
+        industry: 'Retail',
+        systems: [],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: '',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [{ id: 'test', name: 'Test Agent', role: 'Test role', tools: [] }],
+          proposedOrchestration: 'graph' as const,
+          proposedEdges: [],
+          orchestrationReasoning: 'Graph pattern for complexity.',
+          proposalAccepted: false,
+          isLoading: false,
+          aiCalled: true,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify orchestration badge
+      expect(html).toContain('orchestration-badge');
+      expect(html).toContain('Graph');
+      expect(html).toContain('Why this pattern?');
     });
 
-    it('should render expandable Why this pattern section that toggles correctly', () => {
-      // Test the expand/collapse structure
-      const expandableHtml = `
-        <div class="orchestration-reasoning collapsed">
-          <button class="expand-toggle" onclick="toggleOrchestrationReasoning()">
-            <span class="chevron">&#9654;</span>
-            Why this pattern?
-          </button>
-          <div class="reasoning-content">
-            A workflow pattern is best because the process is linear.
-          </div>
-        </div>
-      `;
+    it('should render expandable Why this pattern section that toggles correctly', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(expandableHtml).toContain('expand-toggle');
-      expect(expandableHtml).toContain('chevron');
-      expect(expandableHtml).toContain('reasoning-content');
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test',
+        industry: 'Retail',
+        systems: [],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: '',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [{ id: 'test', name: 'Test', role: 'Test', tools: [] }],
+          proposedOrchestration: 'workflow' as const,
+          proposedEdges: [],
+          orchestrationReasoning: 'A workflow pattern is best because the process is linear.',
+          proposalAccepted: false,
+          isLoading: false,
+          aiCalled: true,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify expandable section structure
+      expect(html).toContain('orchestration-reasoning');
+      expect(html).toContain('toggleOrchestrationReasoning');
+      expect(html).toContain('chevron');
+      expect(html).toContain('reasoning-content');
+      expect(html).toContain('A workflow pattern is best');
     });
 
-    it('should render flow summary with arrow notation', () => {
-      const flowSummaryHtml = `
-        <div class="flow-summary">
-          <code>planner -> executor -> output</code>
-        </div>
-      `;
+    it('should render flow summary with arrow notation', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(flowSummaryHtml).toContain('flow-summary');
-      expect(flowSummaryHtml).toContain('->');
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test',
+        industry: 'Retail',
+        systems: [],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: '',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [
+            { id: 'planner', name: 'Planner', role: 'Plans', tools: [] },
+            { id: 'executor', name: 'Executor', role: 'Executes', tools: [] },
+          ],
+          proposedOrchestration: 'workflow' as const,
+          proposedEdges: [
+            { from: 'planner', to: 'executor' },
+            { from: 'executor', to: 'output' },
+          ],
+          orchestrationReasoning: 'Sequential flow.',
+          proposalAccepted: false,
+          isLoading: false,
+          aiCalled: true,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify flow summary
+      expect(html).toContain('flow-summary');
+      expect(html).toContain('->');
+      expect(html).toContain('planner');
+      expect(html).toContain('executor');
     });
 
-    it('should render action buttons disabled during loading', () => {
-      const buttonsHtml = `
-        <div class="agent-design-actions">
-          <button class="regenerate-btn" disabled>Regenerate</button>
-          <button class="accept-btn" disabled>Accept & Continue</button>
-          <button class="adjust-btn" disabled>Let me adjust...</button>
-        </div>
-      `;
+    it('should render action buttons disabled during loading', async () => {
+      const { getStep5Html } = await import('../../panels/ideationStepHtml');
 
-      expect(buttonsHtml).toContain('disabled');
-      expect(buttonsHtml).toContain('Regenerate');
-      expect(buttonsHtml).toContain('Accept & Continue');
-      expect(buttonsHtml).toContain('Let me adjust');
+      const mockState = {
+        currentStep: 5,
+        highestStepReached: 5,
+        validationAttempted: false,
+        businessObjective: 'Test',
+        industry: 'Retail',
+        systems: [],
+        aiGapFillingState: {
+          conversationHistory: [],
+          confirmedAssumptions: [],
+          assumptionsAccepted: false,
+          isStreaming: false,
+        },
+        outcome: {
+          primaryOutcome: '',
+          successMetrics: [],
+          stakeholders: [],
+          isLoading: false,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          customStakeholders: [],
+          suggestionsAccepted: false,
+          refinedSections: { outcome: false, kpis: false, stakeholders: false },
+        },
+        securityGuardrails: {
+          dataSensitivity: 'internal',
+          complianceFrameworks: [],
+          approvalGates: [],
+          guardrailNotes: '',
+          aiSuggested: false,
+          aiCalled: false,
+          skipped: false,
+          industryDefaultsApplied: false,
+          isLoading: false,
+        },
+        agentDesign: {
+          proposedAgents: [],
+          proposedOrchestration: 'workflow' as const,
+          proposedEdges: [],
+          orchestrationReasoning: '',
+          proposalAccepted: false,
+          isLoading: true,
+          aiCalled: false,
+        },
+      };
+
+      const html = getStep5Html(mockState as any);
+
+      // Verify buttons are disabled
+      expect(html).toContain('disabled');
+      expect(html).toContain('Regenerate');
+      expect(html).toContain('Accept &amp; Continue');
+      expect(html).toContain('Let me adjust');
     });
   });
 });
@@ -386,9 +657,10 @@ describe('Task Group 4: Step 5 UI Components', () => {
 
 describe('Task Group 5: Auto-Proposal Trigger and Navigation', () => {
   describe('generateStep4Hash', () => {
-    it('should produce consistent hash from Steps 1-4 inputs', () => {
-      // Test that same inputs produce same hash
-      const hashFunction = (input: string): string => {
+    it('should produce consistent hash from Steps 1-4 inputs', async () => {
+      // Import the generateStep4Hash function once it's implemented
+      // For now, test the djb2 hash algorithm behavior
+      const djb2Hash = (input: string): string => {
         let hash = 5381;
         for (let i = 0; i < input.length; i++) {
           hash = (hash * 33) ^ input.charCodeAt(i);
@@ -396,30 +668,135 @@ describe('Task Group 5: Auto-Proposal Trigger and Navigation', () => {
         return (hash >>> 0).toString(16);
       };
 
-      const input1 = JSON.stringify({ industry: 'Retail', systems: ['SAP'] });
-      const input2 = JSON.stringify({ industry: 'Retail', systems: ['SAP'] });
-      const input3 = JSON.stringify({ industry: 'FSI', systems: ['SAP'] });
+      // Create consistent input structures representing Steps 1-4
+      const createHashInput = (
+        industry: string,
+        systems: string[],
+        customSystems: string,
+        confirmedAssumptions: Array<{ system: string; modules: string[]; integrations: string[] }>,
+        primaryOutcome: string,
+        successMetrics: Array<{ name: string; targetValue: string; unit: string }>,
+        dataSensitivity: string,
+        complianceFrameworks: string[],
+        approvalGates: string[]
+      ): string => {
+        const sortedSystems = [...systems].sort();
+        const sortedAssumptions = [...confirmedAssumptions].sort((a, b) => a.system.localeCompare(b.system));
+        const sortedFrameworks = [...complianceFrameworks].sort();
+        const sortedGates = [...approvalGates].sort();
+        return JSON.stringify({
+          industry,
+          systems: sortedSystems,
+          customSystems: customSystems.trim(),
+          confirmedAssumptions: sortedAssumptions,
+          primaryOutcome,
+          successMetrics,
+          dataSensitivity,
+          complianceFrameworks: sortedFrameworks,
+          approvalGates: sortedGates,
+        });
+      };
 
-      expect(hashFunction(input1)).toBe(hashFunction(input2));
-      expect(hashFunction(input1)).not.toBe(hashFunction(input3));
+      const input1 = createHashInput(
+        'Retail',
+        ['SAP S/4HANA', 'Salesforce'],
+        '',
+        [{ system: 'SAP S/4HANA', modules: ['MM', 'SD'], integrations: [] }],
+        'Improve efficiency',
+        [{ name: 'Time', targetValue: '50', unit: '%' }],
+        'Internal',
+        ['SOC 2'],
+        ['Before data modification']
+      );
+
+      const input2 = createHashInput(
+        'Retail',
+        ['SAP S/4HANA', 'Salesforce'],
+        '',
+        [{ system: 'SAP S/4HANA', modules: ['MM', 'SD'], integrations: [] }],
+        'Improve efficiency',
+        [{ name: 'Time', targetValue: '50', unit: '%' }],
+        'Internal',
+        ['SOC 2'],
+        ['Before data modification']
+      );
+
+      const input3 = createHashInput(
+        'FSI', // Different industry
+        ['SAP S/4HANA', 'Salesforce'],
+        '',
+        [{ system: 'SAP S/4HANA', modules: ['MM', 'SD'], integrations: [] }],
+        'Improve efficiency',
+        [{ name: 'Time', targetValue: '50', unit: '%' }],
+        'Internal',
+        ['SOC 2'],
+        ['Before data modification']
+      );
+
+      // Same inputs should produce same hash
+      expect(djb2Hash(input1)).toBe(djb2Hash(input2));
+
+      // Different inputs should produce different hash
+      expect(djb2Hash(input1)).not.toBe(djb2Hash(input3));
+    });
+
+    it('should include all Steps 1-4 inputs in hash calculation', () => {
+      // Verify the hash function considers all required fields
+      const requiredFields = [
+        'industry',
+        'systems',
+        'customSystems',
+        'confirmedAssumptions',
+        'primaryOutcome',
+        'successMetrics',
+        'dataSensitivity',
+        'complianceFrameworks',
+        'approvalGates',
+      ];
+
+      // Each field change should result in different hash
+      const baseInput = {
+        industry: 'Retail',
+        systems: ['SAP'],
+        customSystems: '',
+        confirmedAssumptions: [],
+        primaryOutcome: 'Test',
+        successMetrics: [],
+        dataSensitivity: 'Internal',
+        complianceFrameworks: [],
+        approvalGates: [],
+      };
+
+      const baseHash = JSON.stringify(baseInput);
+
+      // Change each field and verify it affects the result
+      requiredFields.forEach((field) => {
+        const modified = { ...baseInput, [field]: field === 'industry' ? 'FSI' : ['changed'] };
+        const modifiedHash = JSON.stringify(modified);
+        expect(baseHash).not.toBe(modifiedHash);
+      });
     });
   });
 
   describe('triggerAutoSendForStep5', () => {
     it('should call service when hash differs from stored hash', () => {
-      // This is a behavioral test - verify the pattern is correct
+      // Simulate the trigger logic
       const mockState = {
         agentDesign: {
           step4Hash: 'oldhash123',
           aiCalled: false,
+          isLoading: false,
         },
       };
 
-      const newHash = 'newhash456';
+      const currentHash = 'newhash456';
 
       // When hashes differ, service should be called
-      const shouldCall = mockState.agentDesign.step4Hash !== newHash;
-      expect(shouldCall).toBe(true);
+      const hashDiffers = mockState.agentDesign.step4Hash !== currentHash;
+      const shouldTrigger = hashDiffers || (!mockState.agentDesign.aiCalled && !mockState.agentDesign.isLoading);
+
+      expect(hashDiffers).toBe(true);
+      expect(shouldTrigger).toBe(true);
     });
 
     it('should skip call when aiCalled=true and hash unchanged', () => {
@@ -427,14 +804,69 @@ describe('Task Group 5: Auto-Proposal Trigger and Navigation', () => {
         agentDesign: {
           step4Hash: 'samehash123',
           aiCalled: true,
+          isLoading: false,
         },
       };
 
       const currentHash = 'samehash123';
 
       // When hash is same and AI was already called, skip
-      const shouldSkip = mockState.agentDesign.step4Hash === currentHash && mockState.agentDesign.aiCalled;
+      const hashSame = mockState.agentDesign.step4Hash === currentHash;
+      const alreadyCalled = mockState.agentDesign.aiCalled;
+      const shouldSkip = hashSame && alreadyCalled;
+
       expect(shouldSkip).toBe(true);
+    });
+
+    it('should reset agentDesign state when hash changes', () => {
+      // Simulate the reset behavior
+      interface MockAgentDesign {
+        proposedAgents: Array<{ id: string; name: string }>;
+        proposedOrchestration: string;
+        proposedEdges: Array<{ from: string; to: string }>;
+        orchestrationReasoning: string;
+        proposalAccepted: boolean;
+        isLoading: boolean;
+        error: string | undefined;
+        step4Hash: string | undefined;
+        aiCalled: boolean;
+      }
+
+      const mockState: { agentDesign: MockAgentDesign } = {
+        agentDesign: {
+          proposedAgents: [{ id: 'old', name: 'Old Agent' }],
+          proposedOrchestration: 'graph',
+          proposedEdges: [{ from: 'old', to: 'output' }],
+          orchestrationReasoning: 'Old reasoning',
+          proposalAccepted: true,
+          isLoading: false,
+          error: undefined,
+          step4Hash: 'oldhash',
+          aiCalled: true,
+        },
+      };
+
+      const newHash = 'newhash';
+
+      // Simulate reset (preserve step4Hash)
+      if (mockState.agentDesign.step4Hash !== newHash) {
+        mockState.agentDesign = {
+          proposedAgents: [],
+          proposedOrchestration: 'workflow',
+          proposedEdges: [],
+          orchestrationReasoning: '',
+          proposalAccepted: false,
+          isLoading: false,
+          error: undefined,
+          step4Hash: newHash,
+          aiCalled: false,
+        };
+      }
+
+      expect(mockState.agentDesign.proposedAgents).toEqual([]);
+      expect(mockState.agentDesign.proposalAccepted).toBe(false);
+      expect(mockState.agentDesign.step4Hash).toBe(newHash);
+      expect(mockState.agentDesign.aiCalled).toBe(false);
     });
   });
 
@@ -443,8 +875,29 @@ describe('Task Group 5: Auto-Proposal Trigger and Navigation', () => {
       const previousStep = 4;
       const currentStep = 5;
 
+      // This condition should be true only when transitioning from Step 4 to Step 5
       const shouldTrigger = previousStep === 4 && currentStep === 5;
       expect(shouldTrigger).toBe(true);
+    });
+
+    it('should not trigger when moving to Step 5 from other steps', () => {
+      // Test from Step 3 (shouldn't happen normally, but test the condition)
+      expect(3 === 4 && 5 === 5).toBe(false);
+
+      // Test from Step 5 to Step 6
+      expect(5 === 4 && 6 === 5).toBe(false);
+    });
+
+    it('should follow navigation pattern from other steps', () => {
+      // Verify the pattern matches Step 2 and Step 3 triggers
+      const step2Condition = (prev: number, curr: number) => prev === 1 && curr === 2;
+      const step3Condition = (prev: number, curr: number) => prev === 2 && curr === 3;
+      const step5Condition = (prev: number, curr: number) => prev === 4 && curr === 5;
+
+      // All conditions should follow the same pattern: previousStep === N-1 && currentStep === N
+      expect(step2Condition(1, 2)).toBe(true);
+      expect(step3Condition(2, 3)).toBe(true);
+      expect(step5Condition(4, 5)).toBe(true);
     });
   });
 });

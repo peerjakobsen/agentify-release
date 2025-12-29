@@ -154,52 +154,52 @@ Total Sub-tasks: 49 (across 6 task groups)
 #### Task Group 4: Step 5 UI Components
 **Dependencies:** Task Groups 1, 2, 3
 
-- [ ] 4.0 Complete Step 5 UI components
-  - [ ] 4.1 Write 6 focused tests in `src/test/suite/step5AgentDesign.test.ts`
+- [x] 4.0 Complete Step 5 UI components
+  - [x] 4.1 Write 6 focused tests in `src/test/suite/step5AgentDesign.test.ts`
     - Test getStep5Html() renders loading indicator when isLoading=true
     - Test agent cards render name, ID badge, role, and tools
     - Test orchestration badge renders pattern name
     - Test "Why this pattern?" expandable section toggles correctly
     - Test flow summary renders with arrow notation
     - Test action buttons (Regenerate, Accept, Adjust) are present and disabled during loading
-  - [ ] 4.2 Add getStep5Html() function to ideationStepHtml.ts
+  - [x] 4.2 Add getStep5Html() function to ideationStepHtml.ts
     - Follow getStep4Html() structure in ideationStepHtml.ts
     - Include header with step description
     - Include loading indicator with typing animation (follow getStep3Html pattern)
-  - [ ] 4.3 Implement agent card grid rendering
+  - [x] 4.3 Implement agent card grid rendering
     - Use CSS grid layout (follow assumption-card pattern from getStep2Html)
     - Card structure:
       - Agent name as bold header text
       - Subtle ID badge (e.g., "#planner") with muted style
       - Role as lighter subtitle text
       - Tools as horizontal chips (use module-chip class)
-  - [ ] 4.4 Implement orchestration display section
+  - [x] 4.4 Implement orchestration display section
     - Pattern badge chip showing "Graph", "Swarm", or "Workflow" (display capitalized, store lowercase)
     - Badge is non-clickable (static display)
     - Separate "Why this pattern?" text link below badge
     - Add expand chevron that rotates on toggle
-  - [ ] 4.5 Implement expandable reasoning section
+  - [x] 4.5 Implement expandable reasoning section
     - Use accordion pattern with CSS transitions
     - Show orchestrationReasoning text (2-3 sentences)
     - Chevron rotates from right-pointing to down-pointing
-  - [ ] 4.6 Implement flow summary display
+  - [x] 4.6 Implement flow summary display
     - Single-line text in monospace font
     - Light border box container
     - Use agent IDs (not full names) for brevity
     - Arrow notation: -> for sequential, [a | b] for parallel, ? suffix for conditional
-  - [ ] 4.7 Add action buttons section
+  - [x] 4.7 Add action buttons section
     - "Regenerate" button with regenerate-btn class
     - "Accept & Continue" button with accept-btn class
     - "Let me adjust..." button with secondary styling
     - All buttons disabled during isLoading state
-  - [ ] 4.8 Add CSS styles for Step 5 components in ideationStyles.ts
+  - [x] 4.8 Add CSS styles for Step 5 components in ideationStyles.ts
     - Agent card styles (extend assumption-card pattern)
     - Agent ID badge styles (muted, smaller font)
     - Orchestration badge styles (non-clickable chip)
     - Flow summary box styles (monospace, light border)
     - Chevron rotation animation (.expanded class toggles rotation)
     - Accordion expand/collapse transitions
-  - [ ] 4.9 Ensure UI component tests pass
+  - [x] 4.9 Ensure UI component tests pass
     - Run ONLY the 6 tests written in 4.1
     - Verify HTML renders correctly in all states
 
