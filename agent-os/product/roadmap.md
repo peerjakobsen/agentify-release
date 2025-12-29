@@ -92,7 +92,7 @@ This service handles raw subprocess I/O; stdout JSON parsing is handled by item 
 - `DemoViewerPanel` subscribes to both `StdoutEventParser.onEvent` and `DynamoDbPollingService.onEvent`
 - Events collected into single array, sorted by timestamp for Execution Log display
 - `workflow_complete`/`workflow_error` events trigger Outcome Panel update
-- `graph_structure`/`node_*` events reserved for Phase 3 Agent Graph visualization
+- `graph_structure`/`node_*` events reserved for Phase 4 Agent Graph visualization
 
 No separate merge service needed — panel handles trivial array combination. `M`
 
@@ -507,82 +507,11 @@ These are demo-level configs; Kiro generates the actual implementation details. 
 - If not in Kiro IDE, show message directing user to open project in Kiro
 
 **Dependencies:**
-- Requires Phase 4 Item 28 (steering generation) and Item 34 (Kiro trigger) for full functionality
+- Requires Phase 3 Item 28 (steering generation) and Item 34 (Kiro trigger) for full functionality
 - Agentify Power (Items 29-33) is installed at project init, not here
-- Can show placeholder/disabled state until Phase 4 is complete `M`
+- Can show placeholder/disabled state until Phase 3 is complete `M`
 
-## Phase 3: Visual Polish
-
-25. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
-
-**Node Components:**
-- Custom React Flow node for each agent
-- Status indicator: gray (pending), blue pulse (running), green (completed), red (failed)
-- Agent name and role displayed
-- Tool call count badge
-
-**Edge Styling:**
-- Animated dashes during active data flow
-- Edge labels for Graph pattern conditions
-- Bidirectional arrows for Swarm handoffs
-
-**Layout Algorithms:**
-- **Graph**: Dagre top-to-bottom DAG layout with conditional edge routing
-- **Swarm**: Force-directed peer-to-peer layout (circular for small graphs)
-- **Workflow**: ELKjs layered layout with parallel execution lanes
-
-**Initialization:**
-- Read `graph_structure` event from stdout to build initial topology
-- Fall back to agent design from `.agentify/config.json` if no event received
-
-**Interaction:**
-- Click node to highlight in Execution Log
-- Zoom/pan controls
-- "Fit to view" button `L`
-
-26. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions:
-
-**Event Handling:**
-- `node_start` → transition node to "running" state with blue pulse animation
-- `node_stream` → show streaming indicator on node (optional: token count)
-- `node_stop` → transition to "completed" (green) or "failed" (red) based on status
-- `handoff` → animate edge between source and target nodes
-
-**Transitions:**
-- CSS transitions for color changes (300ms ease)
-- Edge animation: dashed line "flow" effect during active transfer
-- Completion ripple effect on node finish
-
-**Timing:**
-- Debounce rapid updates (batch within 50ms window)
-- Queue animations to prevent visual chaos during parallel execution
-
-**State Sync:**
-- Graph state synced with Execution Log scroll position
-- Clicking log entry highlights corresponding node `M`
-
-27. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
-
-**Collapsible Sections:**
-- Group events by agent (collapsible agent sections)
-- Tool calls collapsed by default, expandable to show input/output
-- "Expand All" / "Collapse All" toolbar buttons
-
-**Syntax Highlighting:**
-- JSON payloads with syntax highlighting (use existing `tokenizeJson()`)
-- SQL queries highlighted if detected in tool input
-- Markdown rendering for text content
-
-**Filtering:**
-- Filter dropdown: "All Events", "Agent Events Only", "Tool Calls Only", "Errors Only"
-- Agent filter: multi-select to show only specific agents
-- Search box: text search across event content
-
-**Performance:**
-- Virtual scrolling for large event lists (>100 events)
-- Lazy render expanded payload content `M`
-
-## Phase 4: Kiro Integration & Enforcement
+## Phase 3: Kiro Integration & Enforcement
 
 28. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
 
@@ -769,6 +698,77 @@ Suggest improvements for realistic mock behavior.
 - Show message: "Code generation requires Kiro IDE. Steering files have been generated in .kiro/steering/. Open this project in Kiro to continue."
 - Offer "Learn More" link to Kiro download page `S`
 
+## Phase 4: Visual Polish
+
+25. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
+
+**Node Components:**
+- Custom React Flow node for each agent
+- Status indicator: gray (pending), blue pulse (running), green (completed), red (failed)
+- Agent name and role displayed
+- Tool call count badge
+
+**Edge Styling:**
+- Animated dashes during active data flow
+- Edge labels for Graph pattern conditions
+- Bidirectional arrows for Swarm handoffs
+
+**Layout Algorithms:**
+- **Graph**: Dagre top-to-bottom DAG layout with conditional edge routing
+- **Swarm**: Force-directed peer-to-peer layout (circular for small graphs)
+- **Workflow**: ELKjs layered layout with parallel execution lanes
+
+**Initialization:**
+- Read `graph_structure` event from stdout to build initial topology
+- Fall back to agent design from `.agentify/config.json` if no event received
+
+**Interaction:**
+- Click node to highlight in Execution Log
+- Zoom/pan controls
+- "Fit to view" button `L`
+
+26. [ ] Graph Animation — Implement real-time graph updates from stdout events with smooth transitions:
+
+**Event Handling:**
+- `node_start` → transition node to "running" state with blue pulse animation
+- `node_stream` → show streaming indicator on node (optional: token count)
+- `node_stop` → transition to "completed" (green) or "failed" (red) based on status
+- `handoff` → animate edge between source and target nodes
+
+**Transitions:**
+- CSS transitions for color changes (300ms ease)
+- Edge animation: dashed line "flow" effect during active transfer
+- Completion ripple effect on node finish
+
+**Timing:**
+- Debounce rapid updates (batch within 50ms window)
+- Queue animations to prevent visual chaos during parallel execution
+
+**State Sync:**
+- Graph state synced with Execution Log scroll position
+- Clicking log entry highlights corresponding node `M`
+
+27. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
+
+**Collapsible Sections:**
+- Group events by agent (collapsible agent sections)
+- Tool calls collapsed by default, expandable to show input/output
+- "Expand All" / "Collapse All" toolbar buttons
+
+**Syntax Highlighting:**
+- JSON payloads with syntax highlighting (use existing `tokenizeJson()`)
+- SQL queries highlighted if detected in tool input
+- Markdown rendering for text content
+
+**Filtering:**
+- Filter dropdown: "All Events", "Agent Events Only", "Tool Calls Only", "Errors Only"
+- Agent filter: multi-select to show only specific agents
+- Search box: text search across event content
+
+**Performance:**
+- Virtual scrolling for large event lists (>100 events)
+- Lazy render expanded payload content `M`
+
 ## Phase 5: Templates and Patterns
 
 38. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
@@ -818,7 +818,8 @@ Suggest improvements for realistic mock behavior.
 - CloudFormation templates in `infrastructure/` are bundled with the extension for automated deployment
 - Phase 1 establishes core infrastructure before building features that depend on it
 - Phase 2 AI features require Bedrock integration from earlier items
-- Phase 4 Kiro integration depends on wizard outputs from Phase 2-3
+- Phase 3 Kiro integration depends on wizard outputs from Phase 2
+- Phase 4 Visual Polish can be deferred until after Kiro integration is working
 - Phase 5-6 are enhancement phases that can be prioritized based on customer feedback
 - **Agentify Power**: Bundles steering guidance and enforcement hooks into a Kiro Power package that activates on-demand during agent development
 - **Enforcement Hooks**: Automatically validate generated code follows Agentify patterns (event emission, CLI contract, mock tool structure) as files are saved
