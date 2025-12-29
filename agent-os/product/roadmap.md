@@ -179,7 +179,7 @@ No separate merge service needed — panel handles trivial array combination. `M
 - Primary outcome required
 - At least one success metric recommended (warning, not blocking) `S`
 
-16.2. [ ] Panel Architecture Consolidation — Consolidate duplicate ideation wizard implementations into single `tabbedPanel.ts`:
+16.2. [x] Panel Architecture Consolidation — Consolidate duplicate ideation wizard implementations into single `tabbedPanel.ts`:
 
 **Current State:**
 - `src/panels/ideationWizardPanel.ts` (~3000 lines): Original standalone wizard with complete AI integration for Steps 1-3, including `OutcomeDefinitionService` integration, streaming handlers, and conversation management

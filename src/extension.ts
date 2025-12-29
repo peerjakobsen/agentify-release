@@ -41,10 +41,6 @@ import {
   DEMO_VIEWER_VIEW_ID,
 } from './panels/demoViewerPanel';
 import {
-  IdeationWizardPanelProvider,
-  IDEATION_WIZARD_VIEW_ID,
-} from './panels/ideationWizardPanel';
-import {
   TabbedPanelProvider,
   TABBED_PANEL_VIEW_ID,
 } from './panels/tabbedPanel';
@@ -67,7 +63,6 @@ let statusBarManager: StatusBarManager | null = null;
  * Panel providers
  */
 let demoViewerProvider: DemoViewerPanelProvider | null = null;
-let ideationWizardProvider: IdeationWizardPanelProvider | null = null;
 let tabbedPanelProvider: TabbedPanelProvider | null = null;
 
 /**
@@ -365,10 +360,9 @@ function registerPanelProviders(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(tabbedPanelRegistration);
 
-  // Keep legacy providers for backwards compatibility with existing code
-  // These are not registered as views but may be used by other services
+  // Keep legacy provider for backwards compatibility with existing code
+  // This is not registered as a view but may be used by other services
   demoViewerProvider = new DemoViewerPanelProvider(context.extensionUri, context);
-  ideationWizardProvider = new IdeationWizardPanelProvider(context.extensionUri);
 }
 
 /**
@@ -438,10 +432,8 @@ async function handleInitializeProject(context: vscode.ExtensionContext): Promis
     }
 
     // Refresh Demo Viewer panel to update "Get Started" button visibility
+    // Note: Tabbed panel handles both Ideation and Demo Viewer
     await refreshDemoViewerPanel();
-
-    // Refresh Ideation Wizard panel
-    await refreshIdeationWizardPanel();
   }
 }
 
@@ -471,33 +463,11 @@ async function refreshDemoViewerPanel(): Promise<void> {
 }
 
 /**
- * Refresh the Ideation Wizard panel after initialization
- */
-async function refreshIdeationWizardPanel(): Promise<void> {
-  // Tabbed panel handles both - already refreshed in refreshDemoViewerPanel
-  if (ideationWizardProvider) {
-    try {
-      await ideationWizardProvider.refresh();
-    } catch (error) {
-      // Ignore - legacy provider may not be active
-    }
-  }
-}
-
-/**
  * Get the Demo Viewer panel provider
  * Exposed for testing and external refresh triggers
  */
 export function getDemoViewerProvider(): DemoViewerPanelProvider | null {
   return demoViewerProvider;
-}
-
-/**
- * Get the Ideation Wizard panel provider
- * Exposed for testing and external refresh triggers
- */
-export function getIdeationWizardProvider(): IdeationWizardPanelProvider | null {
-  return ideationWizardProvider;
 }
 
 /**
@@ -877,7 +847,6 @@ export function deactivate(): void {
   tabbedPanelProvider?.dispose();
   tabbedPanelProvider = null;
   demoViewerProvider = null;
-  ideationWizardProvider = null;
 
   // Reset state
   configService = null;

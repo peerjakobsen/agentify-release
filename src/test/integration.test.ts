@@ -349,19 +349,19 @@ describe('Panel Provider Integration', () => {
     const { DemoViewerPanelProvider, DEMO_VIEWER_VIEW_ID } = await import(
       '../panels/demoViewerPanel'
     );
-    const { IdeationWizardPanelProvider, IDEATION_WIZARD_VIEW_ID } = await import(
-      '../panels/ideationWizardPanel'
+    const { TabbedPanelProvider, TABBED_PANEL_VIEW_ID } = await import(
+      '../panels/tabbedPanel'
     );
 
     expect(DEMO_VIEWER_VIEW_ID).toBe('agentify.demoViewer');
-    expect(IDEATION_WIZARD_VIEW_ID).toBe('agentify.ideationWizard');
+    expect(TABBED_PANEL_VIEW_ID).toBe('agentify.tabbedPanel');
 
     const mockUri = { fsPath: '/test' } as any;
     const demoProvider = new DemoViewerPanelProvider(mockUri);
-    const ideationProvider = new IdeationWizardPanelProvider(mockUri);
+    const tabbedProvider = new TabbedPanelProvider(mockUri);
 
     expect(demoProvider).toBeDefined();
-    expect(ideationProvider).toBeDefined();
+    expect(tabbedProvider).toBeDefined();
   });
 });
 

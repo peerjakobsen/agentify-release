@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import { getBedrockConversationService, BedrockConversationService } from '../services/bedrockConversationService';
 import { buildContextMessage, parseAssumptionsFromResponse, generateStep1Hash, hasStep1Changed } from '../services/gapFillingService';
+import { getOutcomeDefinitionService, OutcomeDefinitionService } from '../services/outcomeDefinitionService';
 
 /**
  * View ID for the Tabbed Panel
@@ -53,10 +54,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   // Config change listener
   private _configChangeDisposable?: vscode.Disposable;
 
-  // Bedrock service for AI gap-filling
+  // Bedrock service for AI gap-filling (Step 2)
   private _bedrockService?: BedrockConversationService;
   private _bedrockDisposables: vscode.Disposable[] = [];
   private _streamingResponse = '';
+
+  // Outcome service for AI suggestions (Step 3)
+  private _outcomeService?: OutcomeDefinitionService;
+  private _outcomeDisposables: vscode.Disposable[] = [];
+  private _outcomeStreamingResponse = '';
+  private _step2AssumptionsHash?: string;
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
@@ -309,15 +316,23 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'regenerateOutcomeSuggestions':
-        // For now, just clear the form (AI integration can be added later)
-        this._ideationState.outcome.primaryOutcome = '';
-        this._ideationState.outcome.successMetrics = [];
-        this._ideationState.outcome.stakeholders = [];
-        this._ideationState.outcome.primaryOutcomeEdited = false;
-        this._ideationState.outcome.metricsEdited = false;
-        this._ideationState.outcome.stakeholdersEdited = false;
-        this.updateWebviewContent();
-        this.syncStateToWebview();
+        // Reset outcome state (preserve customStakeholders) and fetch fresh AI suggestions
+        const customStakeholdersToPreserve = this._ideationState.outcome.customStakeholders;
+        this._ideationState.outcome = {
+          primaryOutcome: '',
+          successMetrics: [],
+          stakeholders: [],
+          customStakeholders: customStakeholdersToPreserve,
+          primaryOutcomeEdited: false,
+          metricsEdited: false,
+          stakeholdersEdited: false,
+          isLoading: false,
+          loadingError: undefined,
+        };
+        // Reset outcome service conversation
+        this._outcomeService?.resetConversation();
+        // Fetch fresh AI suggestions
+        this.sendOutcomeContextToClaude();
         break;
       case 'dismissOutcomeError':
         this._ideationState.outcome.loadingError = undefined;
@@ -405,6 +420,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Auto-send context to Claude when entering Step 2
       if (previousStep === 1 && this._ideationState.currentStep === 2) {
         this.triggerAutoSendForStep2();
+      }
+
+      // Auto-send context to Claude when entering Step 3
+      if (previousStep === 2 && this._ideationState.currentStep === 3) {
+        this.triggerAutoSendForStep3();
       }
     }
   }
@@ -532,6 +552,44 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Initialize OutcomeDefinitionService for Step 3 AI suggestions
+   * Follows same pattern as initBedrockService()
+   */
+  private initOutcomeService(): OutcomeDefinitionService | undefined {
+    if (this._outcomeService) {
+      return this._outcomeService;
+    }
+
+    if (!this._context) {
+      console.warn('[TabbedPanel] Extension context not available for Outcome service');
+      return undefined;
+    }
+
+    this._outcomeService = getOutcomeDefinitionService(this._context);
+
+    // Subscribe to streaming events
+    this._outcomeDisposables.push(
+      this._outcomeService.onToken((token) => {
+        this.handleOutcomeStreamingToken(token);
+      })
+    );
+
+    this._outcomeDisposables.push(
+      this._outcomeService.onComplete((response) => {
+        this.handleOutcomeStreamingComplete(response);
+      })
+    );
+
+    this._outcomeDisposables.push(
+      this._outcomeService.onError((error) => {
+        this.handleOutcomeStreamingError(error.message);
+      })
+    );
+
+    return this._outcomeService;
+  }
+
+  /**
    * Build and send context to Claude via Bedrock
    */
   private async sendContextToClaude(): Promise<void> {
@@ -630,6 +688,168 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._streamingResponse = '';
     this.updateWebviewContent();
     this.syncStateToWebview();
+  }
+
+  // =========================================================================
+  // Step 3: Outcome Definition AI Methods
+  // =========================================================================
+
+  /**
+   * Handle incoming streaming token for outcome suggestions
+   */
+  private handleOutcomeStreamingToken(token: string): void {
+    this._outcomeStreamingResponse += token;
+    // Note: Step 3 doesn't show streaming preview, just accumulates
+  }
+
+  /**
+   * Handle streaming complete for outcome suggestions
+   * Parses response and populates form fields (respecting edited flags)
+   */
+  private handleOutcomeStreamingComplete(response: string): void {
+    // Will be fully implemented in Task Group 3
+    this._ideationState.outcome.isLoading = false;
+
+    // Parse outcome suggestions from response
+    const service = this._outcomeService;
+    if (service) {
+      const suggestions = service.parseOutcomeSuggestionsFromResponse(response);
+      if (suggestions) {
+        // Only update fields that haven't been manually edited
+        if (!this._ideationState.outcome.primaryOutcomeEdited && suggestions.primaryOutcome) {
+          this._ideationState.outcome.primaryOutcome = suggestions.primaryOutcome;
+        }
+        if (!this._ideationState.outcome.metricsEdited && suggestions.suggestedKPIs) {
+          this._ideationState.outcome.successMetrics = suggestions.suggestedKPIs;
+        }
+        if (!this._ideationState.outcome.stakeholdersEdited && suggestions.stakeholders) {
+          // Separate AI-suggested stakeholders into custom list if not in standard options
+          const standardOptions = ['Operations', 'Finance', 'IT', 'HR', 'Sales', 'Marketing', 'Customer Service', 'Executive Leadership'];
+          const customFromAI = suggestions.stakeholders.filter(s => !standardOptions.includes(s));
+          const standardFromAI = suggestions.stakeholders.filter(s => standardOptions.includes(s));
+
+          this._ideationState.outcome.stakeholders = standardFromAI;
+          // Add custom AI stakeholders to customStakeholders array (if not already there)
+          customFromAI.forEach(s => {
+            if (!this._ideationState.outcome.customStakeholders.includes(s)) {
+              this._ideationState.outcome.customStakeholders.push(s);
+            }
+            if (!this._ideationState.outcome.stakeholders.includes(s)) {
+              this._ideationState.outcome.stakeholders.push(s);
+            }
+          });
+        }
+      }
+    }
+
+    this._outcomeStreamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Handle streaming error for outcome suggestions
+   */
+  private handleOutcomeStreamingError(errorMessage: string): void {
+    this._ideationState.outcome.isLoading = false;
+    this._ideationState.outcome.loadingError = errorMessage;
+    this._outcomeStreamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+  }
+
+  /**
+   * Generate a hash of Step 2 confirmed assumptions for change detection
+   * Uses the same djb2 hash algorithm as generateStep1Hash
+   */
+  private generateStep2AssumptionsHash(): string {
+    const assumptions = this._ideationState.aiGapFillingState.confirmedAssumptions;
+    // Sort by system name for consistent hash
+    const sorted = [...assumptions].sort((a, b) => a.system.localeCompare(b.system));
+    const combined = JSON.stringify(sorted);
+
+    // djb2 hash algorithm
+    let hash = 5381;
+    for (let i = 0; i < combined.length; i++) {
+      hash = (hash * 33) ^ combined.charCodeAt(i);
+    }
+
+    return (hash >>> 0).toString(16);
+  }
+
+  /**
+   * Trigger auto-send when entering Step 3
+   * Re-triggers AI if Step 2 assumptions have changed, or if fresh entry
+   */
+  private triggerAutoSendForStep3(): void {
+    const currentHash = this.generateStep2AssumptionsHash();
+
+    // Check if assumptions have changed since last visit
+    if (this._step2AssumptionsHash !== currentHash) {
+      // Reset outcome state (preserve customStakeholders)
+      const customStakeholders = this._ideationState.outcome.customStakeholders;
+      this._ideationState.outcome = {
+        primaryOutcome: '',
+        successMetrics: [],
+        stakeholders: [],
+        customStakeholders: customStakeholders,
+        primaryOutcomeEdited: false,
+        metricsEdited: false,
+        stakeholdersEdited: false,
+        isLoading: false,
+        loadingError: undefined,
+      };
+
+      // Update hash
+      this._step2AssumptionsHash = currentHash;
+
+      // Trigger AI
+      this.sendOutcomeContextToClaude();
+    } else if (!this._ideationState.outcome.primaryOutcome && !this._ideationState.outcome.isLoading) {
+      // Fresh entry with no outcome yet
+      this.sendOutcomeContextToClaude();
+    }
+  }
+
+  /**
+   * Build and send context to Claude for outcome suggestions
+   */
+  private async sendOutcomeContextToClaude(): Promise<void> {
+    const service = this.initOutcomeService();
+    if (!service) {
+      this._ideationState.outcome.loadingError =
+        'Outcome service not available. Please check your configuration.';
+      this.syncStateToWebview();
+      return;
+    }
+
+    // Build context message from Steps 1-2 inputs
+    const contextMessage = service.buildOutcomeContextMessage(
+      this._ideationState.businessObjective,
+      this._ideationState.industry === 'Other'
+        ? (this._ideationState.customIndustry || this._ideationState.industry)
+        : this._ideationState.industry,
+      this._ideationState.systems,
+      this._ideationState.aiGapFillingState.confirmedAssumptions,
+      this._ideationState.customSystems
+    );
+
+    // Set loading state
+    this._ideationState.outcome.isLoading = true;
+    this._ideationState.outcome.loadingError = undefined;
+    this._outcomeStreamingResponse = '';
+    this.updateWebviewContent();
+    this.syncStateToWebview();
+
+    // Send message to Claude (streaming handled by event handlers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(contextMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleOutcomeStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
   }
 
   /**
@@ -2292,6 +2512,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._configChangeDisposable?.dispose();
     this._bedrockDisposables.forEach(d => d.dispose());
     this._bedrockDisposables = [];
+    this._outcomeDisposables.forEach(d => d.dispose());
+    this._outcomeDisposables = [];
   }
 }
 
