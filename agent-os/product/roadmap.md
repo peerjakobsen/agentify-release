@@ -291,76 +291,117 @@ No separate merge service needed — panel handles trivial array combination. `M
 
 This step is optional — "Skip" button available with sensible defaults applied. `S`
 
-18. [ ] Agent Design Phase — Create wizard step 5 where the model proposes agent team composition based on all previous inputs:
+18. [ ] Agent Design Proposal — Create wizard step 5 where model proposes agent team:
 
-**Auto-Proposal on Step Entry:**
-- Send full wizard context to Bedrock with structured prompt requesting agent team design
-- Model responds with JSON-structured proposal (parsed for UI display):
-```json
-{
-  "agents": [
-    {"id": "planner", "name": "Planning Agent", "role": "Analyzes demand signals and inventory levels", "tools": ["sap_inventory", "demand_forecast"]},
-    {"id": "recommender", "name": "Recommendation Agent", "role": "Generates replenishment orders", "tools": ["order_generator"]}
-  ],
-  "orchestration": {
-    "pattern": "graph",
-    "reasoning": "Graph pattern recommended because workflow has conditional logic based on inventory thresholds..."
-  },
-  "edges": [
-    {"from": "planner", "to": "recommender", "condition": "inventory_analyzed"}
-  ]
+**State Structure:**
+Add `agentDesign: AgentDesignState` to IdeationState following existing patterns:
+```typescript
+interface AgentDesignState {
+  // AI Proposal
+  proposedAgents: ProposedAgent[];
+  proposedOrchestration: OrchestrationPattern;
+  proposedEdges: ProposedEdge[];
+  orchestrationReasoning: string;
+  
+  // Accept/Edit State
+  proposalAccepted: boolean;
+  isLoading: boolean;
+  error?: string;
+  
+  // Change Detection
+  step4Hash?: string;
+  aiCalled: boolean;
+}
+
+interface ProposedAgent {
+  id: string;
+  name: string;
+  role: string;
+  tools: string[];  // AI-generated from Step 1 systems
+}
+
+interface ProposedEdge {
+  from: string;
+  to: string;
+  condition?: string;  // For graph pattern
 }
 ```
 
-**Display:**
-- Card grid showing each proposed agent with name, role, tools
-- Orchestration pattern badge with "Why this pattern?" expandable explanation
-- Visual flow diagram (simple, not interactive yet — Phase 3 does full visualization)
+**Auto-Proposal on Step Entry:**
+- Trigger: `triggerAutoSendForStep5()` following Step 3 pattern
+- Change detection: Hash of Steps 1-4 inputs
+- Send context to Bedrock, request JSON-structured agent team
+- Parse response, populate `proposed*` fields
+
+**Display (Phase 1 — Before Accept):**
+- Card grid: each agent shows name, role, tools as tags
+- Orchestration badge: "Graph" / "Swarm" / "Workflow"
+- "Why this pattern?" expandable with `orchestrationReasoning`
+- Text-based flow summary (NOT visual diagram):
+```
+  Flow: Planner → Recommender → Output
+```
 
 **Actions:**
-- "Accept & Continue" — proceed with proposal as-is
-- "Let me adjust..." — transitions to Agent Design Refinement (item 19) `L`
+- "↻ Regenerate" — `handleRegenerateAgentProposal()`, clears and re-fetches
+- "Accept & Continue" — sets `proposalAccepted: true`, proceeds to Step 6
+- "Let me adjust..." — sets `proposalAccepted: true`, stays on step, shows edit UI (item 19)
 
-19. [ ] Agent Design Refinement — Enable user modification of the model's proposed agent team when "Let me adjust..." is selected:
+**Tool Generation:**
+- AI generates tool names based on systems from Step 1
+- Format: `{system}_{operation}` (e.g., `sap_get_inventory`, `salesforce_query_accounts`)
+- Editable in item 19 `M`
+
+19. [ ] Agent Design Refinement — Enable editing when "Let me adjust..." selected:
+
+**Transition:**
+- Same page, different UI mode (like Step 3's Phase 1 → Phase 2)
+- Show "Accepted ✓" banner (following Step 3 pattern)
 
 **Agent Card Editing:**
-- Each agent displayed as editable card
-- Editable fields: Name (text), Role description (textarea), Tools (tag input with suggestions)
-- "Remove Agent" button (with confirmation if agent has edges)
-- "Add Agent" button opens blank card template
+- Each agent as editable card with edited flags:
+  - `nameEdited`, `roleEdited`, `toolsEdited` per agent
+- Fields: Name (text), Role (textarea), Tools (tag input with × remove)
+- "× Remove Agent" with confirmation if agent has edges
+- "+ Add Agent" opens card with empty fields
 
 **Orchestration Adjustment:**
-- Dropdown to change pattern (Graph/Swarm/Workflow) — triggers item 20 for detailed config
-- Simple edge list editor: source agent → target agent (add/remove edges)
-- Validation: warn if orphan agents (no incoming/outgoing edges), warn if entry point missing
+- Dropdown: graph / swarm / workflow
+- Shows AI recommendation badge on original suggestion
+- On change: AI suggests updated edges (non-blocking suggestion)
 
-**AI Assistance:**
-- "Ask AI" button for each agent: "Suggest tools for this agent" / "Improve role description"
-- "Validate Design" button: model reviews full design, suggests improvements
+**Edge Editing:**
+- Simple table: "From" dropdown → "To" dropdown
+- Add/remove edge buttons
+- Validation warnings (non-blocking):
+  - Orphan agents (no connections)
+  - No entry point
 
-**Save:**
-- "Confirm Design" saves to wizard state and proceeds to next step `M`
+**AI Assistance (Optional):**
+- "✨ Suggest tools" button per agent → quick AI call
+- "Validate Design" button → AI reviews, shows suggestions in toast
 
-20. [ ] Orchestration Pattern Selection — When user changes orchestration pattern in item 19, show pattern-specific configuration modal:
+**Confirm:**
+- "Confirm Design" copies to `confirmed*` fields, proceeds to Step 6
+- Edited flags prevent AI overwrite on back-navigation `L`
 
-**Pattern Selection UI:**
-- Three large cards (Graph, Swarm, Workflow) with icons and one-line descriptions
-- Current selection highlighted
-- AI recommendation badge on suggested pattern
+20. [ ] Orchestration Pattern Help — Show pattern explanations (simplified from original):
+
+**In Item 19 Dropdown:**
+- Tooltip/popover on hover showing pattern description
+- Or expandable section below dropdown
 
 **Pattern Descriptions:**
-- **Graph**: "Deterministic structure, LLM picks path at runtime. Best for: conditional workflows, approval gates, decision trees."
-- **Swarm**: "Agents autonomously hand off to each other. Best for: complex problem-solving, collaborative analysis, emergent behavior."
-- **Workflow**: "Fixed DAG with parallel execution. Best for: predictable pipelines, batch processing, strict ordering."
+- **graph**: "LLM picks path at runtime based on conditions. Best for: approval gates, decision trees, conditional workflows."
+- **swarm**: "Agents hand off autonomously. Best for: complex problem-solving, collaborative analysis, emergent behavior."
+- **workflow**: "Fixed DAG with parallel execution. Best for: predictable pipelines, batch processing, strict ordering."
 
-**Pattern-Specific Configuration:**
-- **Graph**: Edge condition editor — for each edge, define condition label (e.g., "if high_priority", "if needs_review")
-- **Swarm**: Handoff rules — max handoffs (number), allowed handoff pairs (agent A ↔ agent B)
-- **Workflow**: Task dependencies — parallel groups, sequential ordering
+**Deferred:**
+- Edge condition labels (Graph-specific)
+- Handoff limits (Swarm-specific)  
+- Parallel group config (Workflow-specific)
 
-**Visual Preview:**
-- Simple diagram showing how agents connect under selected pattern
-- Updates live as configuration changes `M`
+These are demo-level configs; Kiro generates the actual implementation details. `S`
 
 21. [ ] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
 
