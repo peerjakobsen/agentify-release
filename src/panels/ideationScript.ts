@@ -259,5 +259,89 @@ export function getIdeationScript(): string {
       function confirmDesign() {
         vscode.postMessage({ command: 'confirmDesign' });
       }
+
+      // =========================================================================
+      // Step 6: Mock Data Strategy functions (Task Group 6)
+      // =========================================================================
+
+      // Main dispatcher for Step 6 commands (called from HTML onclick handlers)
+      function handleStep6Command(command, params) {
+        switch (command) {
+          case 'step6ToggleAccordion':
+            vscode.postMessage({ command: 'step6ToggleAccordion', toolIndex: params.toolIndex });
+            break;
+          case 'step6UpdateRequest':
+            vscode.postMessage({ command: 'step6UpdateRequest', toolIndex: params.toolIndex, value: params.value });
+            break;
+          case 'step6UpdateResponse':
+            vscode.postMessage({ command: 'step6UpdateResponse', toolIndex: params.toolIndex, value: params.value });
+            break;
+          case 'step6AddRow':
+            vscode.postMessage({ command: 'step6AddRow', toolIndex: params.toolIndex });
+            break;
+          case 'step6UpdateRow':
+            vscode.postMessage({ command: 'step6UpdateRow', toolIndex: params.toolIndex, rowIndex: params.rowIndex, field: params.field, value: params.value });
+            break;
+          case 'step6DeleteRow':
+            vscode.postMessage({ command: 'step6DeleteRow', toolIndex: params.toolIndex, rowIndex: params.rowIndex });
+            break;
+          case 'step6RegenerateAll':
+            vscode.postMessage({ command: 'step6RegenerateAll' });
+            break;
+          case 'step6ImportData':
+            vscode.postMessage({ command: 'step6ImportData', toolIndex: params.toolIndex });
+            break;
+          case 'step6ToggleTerminology':
+            vscode.postMessage({ command: 'step6ToggleTerminology', enabled: params.enabled });
+            break;
+          default:
+            console.warn('Unknown Step 6 command:', command);
+        }
+      }
+
+      // Task 6.3: Toggle accordion for a tool definition
+      function step6ToggleAccordion(toolIndex) {
+        vscode.postMessage({ command: 'step6ToggleAccordion', toolIndex });
+      }
+
+      // Task 6.3: Update mock request schema
+      function step6UpdateRequest(toolIndex, value) {
+        vscode.postMessage({ command: 'step6UpdateRequest', toolIndex, value });
+      }
+
+      // Task 6.3: Update mock response schema
+      function step6UpdateResponse(toolIndex, value) {
+        vscode.postMessage({ command: 'step6UpdateResponse', toolIndex, value });
+      }
+
+      // Task 6.3: Add a new sample data row
+      function step6AddRow(toolIndex) {
+        vscode.postMessage({ command: 'step6AddRow', toolIndex });
+      }
+
+      // Task 6.3: Update a sample data row field
+      function step6UpdateRow(toolIndex, rowIndex, field, value) {
+        vscode.postMessage({ command: 'step6UpdateRow', toolIndex, rowIndex, field, value });
+      }
+
+      // Task 6.3: Delete a sample data row
+      function step6DeleteRow(toolIndex, rowIndex) {
+        vscode.postMessage({ command: 'step6DeleteRow', toolIndex, rowIndex });
+      }
+
+      // Task 6.3: Regenerate all mock definitions
+      function step6RegenerateAll() {
+        vscode.postMessage({ command: 'step6RegenerateAll' });
+      }
+
+      // Task 6.3: Import data for a specific tool
+      function step6ImportData(toolIndex) {
+        vscode.postMessage({ command: 'step6ImportData', toolIndex });
+      }
+
+      // Task 6.3: Toggle customer terminology refinement
+      function step6ToggleTerminology(enabled) {
+        vscode.postMessage({ command: 'step6ToggleTerminology', enabled });
+      }
     `;
 }

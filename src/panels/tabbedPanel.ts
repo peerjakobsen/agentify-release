@@ -40,8 +40,13 @@ import {
   generateStep4Hash,
 } from './ideationStep5Logic';
 import {
+  Step6LogicHandler,
+} from './ideationStep6Logic';
+import {
   createDefaultAgentDesignState,
+  createDefaultMockDataState,
   AgentDesignState,
+  MockDataState,
   OutcomeDefinitionState,
   SuccessMetric,
   RefinedSectionsState,
@@ -98,6 +103,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _step3Handler?: Step3LogicHandler;
   private _step4Handler?: Step4LogicHandler;
   private _step5Handler?: Step5LogicHandler;
+  private _step6Handler?: Step6LogicHandler;
 
   constructor(extensionUri: vscode.Uri, context?: vscode.ExtensionContext) {
     this._extensionUri = extensionUri;
@@ -150,6 +156,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step5Handler = new Step5LogicHandler(
       this._context,
       this._ideationState.agentDesign,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    // Task 6.3: Initialize Step 6 handler
+    this._step6Handler = new Step6LogicHandler(
+      this._context,
+      this._ideationState.mockData,
       {
         updateWebviewContent: callbacks.updateWebviewContent,
         syncStateToWebview: callbacks.syncStateToWebview,
@@ -517,6 +533,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           if (success) {
             this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
             this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+            // Task 6.4: Trigger auto-send for Step 6 when entering via Accept & Continue
+            if (this._ideationState.currentStep === 6) {
+              this._step6Handler?.triggerAutoSend(this.getStep6Inputs());
+            }
             this.updateWebviewContent();
             this.syncStateToWebview();
           }
@@ -609,10 +629,67 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           if (success) {
             this._ideationState.currentStep = Math.min(this._ideationState.currentStep + 1, WIZARD_STEPS.length);
             this._ideationState.highestStepReached = Math.max(this._ideationState.highestStepReached, this._ideationState.currentStep);
+            // Task 6.4: Trigger auto-send for Step 6 when entering via Confirm Design
+            if (this._ideationState.currentStep === 6) {
+              this._step6Handler?.triggerAutoSend(this.getStep6Inputs());
+            }
             this.updateWebviewContent();
             this.syncStateToWebview();
           }
         }
+        break;
+
+      // =========================================================================
+      // Step 6: Mock Data Strategy commands (Task Group 6)
+      // Task 6.3: Handle Step 6 commands
+      // =========================================================================
+
+      case 'step6UpdateRequest':
+        this._step6Handler?.handleUpdateMockRequest(
+          message.toolIndex as number,
+          message.value as string
+        );
+        break;
+
+      case 'step6UpdateResponse':
+        this._step6Handler?.handleUpdateMockResponse(
+          message.toolIndex as number,
+          message.value as string
+        );
+        break;
+
+      case 'step6AddRow':
+        this._step6Handler?.handleAddSampleRow(message.toolIndex as number);
+        break;
+
+      case 'step6UpdateRow':
+        this.handleStep6UpdateRow(message);
+        break;
+
+      case 'step6DeleteRow':
+        this._step6Handler?.handleDeleteSampleRow(
+          message.toolIndex as number,
+          message.rowIndex as number
+        );
+        break;
+
+      case 'step6ToggleAccordion':
+        this._step6Handler?.handleToggleAccordion(message.toolIndex as number);
+        break;
+
+      case 'step6RegenerateAll':
+        this._step6Handler?.handleRegenerateAll(this.getStep6Inputs());
+        break;
+
+      case 'step6ImportData':
+        this.handleStep6ImportData(message.toolIndex as number);
+        break;
+
+      case 'step6ToggleTerminology':
+        this._step6Handler?.handleToggleTerminology(
+          message.enabled as boolean,
+          this.getStep6Inputs()
+        );
         break;
     }
   }
@@ -635,6 +712,107 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._demoState.promptText = message.value as string;
         this.syncStateToWebview();
         break;
+    }
+  }
+
+  // =========================================================================
+  // Task 6.3: Step 6 Helper Methods
+  // =========================================================================
+
+  /**
+   * Handle step6UpdateRow command
+   * Parses the row data from field/value updates and calls the handler
+   */
+  private handleStep6UpdateRow(message: { [key: string]: unknown }): void {
+    const toolIndex = message.toolIndex as number;
+    const rowIndex = message.rowIndex as number;
+    const fieldName = message.field as string;
+    const value = message.value as string;
+
+    // Get current row data
+    const definition = this._ideationState.mockData.mockDefinitions[toolIndex];
+    if (!definition || rowIndex >= definition.sampleData.length) {
+      return;
+    }
+
+    // Update the specific field in the row
+    const currentRow = { ...(definition.sampleData[rowIndex] as Record<string, unknown>) };
+
+    // Try to parse as number if the schema expects a number
+    const schemaType = typeof (definition.mockResponse as Record<string, unknown>)[fieldName];
+    if (schemaType === 'number') {
+      const numValue = parseFloat(value);
+      currentRow[fieldName] = isNaN(numValue) ? value : numValue;
+    } else {
+      currentRow[fieldName] = value;
+    }
+
+    this._step6Handler?.handleUpdateSampleRow(toolIndex, rowIndex, currentRow);
+  }
+
+  /**
+   * Handle step6ImportData command
+   * Opens file picker and processes imported data for a specific tool
+   */
+  private async handleStep6ImportData(toolIndex: number): Promise<void> {
+    const definition = this._ideationState.mockData.mockDefinitions[toolIndex];
+    if (!definition) {
+      return;
+    }
+
+    // Open file picker for CSV/JSON files
+    const uris = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: {
+        'Data Files': ['csv', 'json'],
+      },
+      title: `Import Sample Data for ${definition.tool}`,
+    });
+
+    if (!uris || uris.length === 0) {
+      return;
+    }
+
+    try {
+      // Read the file content
+      const fileUri = uris[0];
+      const fileContent = await vscode.workspace.fs.readFile(fileUri);
+      const content = Buffer.from(fileContent).toString('utf-8');
+      const fileName = fileUri.fsPath.split('/').pop() || fileUri.fsPath.split('\\').pop() || 'file';
+      const fileSizeBytes = fileContent.byteLength;
+
+      // Import the processImportedFile utility
+      const { processImportedFile } = await import('../utils/mockDataImportUtils.js');
+
+      // Process the imported file
+      const result = processImportedFile(
+        content,
+        fileName,
+        fileSizeBytes,
+        definition.mockResponse
+      );
+
+      if (result.success && result.rows.length > 0) {
+        // Update sample data for this tool
+        definition.sampleData = result.rows;
+        definition.sampleDataEdited = true;
+
+        // Store import summary for display (extend the definition temporarily)
+        (definition as typeof definition & { importSummary?: string }).importSummary = result.summary;
+
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+
+        // Show success message
+        vscode.window.showInformationMessage(result.summary);
+      } else if (result.error) {
+        vscode.window.showErrorMessage(`Import failed: ${result.error}`);
+      } else {
+        vscode.window.showWarningMessage('No data found in file');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      vscode.window.showErrorMessage(`Failed to import file: ${errorMessage}`);
     }
   }
 
@@ -760,6 +938,19 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get Step 5 confirmed agents and industry for Step 6
+   * Task 6.4: Get inputs for Step 6 auto-send
+   */
+  private getStep6Inputs() {
+    return {
+      confirmedAgents: this._ideationState.agentDesign.confirmedAgents,
+      industry: this._ideationState.industry === 'Other'
+        ? (this._ideationState.customIndustry || this._ideationState.industry)
+        : this._ideationState.industry,
+    };
+  }
+
+  /**
    * Validate Ideation Step 1
    */
   private validateIdeationStep1(): void {
@@ -803,7 +994,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
     const previousStep = this._ideationState.currentStep;
 
-    if (this._ideationState.currentStep < 6) {
+    if (this._ideationState.currentStep < WIZARD_STEPS.length) {
       this._ideationState.currentStep++;
       this._ideationState.highestStepReached = Math.max(
         this._ideationState.highestStepReached,
@@ -845,6 +1036,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       if (previousStep === 4 && this._ideationState.currentStep === 5) {
         this._step5Handler?.triggerAutoSend(this.getStep5Inputs());
       }
+
+      // Task 6.4: Auto-send context to Claude when entering Step 6
+      if (previousStep === 5 && this._ideationState.currentStep === 6) {
+        this._step6Handler?.triggerAutoSend(this.getStep6Inputs());
+      }
     }
   }
 
@@ -856,6 +1052,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Task 2.5b: Handle back navigation from Step 6 to Step 5
       if (this._ideationState.currentStep === 6) {
         this._step5Handler?.handleBackNavigationToStep5();
+      }
+
+      // Task 6.5: Handle back navigation from Step 7 to Step 6
+      if (this._ideationState.currentStep === 7) {
+        this._step6Handler?.handleBackNavigationToStep6();
       }
 
       this._ideationState.currentStep--;
@@ -873,6 +1074,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Task 2.5b: Handle back navigation from Step 6 to Step 5
       if (this._ideationState.currentStep === 6 && step === 5) {
         this._step5Handler?.handleBackNavigationToStep5();
+      }
+
+      // Task 6.5: Handle back navigation from Step 7 to Step 6
+      if (this._ideationState.currentStep === 7 && step === 6) {
+        this._step6Handler?.handleBackNavigationToStep6();
       }
 
       this._ideationState.currentStep = step;
@@ -1235,6 +1441,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step2Handler?.dispose();
     this._step3Handler?.dispose();
     this._step5Handler?.dispose();
+    this._step6Handler?.dispose();
   }
 }
 
@@ -1263,6 +1470,7 @@ interface IdeationState {
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
   agentDesign: AgentDesignState;
+  mockData: MockDataState;
 }
 
 interface IdeationValidationError {
@@ -1294,6 +1502,7 @@ function createDefaultIdeationState(): IdeationState {
     outcome: createDefaultOutcomeDefinitionState(),
     securityGuardrails: createDefaultSecurityGuardrailsState(),
     agentDesign: createDefaultAgentDesignState(),
+    mockData: createDefaultMockDataState(),
   };
 }
 

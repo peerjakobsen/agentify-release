@@ -12,6 +12,7 @@ import {
   APPROVAL_GATE_OPTIONS,
   STAKEHOLDER_OPTIONS,
 } from './ideationConstants';
+import type { MockDataState, MockToolDefinition } from '../types/wizardPanel';
 
 // ============================================================================
 // Types (local to tabbedPanel - should be consolidated later)
@@ -141,6 +142,7 @@ export interface IdeationState {
   outcome: OutcomeDefinitionState;
   securityGuardrails: SecurityGuardrailsState;
   agentDesign: AgentDesignState;
+  mockData?: MockDataState;
 }
 
 interface IdeationValidationError {
@@ -375,6 +377,9 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
   }
   if (state.currentStep === 5) {
     return getStep5Html(state);
+  }
+  if (state.currentStep === 6) {
+    return getStep6Html(state);
   }
   return `
       <div class="placeholder-content">
@@ -1345,6 +1350,267 @@ export function getStep5Html(state: IdeationState): string {
       ${actionButtonsHtml}
       ${adjustmentInputHtml}
     `;
+}
+
+// ============================================================================
+// Step 6: Mock Data Strategy
+// ============================================================================
+
+/**
+ * Get validation warnings for Step 6 mock data
+ */
+function getMockDataValidationWarnings(mockDefinitions: MockToolDefinition[]): string[] {
+  const warnings: string[] = [];
+
+  for (const def of mockDefinitions) {
+    if (!def.sampleData || def.sampleData.length === 0) {
+      warnings.push(`${def.tool} has no sample data — demo will use empty responses`);
+    }
+    if (!def.mockRequest || Object.keys(def.mockRequest).length === 0) {
+      warnings.push(`${def.tool} has empty mockRequest schema`);
+    }
+    if (!def.mockResponse || Object.keys(def.mockResponse).length === 0) {
+      warnings.push(`${def.tool} has empty mockResponse schema`);
+    }
+  }
+
+  return warnings;
+}
+
+/**
+ * Render a JSON editor with syntax highlighting
+ */
+function renderJsonEditor(
+  json: object,
+  toolIndex: number,
+  field: 'request' | 'response',
+  command: string
+): string {
+  const jsonString = JSON.stringify(json, null, 2);
+
+  return `
+    <div class="json-editor" data-tool-index="${toolIndex}" data-field="${field}">
+      <textarea
+        class="json-textarea"
+        data-tool-index="${toolIndex}"
+        rows="${Math.min(10, jsonString.split('\n').length + 1)}"
+        onchange="handleStep6Command('${command}', { toolIndex: ${toolIndex}, value: this.value })"
+        onblur="handleStep6Command('${command}', { toolIndex: ${toolIndex}, value: this.value })"
+      >${escapeHtml(jsonString)}</textarea>
+    </div>
+  `;
+}
+
+/**
+ * Render sample data table for a tool
+ */
+function renderSampleDataTable(def: MockToolDefinition, toolIndex: number): string {
+  const schemaKeys = Object.keys(def.mockResponse || {});
+  if (schemaKeys.length === 0) {
+    return '<p class="no-schema-message">Define mockResponse schema to enable sample data editing</p>';
+  }
+
+  const headerCells = schemaKeys.map(key => `<th>${escapeHtml(key)}</th>`).join('');
+
+  const rows = (def.sampleData || []).map((row, rowIndex) => {
+    const cells = schemaKeys.map(key => {
+      const value = (row as Record<string, unknown>)[key];
+      const inputType = typeof value === 'number' ? 'number' : 'text';
+      const displayValue = value !== undefined && value !== null ? String(value) : '';
+
+      return `
+        <td>
+          <input
+            type="${inputType}"
+            class="sample-data-input"
+            value="${escapeHtml(displayValue)}"
+            data-tool-index="${toolIndex}"
+            data-row-index="${rowIndex}"
+            data-field="${escapeHtml(key)}"
+            onchange="handleStep6Command('step6UpdateRow', { toolIndex: ${toolIndex}, rowIndex: ${rowIndex}, field: '${escapeHtml(key)}', value: this.value })"
+          />
+        </td>
+      `;
+    }).join('');
+
+    return `
+      <tr data-row-index="${rowIndex}">
+        ${cells}
+        <td class="row-actions">
+          <button class="delete-row-btn" onclick="handleStep6Command('step6DeleteRow', { toolIndex: ${toolIndex}, rowIndex: ${rowIndex} })" title="Delete row">✕</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const sampleCount = def.sampleData?.length || 0;
+  const canAddRow = sampleCount < 5;
+  const addRowDisabled = !canAddRow ? 'disabled' : '';
+  const maxRowsMessage = !canAddRow ? '<span class="max-rows-hint">Maximum 5 rows reached</span>' : '';
+
+  return `
+    <table class="sample-data-table">
+      <thead>
+        <tr>
+          ${headerCells}
+          <th class="actions-col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+    <div class="sample-data-actions">
+      <button class="add-row-btn" onclick="handleStep6Command('step6AddRow', { toolIndex: ${toolIndex} })" ${addRowDisabled}>+ Add Row</button>
+      ${maxRowsMessage}
+    </div>
+  `;
+}
+
+/**
+ * Render accordion card for a mock tool definition
+ */
+function renderMockAccordionCard(def: MockToolDefinition, toolIndex: number): string {
+  const expandedClass = def.expanded ? 'expanded' : '';
+  const chevronIcon = def.expanded ? 'codicon-chevron-down' : 'codicon-chevron-right';
+  const contentDisplay = def.expanded ? '' : 'style="display: none;"';
+
+  // Import summary if present (stored in extended interface)
+  const importSummary = (def as MockToolDefinition & { importSummary?: string }).importSummary;
+  const importSummaryHtml = importSummary
+    ? `<div class="import-summary">${escapeHtml(importSummary)}</div>`
+    : '';
+
+  return `
+    <div class="mock-accordion-card ${expandedClass}" data-tool-index="${toolIndex}">
+      <div class="mock-accordion-header" onclick="handleStep6Command('step6ToggleAccordion', { toolIndex: ${toolIndex} })">
+        <span class="codicon ${chevronIcon}"></span>
+        <div class="accordion-header-content">
+          <div class="accordion-header-row">
+            <span class="tool-name">${escapeHtml(def.tool)}</span>
+            <span class="system-badge">${escapeHtml(def.system)}</span>
+          </div>
+          <span class="tool-description">${escapeHtml(def.description || '')}</span>
+        </div>
+      </div>
+      <div class="mock-accordion-content" ${contentDisplay}>
+        <div class="json-section">
+          <label class="form-label">Mock Request Schema</label>
+          ${renderJsonEditor(def.mockRequest, toolIndex, 'request', 'step6UpdateRequest')}
+        </div>
+        <div class="json-section">
+          <label class="form-label">Mock Response Schema</label>
+          ${renderJsonEditor(def.mockResponse, toolIndex, 'response', 'step6UpdateResponse')}
+        </div>
+        <div class="sample-data-section">
+          <label class="form-label">Sample Data</label>
+          ${renderSampleDataTable(def, toolIndex)}
+        </div>
+        <div class="tool-import-section">
+          <button class="import-btn" onclick="handleStep6Command('step6ImportData', { toolIndex: ${toolIndex} })">
+            Import Sample Data
+          </button>
+          ${importSummaryHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Get Step 6 HTML - Mock Data Strategy
+ */
+export function getStep6Html(state: IdeationState): string {
+  const mockDataState = state.mockData as MockDataState | undefined;
+  const isLoading = mockDataState?.isLoading ?? false;
+  const error = mockDataState?.error;
+  const mockDefinitions = mockDataState?.mockDefinitions ?? [];
+  const useCustomerTerminology = mockDataState?.useCustomerTerminology ?? false;
+
+  // Loading indicator
+  let loadingHtml = '';
+  if (isLoading) {
+    loadingHtml = `
+      <div class="mock-data-loading">
+        <div class="typing-indicator">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <span class="loading-text">Generating mock data definitions...</span>
+      </div>
+    `;
+  }
+
+  // Error display
+  let errorHtml = '';
+  if (error) {
+    errorHtml = `
+      <div class="mock-data-error">
+        <span class="error-text">${escapeHtml(error)}</span>
+      </div>
+    `;
+  }
+
+  // Accordion cards for each tool
+  let accordionCardsHtml = '';
+  if (mockDefinitions.length > 0) {
+    accordionCardsHtml = mockDefinitions.map((def, index) =>
+      renderMockAccordionCard(def, index)
+    ).join('');
+  }
+
+  // Validation warnings (non-blocking)
+  let validationWarningsHtml = '';
+  if (mockDefinitions.length > 0) {
+    const warnings = getMockDataValidationWarnings(mockDefinitions);
+    if (warnings.length > 0) {
+      const warningsListHtml = warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
+      validationWarningsHtml = `
+        <div class="validation-warnings non-blocking">
+          <div class="validation-warnings-header">
+            <span class="warning-icon">⚠</span>
+            <span>Validation Warnings (non-blocking)</span>
+          </div>
+          <ul class="validation-warnings-list">
+            ${warningsListHtml}
+          </ul>
+        </div>
+      `;
+    }
+  }
+
+  // Action buttons
+  const buttonsDisabled = isLoading ? 'disabled' : '';
+  const terminologyToggleClass = useCustomerTerminology ? 'active' : '';
+
+  const actionButtonsHtml = `
+    <div class="mock-data-actions">
+      <button class="regenerate-btn" onclick="handleStep6Command('step6RegenerateAll', {})" ${buttonsDisabled}>
+        ↻ Regenerate All
+      </button>
+      <button class="terminology-toggle ${terminologyToggleClass}" onclick="handleStep6Command('step6ToggleTerminology', { enabled: ${!useCustomerTerminology} })" ${buttonsDisabled}>
+        Use Customer Terminology
+      </button>
+    </div>
+  `;
+
+  return `
+    <div class="step6-header">
+      <h2>Mock Data Strategy</h2>
+      <p class="step-description">Configure mock data for each tool to enable realistic demos. AI-generated sample data can be customized for your customer's terminology.</p>
+    </div>
+
+    ${loadingHtml}
+    ${errorHtml}
+
+    <div class="mock-definitions-container">
+      ${accordionCardsHtml}
+    </div>
+
+    ${validationWarningsHtml}
+    ${actionButtonsHtml}
+  `;
 }
 
 /**

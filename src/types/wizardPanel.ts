@@ -501,6 +501,63 @@ export interface AgentProposalResponse {
   reasoning: string;
 }
 
+// ============================================================================
+// Step 6: Mock Data Strategy Types (Roadmap Item 21)
+// ============================================================================
+
+/**
+ * Mock tool definition for a single tool's mock data configuration
+ * Contains the tool identity, mock request/response schemas, and sample data
+ *
+ * Task 1.2: Interface with edited flags to track user modifications
+ * Following pattern from ProposedAgent interface with edited flags
+ */
+export interface MockToolDefinition {
+  /** Tool name in snake_case format (e.g., 'sap_get_inventory') */
+  tool: string;
+  /** System the tool belongs to (e.g., 'SAP S/4HANA') */
+  system: string;
+  /** Operation type (e.g., 'getInventory', 'queryAccounts') */
+  operation: string;
+  /** Human-readable description of what the tool does */
+  description: string;
+  /** Mock request schema as JSON object */
+  mockRequest: object;
+  /** Mock response schema as JSON object */
+  mockResponse: object;
+  /** Sample data rows (max 5 rows) */
+  sampleData: object[];
+  /** Whether the accordion is expanded in UI */
+  expanded: boolean;
+  /** Whether user has edited the mock request (prevents AI overwrite on regeneration) */
+  requestEdited: boolean;
+  /** Whether user has edited the mock response (prevents AI overwrite on regeneration) */
+  responseEdited: boolean;
+  /** Whether user has edited the sample data (prevents AI overwrite on regeneration) */
+  sampleDataEdited: boolean;
+}
+
+/**
+ * Mock data state for Step 6
+ * Tracks AI-generated mock definitions and user modifications
+ *
+ * Task 1.3: State interface following AgentDesignState pattern
+ */
+export interface MockDataState {
+  /** Array of mock tool definitions from AI */
+  mockDefinitions: MockToolDefinition[];
+  /** Whether to use customer-specific terminology in sample data */
+  useCustomerTerminology: boolean;
+  /** Whether AI is currently generating mock definitions */
+  isLoading: boolean;
+  /** Error message if AI mock generation failed */
+  error?: string;
+  /** Hash of Step 5 confirmed agents for change detection */
+  step5Hash?: string;
+  /** Whether AI has been called for this step */
+  aiCalled: boolean;
+}
+
 /**
  * Wizard state interface
  * Holds all form data and navigation state for the ideation wizard
@@ -593,6 +650,16 @@ export interface WizardState {
   agentDesign: AgentDesignState;
 
   // -------------------------------------------------------------------------
+  // Step 6: Mock Data Strategy (Roadmap Item 21)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Mock data state
+   * Contains mock tool definitions and customer terminology settings
+   */
+  mockData: MockDataState;
+
+  // -------------------------------------------------------------------------
   // Navigation State
   // -------------------------------------------------------------------------
 
@@ -671,6 +738,7 @@ export interface WizardValidationState {
  * Ensures type-safe message handling
  *
  * Task 1.4: Extended with Phase 2 action commands for Step 5 Agent Design Editing
+ * Task 1.5: Extended with Step 6 Mock Data Strategy commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -771,6 +839,28 @@ export const WIZARD_COMMANDS = {
   DISMISS_EDGE_SUGGESTION: 'dismissEdgeSuggestion',
   /** Confirm design and navigate to Step 6 */
   CONFIRM_DESIGN: 'confirmDesign',
+  // -------------------------------------------------------------------------
+  // Step 6: Mock Data Strategy commands (Roadmap Item 21)
+  // Task 1.5: Commands for mock data editing and management
+  // -------------------------------------------------------------------------
+  /** Update mock request JSON for a tool */
+  STEP6_UPDATE_REQUEST: 'step6UpdateRequest',
+  /** Update mock response JSON for a tool */
+  STEP6_UPDATE_RESPONSE: 'step6UpdateResponse',
+  /** Add a new sample data row to a tool */
+  STEP6_ADD_ROW: 'step6AddRow',
+  /** Update a sample data row for a tool */
+  STEP6_UPDATE_ROW: 'step6UpdateRow',
+  /** Delete a sample data row from a tool */
+  STEP6_DELETE_ROW: 'step6DeleteRow',
+  /** Toggle accordion expand/collapse for a tool */
+  STEP6_TOGGLE_ACCORDION: 'step6ToggleAccordion',
+  /** Regenerate all mock definitions from AI */
+  STEP6_REGENERATE_ALL: 'step6RegenerateAll',
+  /** Import sample data from CSV/JSON file */
+  STEP6_IMPORT_DATA: 'step6ImportData',
+  /** Toggle customer terminology setting */
+  STEP6_TOGGLE_TERMINOLOGY: 'step6ToggleTerminology',
 } as const;
 
 /**
@@ -867,6 +957,27 @@ export function createDefaultAgentDesignState(): AgentDesignState {
 }
 
 /**
+ * Creates default mock data state
+ * Used to initialize or reset Step 6 state
+ *
+ * Task 1.4: Factory function following createDefaultAgentDesignState() pattern
+ */
+export function createDefaultMockDataState(): MockDataState {
+  return {
+    // Mock definitions - empty until AI generates
+    mockDefinitions: [],
+    // Customer terminology setting
+    useCustomerTerminology: false,
+    // Loading state
+    isLoading: false,
+    error: undefined,
+    // Change detection
+    step5Hash: undefined,
+    aiCalled: false,
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -894,6 +1005,8 @@ export function createDefaultWizardState(): WizardState {
     },
     // Step 5: Agent Design
     agentDesign: createDefaultAgentDesignState(),
+    // Step 6: Mock Data Strategy
+    mockData: createDefaultMockDataState(),
     // Navigation
     highestStepReached: 1,
     validationAttempted: false,

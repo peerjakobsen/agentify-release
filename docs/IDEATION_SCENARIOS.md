@@ -185,6 +185,69 @@ After clicking "Accept Suggestions" and applying refinements:
 
 ---
 
+**Sample Adjustment Prompt (fixing circular dependencies):**
+
+If circular dependencies are detected (e.g., "No entry point detected: all agents have incoming edges"), use the adjustment input to fix:
+```
+Remove the edges from Compliance Checker back to Document Extractor and from Risk Assessor back to Document Extractor. The flow should be linear: Document Extractor → Fraud Detector → [Credit Analyzer, Compliance Checker] → Risk Assessor → Underwriting Report Generator
+```
+
+---
+
+### Step 6: Mock Data Strategy
+
+#### AI-Generated Mock Definitions
+
+The AI automatically generates mock data shapes for each tool from the confirmed agents:
+
+| Tool | System | Mock Request | Mock Response |
+|------|--------|--------------|---------------|
+| `salesforce_get_application` | Salesforce | `{ "application_id": "string" }` | `{ "applicant_name": "string", "loan_amount": "number", "business_type": "string" }` |
+| `docusign_get_documents` | DocuSign | `{ "envelope_id": "string" }` | `{ "document_name": "string", "status": "string", "pages": "number" }` |
+| `mainframe_get_customer_data` | IBM Mainframe | `{ "customer_id": "string" }` | `{ "account_number": "string", "balance": "number", "credit_limit": "number" }` |
+| `experian_get_credit_report` | Experian | `{ "ssn_hash": "string" }` | `{ "credit_score": "number", "delinquencies": "number", "utilization": "number" }` |
+| `mainframe_get_transaction_history` | IBM Mainframe | `{ "account_id": "string", "days": "number" }` | `{ "transaction_id": "string", "amount": "number", "type": "string", "date": "string" }` |
+| `experian_get_fraud_indicators` | Experian | `{ "application_id": "string" }` | `{ "fraud_score": "number", "flags": "string[]", "risk_level": "string" }` |
+
+#### Sample Data (Accordion Expanded for `mainframe_get_customer_data`)
+
+| account_number | balance | credit_limit |
+|----------------|---------|--------------|
+| ACC-2024-00147 | 125000 | 500000 |
+| ACC-2024-00892 | 45000 | 150000 |
+| ACC-2024-01234 | 890000 | 1000000 |
+
+---
+
+**Sample "Use Customer Terminology" Toggle:**
+
+When enabled, the AI regenerates sample data with industry-specific terminology:
+
+*Before:*
+```json
+{ "applicant_name": "John Smith", "loan_amount": 500000, "business_type": "LLC" }
+```
+
+*After (FSI terminology):*
+```json
+{ "borrower_legal_name": "Smith Holdings LLC", "requested_facility_amount": 500000, "entity_structure": "Limited Liability Company" }
+```
+
+---
+
+**Sample Import Action:**
+
+Import a CSV file with customer sample data:
+```
+account_number,balance,credit_limit
+ACC-2024-00147,125000,500000
+ACC-2024-00892,45000,150000
+```
+
+**Import Summary:** Imported 2 rows. Mapped: account_number, balance, credit_limit. Ignored: none.
+
+---
+
 ## Scenario 2: Manufacturing - Predictive Maintenance Agent
 
 ### Step 1: Business Context
@@ -363,6 +426,61 @@ After clicking "Accept Suggestions" and applying refinements:
 | Notification Agent | Parts Optimizer |
 
 **Validation Warnings:** None
+
+---
+
+### Step 6: Mock Data Strategy
+
+#### AI-Generated Mock Definitions
+
+The AI automatically generates mock data shapes for each tool from the confirmed agents:
+
+| Tool | System | Mock Request | Mock Response |
+|------|--------|--------------|---------------|
+| `mindsphere_get_sensor_data` | Siemens MindSphere | `{ "asset_id": "string", "sensor_type": "string" }` | `{ "temperature": "number", "vibration": "number", "pressure": "number", "timestamp": "string" }` |
+| `factorytalk_get_plc_status` | Rockwell FactoryTalk | `{ "plc_id": "string" }` | `{ "status": "string", "cycle_count": "number", "error_code": "number" }` |
+| `factorytalk_get_oee_data` | Rockwell FactoryTalk | `{ "line_id": "string", "shift": "string" }` | `{ "availability": "number", "performance": "number", "quality": "number", "oee": "number" }` |
+| `databricks_run_prediction` | Databricks | `{ "model_id": "string", "features": "object" }` | `{ "failure_probability": "number", "predicted_rul": "number", "confidence": "number" }` |
+| `sap_create_work_order` | SAP S/4HANA | `{ "equipment_id": "string", "priority": "string" }` | `{ "work_order_id": "string", "scheduled_date": "string", "technician_id": "string" }` |
+| `sap_get_inventory_levels` | SAP S/4HANA | `{ "part_number": "string", "plant": "string" }` | `{ "quantity_on_hand": "number", "reorder_point": "number", "lead_time_days": "number" }` |
+
+#### Sample Data (Accordion Expanded for `mindsphere_get_sensor_data`)
+
+| temperature | vibration | pressure | timestamp |
+|-------------|-----------|----------|-----------|
+| 78.5 | 0.12 | 145.2 | 2024-01-15T08:30:00Z |
+| 82.1 | 0.18 | 148.7 | 2024-01-15T08:35:00Z |
+| 95.3 | 0.45 | 152.1 | 2024-01-15T08:40:00Z |
+
+---
+
+**Sample "Use Customer Terminology" Toggle:**
+
+When enabled, the AI regenerates sample data with industry-specific terminology:
+
+*Before:*
+```json
+{ "equipment_id": "EQ-001", "priority": "high", "failure_probability": 0.85 }
+```
+
+*After (Manufacturing terminology):*
+```json
+{ "functional_location": "LINE-A-PRESS-001", "maintenance_priority": "PM01", "predicted_failure_index": 0.85 }
+```
+
+---
+
+**Sample Import Action:**
+
+Import a JSON file with sensor calibration data:
+```json
+[
+  { "temperature": 78.5, "vibration": 0.12, "pressure": 145.2 },
+  { "temperature": 82.1, "vibration": 0.18, "pressure": 148.7 }
+]
+```
+
+**Import Summary:** Imported 2 rows. Mapped: temperature, vibration, pressure. Ignored: none.
 
 ---
 
@@ -554,6 +672,69 @@ After clicking "Accept Suggestions" and applying refinements:
 | Compliance Auditor | Submission Packager |
 
 **Validation Warnings:** None
+
+---
+
+### Step 6: Mock Data Strategy
+
+#### AI-Generated Mock Definitions
+
+The AI automatically generates mock data shapes for each tool from the confirmed agents:
+
+| Tool | System | Mock Request | Mock Response |
+|------|--------|--------------|---------------|
+| `medidata_query_study_data` | Medidata Rave | `{ "study_id": "string", "visit_id": "string" }` | `{ "subject_id": "string", "visit_date": "string", "adverse_events": "number", "protocol_deviations": "number" }` |
+| `hipaa_apply_safe_harbor` | HIPAA Compliance | `{ "patient_record": "object" }` | `{ "anonymized_id": "string", "age_bracket": "string", "region": "string" }` |
+| `veeva_get_template` | Veeva Vault | `{ "template_type": "string", "region": "string" }` | `{ "template_id": "string", "sections": "string[]", "version": "string" }` |
+| `sas_get_statistical_outputs` | SAS | `{ "analysis_id": "string" }` | `{ "p_value": "number", "confidence_interval": "string", "effect_size": "number" }` |
+| `veeva_validate_ectd_structure` | Veeva Vault | `{ "submission_id": "string" }` | `{ "is_valid": "boolean", "errors": "string[]", "warnings": "string[]" }` |
+| `ectd_publish_package` | eCTD Publishing | `{ "dossier_id": "string", "target_agency": "string" }` | `{ "package_id": "string", "file_count": "number", "total_size_mb": "number" }` |
+
+#### Sample Data (Accordion Expanded for `medidata_query_study_data`)
+
+| subject_id | visit_date | adverse_events | protocol_deviations |
+|------------|------------|----------------|---------------------|
+| SUBJ-001-A | 2024-01-15 | 0 | 0 |
+| SUBJ-002-B | 2024-01-16 | 1 | 0 |
+| SUBJ-003-C | 2024-01-17 | 0 | 1 |
+| SUBJ-004-D | 2024-01-18 | 2 | 0 |
+
+---
+
+**Sample "Use Customer Terminology" Toggle:**
+
+When enabled, the AI regenerates sample data with industry-specific terminology:
+
+*Before:*
+```json
+{ "subject_id": "SUBJ-001", "adverse_events": 2, "visit_date": "2024-01-15" }
+```
+
+*After (Life Sciences terminology):*
+```json
+{ "screening_number": "SCR-2024-001", "ae_count_teae": 2, "visit_window_date": "V1D1-15JAN2024" }
+```
+
+---
+
+**Sample Import Action:**
+
+Import a CSV file with clinical study data:
+```
+subject_id,visit_date,adverse_events,protocol_deviations
+SUBJ-001-A,2024-01-15,0,0
+SUBJ-002-B,2024-01-16,1,0
+SUBJ-003-C,2024-01-17,0,1
+```
+
+**Import Summary:** Imported 3 rows. Mapped: subject_id, visit_date, adverse_events, protocol_deviations. Ignored: none.
+
+---
+
+**Validation Warnings:**
+- `hipaa_apply_safe_harbor` has no sample data — demo will use empty responses
+
+*(Non-blocking: User can proceed to generate demo)*
 
 ---
 

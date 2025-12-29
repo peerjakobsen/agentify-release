@@ -401,7 +401,7 @@ interface ProposedEdge {
 - Handoff limits (Swarm-specific)
 - Parallel group config (Workflow-specific)
 
-21. [ ] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
+21. [x] Mock Data Strategy — Build wizard step 6 for AI-generated mock data configuration:
 
 **Auto-Generation on Step Entry:**
 - For each tool identified in agent design, model proposes mock data shape:
