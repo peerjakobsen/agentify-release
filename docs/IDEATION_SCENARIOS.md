@@ -120,6 +120,39 @@ All loan decisions require human approval before communication to customer. Agen
 
 ---
 
+### Step 5: Agent Design Proposal
+
+#### AI-Proposed Agent Team
+
+| Agent | Role | Tools |
+|-------|------|-------|
+| **Document Extractor** | Extract financial metrics from loan documents | `salesforce_get_application`, `docusign_get_documents`, `mainframe_get_customer_data` |
+| **Credit Analyzer** | Pull credit reports and analyze creditworthiness | `experian_get_credit_report`, `moodys_get_risk_score`, `snowflake_query_loan_history` |
+| **Compliance Checker** | Verify regulatory compliance and flag issues | `mainframe_get_account_balances`, `basel_calculate_capital_adequacy`, `bloomberg_get_market_risk` |
+| **Risk Assessor** | Generate preliminary risk scores and recommendations | `snowflake_query_performance_data`, `salesforce_get_relationship_notes` |
+| **Output Formatter** | Compile final underwriting report | `salesforce_update_opportunity`, `los_create_assessment` |
+
+**Orchestration Pattern:** `workflow`
+
+**Why this pattern?**
+```
+Loan underwriting follows a deterministic sequence: documents must be extracted before credit analysis, compliance checks run in parallel with risk assessment, and all results feed into the final report. The workflow pattern ensures consistent execution order with automatic parallelization where safe.
+```
+
+**Flow Summary:**
+```
+Document Extractor → [Credit Analyzer | Compliance Checker] → Risk Assessor → Output Formatter
+```
+
+---
+
+**Sample Adjustment Prompt:**
+```
+Add a Fraud Detection agent between Document Extractor and Credit Analyzer. It should use the mainframe transaction history and Experian fraud indicators. Also rename Output Formatter to Underwriting Report Generator.
+```
+
+---
+
 ## Scenario 2: Manufacturing - Predictive Maintenance Agent
 
 ### Step 1: Business Context
@@ -232,6 +265,39 @@ Reduce unplanned production downtime by 70% through AI-driven predictive mainten
 **Guardrail Notes:**
 ```
 Agent cannot directly control equipment - all actions must be recommendations to human operators. Emergency shutdown scenarios require immediate human notification via SMS. Maintenance windows must respect collective bargaining agreement shift rules.
+```
+
+---
+
+### Step 5: Agent Design Proposal
+
+#### AI-Proposed Agent Team
+
+| Agent | Role | Tools |
+|-------|------|-------|
+| **Sensor Monitor** | Continuously monitor IoT sensor data for anomalies | `mindsphere_get_sensor_data`, `osisoft_query_pi_tags`, `factorytalk_get_plc_status` |
+| **Failure Predictor** | Run ML models to predict equipment failures | `databricks_run_prediction`, `mindsphere_get_asset_health`, `sap_get_maintenance_history` |
+| **Work Order Creator** | Generate and route maintenance work orders | `sap_create_work_order`, `servicenow_create_incident`, `maximo_schedule_maintenance` |
+| **Parts Optimizer** | Analyze spare parts inventory and recommend orders | `sap_get_inventory_levels`, `sap_create_purchase_requisition`, `kronos_get_shift_schedule` |
+| **Notification Agent** | Alert technicians and supervisors of predicted failures | `servicenow_dispatch_technician`, `sap_notify_supervisor` |
+
+**Orchestration Pattern:** `graph`
+
+**Why this pattern?**
+```
+Predictive maintenance requires conditional routing based on failure severity and type. Critical failures trigger immediate notifications, while minor issues can wait for scheduled windows. The graph pattern allows the LLM to dynamically route based on real-time conditions and maintenance urgency.
+```
+
+**Flow Summary:**
+```
+Sensor Monitor → Failure Predictor → [Work Order Creator | Notification Agent]? → Parts Optimizer
+```
+
+---
+
+**Sample Adjustment Prompt:**
+```
+Add an OEE Calculator agent that tracks Overall Equipment Effectiveness metrics. It should pull data from FactoryTalk and feed into the Failure Predictor for correlation. Also, the Parts Optimizer should integrate with our supplier portal for automated reorder suggestions.
 ```
 
 ---
@@ -354,6 +420,39 @@ Reduce NDA/BLA submission preparation time by 50% while improving document quali
 **Guardrail Notes:**
 ```
 All patient data must be de-identified before AI processing. 21 CFR Part 11 compliance required for electronic signatures and audit trails. No patient-level data can leave the validated environment. All AI-generated content must be reviewed by qualified medical writer before submission. Agent must maintain complete audit trail for regulatory inspection.
+```
+
+---
+
+### Step 5: Agent Design Proposal
+
+#### AI-Proposed Agent Team
+
+| Agent | Role | Tools |
+|-------|------|-------|
+| **Data Extractor** | Extract structured data from clinical databases | `medidata_query_study_data`, `oracle_get_patient_demographics`, `lims_get_bioanalytical_data` |
+| **Document Compiler** | Generate CSR sections from templates | `veeva_get_template`, `snowflake_query_historical_submissions`, `sas_get_statistical_outputs` |
+| **Cross-Reference Validator** | Identify inconsistencies across documents | `veeva_compare_documents`, `oracle_validate_references`, `snowflake_check_data_consistency` |
+| **Compliance Auditor** | Verify FDA/EMA format compliance | `veeva_validate_ectd_structure`, `oracle_audit_signatures`, `veeva_check_21cfr11` |
+| **Submission Packager** | Assemble final eCTD submission package | `veeva_create_submission`, `ectd_publish_package`, `veeva_generate_audit_trail` |
+
+**Orchestration Pattern:** `workflow`
+
+**Why this pattern?**
+```
+Regulatory submissions require strict sequential processing: data must be extracted and validated before documents can be compiled, cross-references checked before compliance audit, and everything verified before final packaging. The workflow pattern ensures deterministic execution with parallel processing only where data dependencies allow.
+```
+
+**Flow Summary:**
+```
+Data Extractor → Document Compiler → [Cross-Reference Validator | Compliance Auditor] → Submission Packager
+```
+
+---
+
+**Sample Adjustment Prompt:**
+```
+Add a De-identification Agent at the start that anonymizes all patient data according to HIPAA Safe Harbor. It should run before Data Extractor. Also add a Medical Writing Assistant agent that helps format clinical narratives - it should work alongside Document Compiler.
 ```
 
 ---
