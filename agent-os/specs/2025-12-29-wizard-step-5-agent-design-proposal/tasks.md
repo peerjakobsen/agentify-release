@@ -215,45 +215,43 @@ Total Sub-tasks: 49 (across 6 task groups)
 #### Task Group 5: Auto-Proposal Trigger and Navigation
 **Dependencies:** Task Groups 1-4
 
-- [ ] 5.0 Complete auto-proposal trigger mechanism
-  - [ ] 5.1 Write 4 focused tests in `src/test/suite/step5AgentDesign.test.ts`
+- [x] 5.0 Complete auto-proposal trigger mechanism
+  - [x] 5.1 Write 4 focused tests in `src/test/types/step5AgentDesign.test.ts`
     - Test generateStep4Hash() produces consistent hash from Steps 1-4 inputs
     - Test triggerAutoSendForStep5() calls service when hash differs
     - Test triggerAutoSendForStep5() skips call when aiCalled=true and hash unchanged
     - Test ideationNavigateForward() calls trigger when moving from Step 4 to Step 5
-  - [ ] 5.2 Implement generateStep4Hash() function
+  - [x] 5.2 Implement generateStep4Hash() function
     - Include: industry, systems, customSystems
     - Include: confirmedAssumptions from aiGapFillingState
     - Include: primaryOutcome, successMetrics from outcome state
     - Include: dataSensitivity, complianceFrameworks, approvalGates from securityGuardrails
     - Follow generateStep1Hash() pattern using djb2 algorithm
-  - [ ] 5.3 Implement triggerAutoSendForStep5() method
+  - [x] 5.3 Implement triggerAutoSend() method in Step5LogicHandler
     - Follow triggerAutoSendForStep3() pattern exactly
     - Compare current hash with stored step4Hash
     - If hash differs, reset agentDesign state and re-fetch proposal
     - Only auto-send if !aiCalled and conversation is fresh
-  - [ ] 5.4 Implement sendAgentDesignContextToClaude() method
+  - [x] 5.4 Implement sendAgentDesignContextToClaude() method
     - Build context using service.buildAgentDesignContextMessage()
     - Set isLoading=true, clear error
     - Stream response using service.sendMessage()
     - Handle tokens via event handlers
     - Follow sendOutcomeContextToClaude() pattern
-  - [ ] 5.5 Add event handlers for streaming
+  - [x] 5.5 Add event handlers for streaming
     - handleAgentDesignStreamingToken(): append to streaming response
     - handleAgentDesignStreamingComplete(): parse response, update state
     - handleAgentDesignStreamingError(): set error state, handle retry
     - Follow outcome streaming handlers pattern
-  - [ ] 5.6 Update ideationNavigateForward() to trigger Step 5
+  - [x] 5.6 Update ideationNavigateForward() to trigger Step 5
     - Add condition: if (previousStep === 4 && this._ideationState.currentStep === 5)
-    - Call this.triggerAutoSendForStep5()
+    - Call this._step5Handler.triggerAutoSend()
     - Follow existing navigation trigger pattern in ideationNavigateForward()
-  - [ ] 5.7 Initialize AgentDesignService in tabbedPanel.ts
-    - Add _agentDesignService property
-    - Add _agentDesignDisposables array
-    - Add _agentDesignStreamingResponse string
-    - Add initAgentDesignService() method following initOutcomeService() pattern
-    - Add cleanup in panel's dispose() method to dispose _agentDesignService and _agentDesignDisposables
-  - [ ] 5.8 Ensure integration tests pass
+  - [x] 5.7 Initialize Step5LogicHandler in tabbedPanel.ts
+    - Add _step5Handler property
+    - Initialize in initStepHandlers() method
+    - Add cleanup in panel's dispose() method
+  - [x] 5.8 Ensure integration tests pass
     - Run ONLY the 4 tests written in 5.1
     - Verify navigation triggers AI correctly
 
@@ -268,41 +266,41 @@ Total Sub-tasks: 49 (across 6 task groups)
 #### Task Group 6: Action Handlers and Message Routing
 **Dependencies:** Task Group 5
 
-- [ ] 6.0 Complete action handlers
-  - [ ] 6.1 Write 4 focused tests in `src/test/suite/step5AgentDesign.test.ts`
+- [x] 6.0 Complete action handlers
+  - [x] 6.1 Write 4 focused tests in `src/test/types/step5AgentDesign.test.ts`
     - Test handleRegenerateAgentProposal() clears state and re-fetches
     - Test Accept & Continue sets proposalAccepted=true and navigates to Step 6
     - Test "Let me adjust..." sets proposalAccepted=true and shows placeholder message
     - Test all buttons are disabled during isLoading state
-  - [ ] 6.2 Implement handleRegenerateAgentProposal() method
+  - [x] 6.2 Implement handleRegenerateProposal() method in Step5LogicHandler
     - Clear agentDesign state (preserve step4Hash)
     - Reset service conversation via service.resetConversation()
     - Re-fetch proposal via sendAgentDesignContextToClaude()
     - Follow handleRegenerateOutcomeSuggestions pattern
-  - [ ] 6.3 Implement handleAcceptAgentProposal() method
+  - [x] 6.3 Implement handleAcceptProposal() method in Step5LogicHandler
     - Set proposalAccepted=true in agentDesign state
-    - Navigate to Step 6 via ideationNavigateForward() or direct step update
+    - Navigation handled by tabbedPanel.ts message handler
     - Update webview content and sync state
-  - [ ] 6.4 Implement handleAdjustAgentProposal() method
+  - [x] 6.4 Implement handleAdjustProposal() method in Step5LogicHandler
     - Set proposalAccepted=true in agentDesign state
     - Stay on Step 5 (do not navigate)
     - Show placeholder message: "Agent editing coming soon - click Accept to continue."
     - This is placeholder for Roadmap Item 19
-  - [ ] 6.5 Add message handlers in handleIdeationMessage() switch
+  - [x] 6.5 Add message handlers in handleIdeationMessage() switch
     - Case 'regenerateAgentProposal': call handleRegenerateAgentProposal()
     - Case 'acceptAgentProposal': call handleAcceptAgentProposal()
     - Case 'adjustAgentProposal': call handleAdjustAgentProposal()
     - Case 'toggleOrchestrationReasoning': toggle expand/collapse state
-  - [ ] 6.6 Add getStep5Html() call in getStepContentHtml() in ideationStepHtml.ts
+  - [x] 6.6 Add getStep5Html() call in getStepContentHtml() in ideationStepHtml.ts
     - Add case for step 5 in the step content switch
     - Ensure navigation buttons render correctly for Step 5
-  - [ ] 6.7 Add JavaScript handlers in ideationScript.ts
+  - [x] 6.7 Add JavaScript handlers in ideationScript.ts
     - Add regenerateAgentProposal() function
     - Add acceptAgentProposal() function
     - Add adjustAgentProposal() function
     - Add toggleOrchestrationReasoning() function
     - Follow existing handler patterns in getIdeationScript()
-  - [ ] 6.8 Ensure action handler tests pass
+  - [x] 6.8 Ensure action handler tests pass
     - Run ONLY the 4 tests written in 6.1
     - Verify button states and navigation work correctly
 
