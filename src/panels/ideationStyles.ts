@@ -1040,5 +1040,56 @@ export function getIdeationStyles(): string {
         opacity: 0.5;
         cursor: not-allowed;
       }
+
+      /* Step 5: Adjustment Input Section */
+      .adjustment-section {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--vscode-input-border);
+      }
+      .adjustment-input-group {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .adjustment-input {
+        flex: 1;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-family: var(--vscode-font-family);
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .adjustment-input:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .adjustment-input:disabled {
+        opacity: 0.5;
+      }
+      .send-adjustment-btn {
+        padding: 8px 16px;
+        font-size: 13px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .send-adjustment-btn:hover:not(:disabled) {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .send-adjustment-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .adjustment-hints {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
     `;
 }

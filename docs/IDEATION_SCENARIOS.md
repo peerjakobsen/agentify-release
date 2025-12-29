@@ -215,7 +215,7 @@ Reduce unplanned production downtime through AI-driven predictive maintenance wh
 
 **Sample Refinement Prompt:**
 ```
-We're targeting 70% downtime reduction based on our OEE analysis. Add metrics for spare parts inventory turns and maintenance cost per unit. Mean time to repair should be 2 hours max. Also include Finance since they're tracking the ROI.
+We're targeting 80% downtime reduction based on our OEE analysis. Add metrics for spare parts inventory turns and maintenance cost per unit. Mean time to repair should be 2 hours max. Also include Finance since they're tracking the ROI.
 ```
 
 ---

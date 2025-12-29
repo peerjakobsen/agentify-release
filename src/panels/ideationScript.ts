@@ -166,8 +166,18 @@ export function getIdeationScript(): string {
       function acceptAgentProposal() {
         vscode.postMessage({ command: 'acceptAgentProposal' });
       }
-      function adjustAgentProposal() {
-        vscode.postMessage({ command: 'adjustAgentProposal' });
+      function sendAgentDesignAdjustment() {
+        const input = document.getElementById('adjustment-input');
+        if (input && input.value.trim()) {
+          vscode.postMessage({ command: 'sendAgentDesignAdjustment', value: input.value.trim() });
+          input.value = '';
+        }
+      }
+      function handleAdjustmentKeydown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          sendAgentDesignAdjustment();
+        }
       }
       function toggleOrchestrationReasoning() {
         const reasoningElement = document.querySelector('.orchestration-reasoning');

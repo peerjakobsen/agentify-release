@@ -974,9 +974,15 @@ export function getStep5Html(state: IdeationState): string {
     ? '<div class="accepted-banner">Proposal Accepted ✓</div>'
     : '';
 
-  // Action buttons
+  // Action buttons - hide Accept & Let me adjust when proposal is accepted
   const buttonsDisabled = isLoading ? 'disabled' : '';
-  const actionButtonsHtml = `
+  const actionButtonsHtml = proposalAccepted ? `
+      <div class="agent-design-actions">
+        <button class="regenerate-btn" onclick="regenerateAgentProposal()" ${buttonsDisabled}>
+          ↻ Regenerate
+        </button>
+      </div>
+    ` : `
       <div class="agent-design-actions">
         <button class="regenerate-btn" onclick="regenerateAgentProposal()" ${buttonsDisabled}>
           ↻ Regenerate
@@ -984,11 +990,28 @@ export function getStep5Html(state: IdeationState): string {
         <button class="accept-btn" onclick="acceptAgentProposal()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
           Accept &amp; Continue
         </button>
-        <button class="adjust-btn" onclick="adjustAgentProposal()" ${buttonsDisabled || (!hasAgents ? 'disabled' : '')}>
-          Let me adjust...
-        </button>
       </div>
     `;
+
+  // Adjustment input section - always visible when there are agents
+  const adjustmentInputHtml = hasAgents ? `
+      <div class="adjustment-section">
+        <div class="adjustment-input-group">
+          <input type="text"
+            id="adjustment-input"
+            class="adjustment-input"
+            placeholder="Adjust agent design..."
+            ${isLoading ? 'disabled' : ''}
+            onkeydown="handleAdjustmentKeydown(event)">
+          <button class="send-adjustment-btn" onclick="sendAgentDesignAdjustment()" ${isLoading || !hasAgents ? 'disabled' : ''}>
+            Send
+          </button>
+        </div>
+        <p class="adjustment-hints">
+          e.g., "Add a fraud detection agent" or "Change orchestration to workflow"
+        </p>
+      </div>
+    ` : '';
 
   return `
       <div class="step5-header">
@@ -1003,6 +1026,7 @@ export function getStep5Html(state: IdeationState): string {
       ${orchestrationHtml}
       ${flowSummaryHtml}
       ${actionButtonsHtml}
+      ${adjustmentInputHtml}
     `;
 }
 

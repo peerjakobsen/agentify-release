@@ -485,9 +485,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.updateWebviewContent();
         this.syncStateToWebview();
         break;
-      case 'adjustAgentProposal':
-        this._step5Handler?.handleAdjustProposal();
-        // Show placeholder message - stay on Step 5
+      case 'sendAgentDesignAdjustment':
+        this._step5Handler?.handleSendAdjustment(message.value as string, this.getStep5Inputs());
         break;
       case 'toggleOrchestrationReasoning':
         // Toggle handled in JS, just sync state

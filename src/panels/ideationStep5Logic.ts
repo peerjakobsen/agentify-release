@@ -296,13 +296,51 @@ export class Step5LogicHandler {
   }
 
   /**
-   * Handle adjust proposal (placeholder for future implementation)
+   * Handle send adjustment request
+   * Sends a refinement message to Claude with the user's adjustment text
    */
-  public handleAdjustProposal(): void {
-    this._state.proposalAccepted = true;
-    // Stay on Step 5 - adjustment UI coming in Roadmap Item 19
+  public async handleSendAdjustment(adjustmentText: string, inputs: Step5ContextInputs): Promise<void> {
+    if (!adjustmentText.trim()) return;
+
+    const service = this.initAgentDesignService();
+    if (!service) {
+      this._state.error = 'Agent design service not available. Please check your configuration.';
+      this._callbacks.syncStateToWebview();
+      return;
+    }
+
+    // Build adjustment message that includes current state for context
+    const currentAgents = this._state.proposedAgents
+      .map(a => `- ${a.name} (#${a.id}): ${a.role}`)
+      .join('\n');
+
+    const adjustmentMessage = `The user wants to adjust the current agent design proposal.
+
+Current agents:
+${currentAgents}
+
+Current orchestration: ${this._state.proposedOrchestration}
+
+User's adjustment request: "${adjustmentText}"
+
+Please provide an updated agent design proposal that incorporates the user's requested changes. Return the complete updated proposal in JSON format.`;
+
+    // Set loading state
+    this._state.isLoading = true;
+    this._state.error = undefined;
+    this._agentDesignStreamingResponse = '';
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
+
+    // Send adjustment message to Claude (streaming handled by event handlers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _token of service.sendMessage(adjustmentMessage)) {
+        // Tokens are handled by onToken event handler
+      }
+    } catch (error) {
+      this.handleAgentDesignStreamingError(error instanceof Error ? error.message : 'Unknown error');
+    }
   }
 
   /**
