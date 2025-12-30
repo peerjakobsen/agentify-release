@@ -1,0 +1,143 @@
+{
+ "Description": "Observability infrastructure for Agentify Demo Viewer",
+ "Resources": {
+  "WorkflowEventsTable8D2C44F9": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "workflow_id",
+      "AttributeType": "S"
+     },
+     {
+      "AttributeName": "timestamp",
+      "AttributeType": "N"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+     {
+      "AttributeName": "workflow_id",
+      "KeyType": "HASH"
+     },
+     {
+      "AttributeName": "timestamp",
+      "KeyType": "RANGE"
+     }
+    ],
+    "SSESpecification": {
+     "SSEEnabled": true
+    },
+    "TableName": "agentify-workflow-events",
+    "TimeToLiveSpecification": {
+     "AttributeName": "ttl",
+     "Enabled": true
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "Agentify-Observability-us-east-1/WorkflowEventsTable/Resource"
+   }
+  },
+  "WorkflowEventsTableNameParam93DF5D11": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Description": "DynamoDB table name for workflow events",
+    "Name": "/agentify/services/dynamodb/workflow-events-table",
+    "Tier": "Standard",
+    "Type": "String",
+    "Value": {
+     "Ref": "WorkflowEventsTable8D2C44F9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Agentify-Observability-us-east-1/WorkflowEventsTableNameParam/Resource"
+   }
+  },
+  "WorkflowEventsTableArnParam7DAC8232": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Description": "DynamoDB table ARN for workflow events",
+    "Name": "/agentify/services/dynamodb/workflow-events-table-arn",
+    "Tier": "Standard",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "WorkflowEventsTable8D2C44F9",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Agentify-Observability-us-east-1/WorkflowEventsTableArnParam/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/z2LXQ7CIBCEz9J3uiocwQPYVN/N8qNiCxh2SdMQ7m5aE59mvsw3EqSSIDtcqDd26mevoV4ZzSRwoXu1a8SQrIZ6Qz07cX7EvTRBFDYz+/gcMGNw7PI2/6E1MTpKJZv9din8KdzEsPIrxYOCk4Jj9ybv+1wi++Bg/OUX98PIBpQAAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "Agentify-Observability-us-east-1/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "WorkflowEventsTableName": {
+   "Description": "DynamoDB table name for Agentify workflow events",
+   "Value": {
+    "Ref": "WorkflowEventsTable8D2C44F9"
+   },
+   "Export": {
+    "Name": "agentify-WorkflowEventsTableName"
+   }
+  },
+  "WorkflowEventsTableArn": {
+   "Description": "DynamoDB table ARN for Agentify workflow events",
+   "Value": {
+    "Fn::GetAtt": [
+     "WorkflowEventsTable8D2C44F9",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "agentify-WorkflowEventsTableArn"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

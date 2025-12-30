@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "7aec1daef9b3609783f430f85639a54571b9c46822ee914f4bfd8958a490f643": {
+      "displayName": "Agentify-Observability-us-east-1 Template",
+      "source": {
+        "path": "Agentify-Observability-us-east-1.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-us-east-1-9155b70e": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1",
+          "objectKey": "7aec1daef9b3609783f430f85639a54571b9c46822ee914f4bfd8958a490f643.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}
