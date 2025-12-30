@@ -72,7 +72,7 @@ export interface PersistedWizardState {
   uploadedFileMetadata?: PersistedFileMetadata;
 
   // -------------------------------------------------------------------------
-  // Step 2-7: State Objects
+  // Step 2-8: State Objects
   // -------------------------------------------------------------------------
 
   /** AI gap-filling conversation state */
@@ -87,6 +87,8 @@ export interface PersistedWizardState {
   mockData: MockDataState;
   /** Demo strategy state */
   demoStrategy: DemoStrategyState;
+  /** Generation state for Step 8 */
+  generation?: GenerationState;
 }
 
 /**
@@ -737,6 +739,81 @@ export interface DemoStrategyState {
   narrativeEdited: boolean;
 }
 
+// ============================================================================
+// Step 8: Generation Types (Wizard Step 8 - Generate)
+// ============================================================================
+
+/**
+ * Steering files to be generated
+ * Task 1.4: Constant array of steering file names
+ */
+export const STEERING_FILES: string[] = [
+  'product.md',
+  'tech.md',
+  'structure.md',
+  'customer-context.md',
+  'integration-landscape.md',
+  'security-policies.md',
+  'demo-strategy.md',
+];
+
+/**
+ * Validation status for a step summary
+ * Task 1.3: Status levels for pre-generation summary cards
+ */
+export type StepValidationStatus = 'complete' | 'warning' | 'error';
+
+/**
+ * Step summary for pre-generation display
+ * Task 1.3: Interface for summary card data
+ */
+export interface StepSummary {
+  /** Step number (1-7) */
+  stepNumber: number;
+  /** Step display name */
+  stepName: string;
+  /** Key-value pairs of summary data to display */
+  summaryData: Record<string, string>;
+  /** Validation status for the step */
+  validationStatus: StepValidationStatus;
+  /** Optional validation message to display */
+  validationMessage?: string;
+}
+
+/**
+ * Failed file information during generation
+ * Task 1.2: Tracks which file failed and the error
+ */
+export interface FailedFile {
+  /** File name that failed to generate */
+  name: string;
+  /** Error message from the failure */
+  error: string;
+}
+
+/**
+ * Generation state for Step 8
+ * Task 1.2: Interface following MockDataState pattern
+ */
+export interface GenerationState {
+  /** Whether steering file generation is in progress */
+  isGenerating: boolean;
+  /** Current file index being generated (-1 if not started) */
+  currentFileIndex: number;
+  /** Array of completed file names */
+  completedFiles: string[];
+  /** Information about failed file (if any) */
+  failedFile?: FailedFile;
+  /** Array of generated file paths (full paths) */
+  generatedFilePaths: string[];
+  /** Whether the progress accordion is expanded */
+  accordionExpanded: boolean;
+  /** Whether generation can proceed (no 'error' validation status) */
+  canGenerate: boolean;
+  /** Whether using placeholder/stub implementation (true until Phase 3 Item 28) */
+  isPlaceholderMode: boolean;
+}
+
 /**
  * Wizard state interface
  * Holds all form data and navigation state for the ideation wizard
@@ -855,6 +932,17 @@ export interface WizardState {
   demoStrategy: DemoStrategyState;
 
   // -------------------------------------------------------------------------
+  // Step 8: Generation (Wizard Step 8)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Generation state
+   * Contains generation progress, completed files, and error state
+   * Task 1.7: Added for Step 8 generation tracking
+   */
+  generation: GenerationState;
+
+  // -------------------------------------------------------------------------
   // Navigation State
   // -------------------------------------------------------------------------
 
@@ -936,6 +1024,7 @@ export interface WizardValidationState {
  * Task 1.5: Extended with Step 6 Mock Data Strategy commands
  * Task 5.2: Extended with Resume Banner commands
  * Task 1.6: Extended with Step 7 Demo Strategy commands
+ * Task 1.5: Extended with Step 8 Generation commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -1093,6 +1182,24 @@ export const WIZARD_COMMANDS = {
   /** Generate all sections via AI sequentially */
   STEP7_GENERATE_ALL: 'step7GenerateAll',
   // -------------------------------------------------------------------------
+  // Step 8: Generation commands (Wizard Step 8)
+  // Task 1.5: Commands for steering file generation
+  // -------------------------------------------------------------------------
+  /** Generate steering files */
+  STEP8_GENERATE: 'step8Generate',
+  /** Generate steering files and open in Kiro */
+  STEP8_GENERATE_AND_OPEN_KIRO: 'step8GenerateAndOpenKiro',
+  /** Start over (reset wizard) */
+  STEP8_START_OVER: 'step8StartOver',
+  /** Open a generated file */
+  STEP8_OPEN_FILE: 'step8OpenFile',
+  /** Retry generation from failed file */
+  STEP8_RETRY: 'step8Retry',
+  /** Toggle progress accordion */
+  STEP8_TOGGLE_ACCORDION: 'step8ToggleAccordion',
+  /** Edit a specific step from summary */
+  STEP8_EDIT_STEP: 'step8EditStep',
+  // -------------------------------------------------------------------------
   // Resume Banner commands (Task 5.2)
   // -------------------------------------------------------------------------
   /** Resume previous session from persisted state */
@@ -1247,6 +1354,29 @@ export function createDefaultDemoStrategyState(): DemoStrategyState {
 }
 
 /**
+ * Creates default generation state
+ * Used to initialize or reset Step 8 state
+ *
+ * Task 1.6: Factory function following createDefaultMockDataState() pattern
+ */
+export function createDefaultGenerationState(): GenerationState {
+  return {
+    // Generation progress
+    isGenerating: false,
+    currentFileIndex: -1,
+    completedFiles: [],
+    failedFile: undefined,
+    generatedFilePaths: [],
+    // UI state
+    accordionExpanded: false,
+    // Validation
+    canGenerate: true,
+    // Placeholder mode (true until Phase 3 Item 28)
+    isPlaceholderMode: true,
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -1279,6 +1409,8 @@ export function createDefaultWizardState(): WizardState {
     mockData: createDefaultMockDataState(),
     // Step 7: Demo Strategy
     demoStrategy: createDefaultDemoStrategyState(),
+    // Step 8: Generation
+    generation: createDefaultGenerationState(),
     // Navigation
     highestStepReached: 1,
     validationAttempted: false,
@@ -1359,6 +1491,7 @@ export function applyConversationTruncation(
 /**
  * Convert WizardState to PersistedWizardState for storage
  * Task 1.5: Extracts all persisted fields, handles file metadata
+ * Task 7.6: Includes generation state
  *
  * @param state Current wizard state
  * @returns Persisted state ready for JSON serialization
@@ -1399,19 +1532,25 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
     customSystems: truncatedState.customSystems,
     uploadedFileMetadata,
 
-    // Step 2-7: State Objects
+    // Step 2-8: State Objects
     aiGapFillingState: truncatedState.aiGapFillingState,
     outcome: truncatedState.outcome,
     security: truncatedState.security,
     agentDesign: truncatedState.agentDesign,
     mockData: truncatedState.mockData,
     demoStrategy: truncatedState.demoStrategy,
+    // Task 7.6: Include generation state (with isGenerating always false on restore)
+    generation: {
+      ...truncatedState.generation,
+      isGenerating: false, // Cannot resume mid-generation
+    },
   };
 }
 
 /**
  * Convert PersistedWizardState back to WizardState
  * Task 1.7: Restores state, sets uploadedFile to undefined
+ * Task 7.6: Restores generation state with isGenerating = false
  *
  * @param persisted Previously saved state
  * @returns Full wizard state with file metadata preserved
@@ -1432,12 +1571,19 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     uploadedFile: undefined, // Binary data not persisted
     uploadedFileMetadata: persisted.uploadedFileMetadata, // Preserve for UI display
 
-    // Step 2-7: State Objects
+    // Step 2-8: State Objects
     aiGapFillingState: persisted.aiGapFillingState,
     outcome: persisted.outcome,
     security: persisted.security,
     agentDesign: persisted.agentDesign,
     mockData: persisted.mockData,
     demoStrategy: persisted.demoStrategy ?? createDefaultDemoStrategyState(),
+    // Task 7.6: Restore generation state with isGenerating = false
+    generation: persisted.generation
+      ? {
+          ...persisted.generation,
+          isGenerating: false, // Cannot resume mid-generation
+        }
+      : createDefaultGenerationState(),
   };
 }

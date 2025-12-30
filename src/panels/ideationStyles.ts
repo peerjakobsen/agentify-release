@@ -2183,5 +2183,428 @@ export function getIdeationStyles(): string {
         border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
         border-radius: 6px;
       }
+
+      /* =========================================================================
+       * Step 8: Generate - Pre-Generation Summary UI
+       * Task Group 4: Summary Cards CSS Styles
+       * ========================================================================= */
+
+      .step8-header {
+        margin-bottom: 20px;
+      }
+      .step8-header h2 {
+        margin: 0 0 8px 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+
+      /* Summary Cards Grid */
+      .summary-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      @media (max-width: 500px) {
+        .summary-cards-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Summary Card */
+      .summary-card {
+        padding: 12px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-editorWidget-border);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+      }
+      .summary-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--vscode-input-border);
+      }
+      .summary-card-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+      .summary-card-body {
+        flex: 1;
+        margin-bottom: 8px;
+      }
+      .summary-card-data-row {
+        display: flex;
+        gap: 8px;
+        font-size: 12px;
+        margin-bottom: 4px;
+        line-height: 1.4;
+      }
+      .summary-card-data-key {
+        color: var(--vscode-descriptionForeground);
+        flex-shrink: 0;
+      }
+      .summary-card-data-value {
+        color: var(--vscode-foreground);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .summary-card-footer {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: 8px;
+        border-top: 1px solid var(--vscode-input-border);
+      }
+      .summary-card-edit-btn {
+        padding: 4px 12px;
+        font-size: 11px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .summary-card-edit-btn:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+
+      /* Status Icons */
+      .status-icon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+      }
+      .status-icon.status-complete {
+        color: var(--vscode-testing-iconPassed, #73c991);
+      }
+      .status-icon.status-warning {
+        color: var(--vscode-inputValidation-warningForeground, #cca700);
+      }
+      .status-icon.status-error {
+        color: var(--vscode-errorForeground, #f48771);
+      }
+
+      /* Validation Message */
+      .validation-message {
+        font-size: 11px;
+        padding: 4px 8px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+        line-height: 1.4;
+      }
+      .validation-message.warning {
+        background: var(--vscode-inputValidation-warningBackground, rgba(205, 145, 0, 0.1));
+        color: var(--vscode-inputValidation-warningForeground, #cca700);
+      }
+      .validation-message.error {
+        background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+        color: var(--vscode-errorForeground, #f48771);
+      }
+
+      /* =========================================================================
+       * Step 8: Generate - Generation Progress UI
+       * Task Group 5: Progress Checklist and Accordion CSS Styles
+       * ========================================================================= */
+
+      /* Progress Checklist */
+      .progress-checklist {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .progress-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--vscode-foreground);
+      }
+      .progress-item.pending {
+        color: var(--vscode-descriptionForeground);
+      }
+      .progress-item.active {
+        color: var(--vscode-foreground);
+      }
+      .progress-item.complete {
+        color: var(--vscode-testing-iconPassed, #73c991);
+      }
+      .progress-item.error {
+        color: var(--vscode-errorForeground, #f48771);
+      }
+      .progress-icon {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      .progress-pending {
+        font-size: 14px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .progress-label {
+        flex: 1;
+      }
+
+      /* Progress Accordion */
+      .progress-accordion {
+        flex: 1;
+      }
+      .progress-accordion-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        padding: 4px 0;
+      }
+      .progress-accordion-header:hover {
+        background: var(--vscode-list-hoverBackground);
+        margin: -4px -8px;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      .progress-summary {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        margin-left: auto;
+      }
+      .accordion-chevron {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        transition: transform 0.2s ease;
+      }
+      .accordion-chevron.chevron-right::before {
+        content: '>';
+      }
+      .accordion-chevron.chevron-down::before {
+        content: 'v';
+      }
+      .progress-accordion.expanded .accordion-chevron.chevron-right {
+        transform: rotate(90deg);
+      }
+      .progress-accordion-content {
+        display: none;
+        padding-left: 26px;
+        margin-top: 8px;
+      }
+      .progress-accordion.expanded .progress-accordion-content {
+        display: block;
+      }
+
+      /* File Progress List */
+      .file-progress-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .file-progress-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        padding: 4px 8px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+      .file-progress-item.pending {
+        color: var(--vscode-descriptionForeground);
+      }
+      .file-progress-item.active {
+        color: var(--vscode-foreground);
+        background: var(--vscode-list-activeSelectionBackground, rgba(0, 122, 204, 0.1));
+      }
+      .file-progress-item.complete {
+        color: var(--vscode-testing-iconPassed, #73c991);
+      }
+      .file-progress-item.error {
+        color: var(--vscode-errorForeground, #f48771);
+        background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+      }
+      .file-progress-item.skipped {
+        color: var(--vscode-descriptionForeground);
+        opacity: 0.6;
+      }
+      .file-progress-icon {
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .file-progress-name {
+        flex: 1;
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+      .file-status-pending {
+        color: var(--vscode-descriptionForeground);
+      }
+      .file-status-skipped {
+        color: var(--vscode-descriptionForeground);
+      }
+      .file-error-message {
+        font-size: 11px;
+        color: var(--vscode-errorForeground, #f48771);
+        margin-left: auto;
+      }
+
+      /* Spinner Icon */
+      .spinner-icon {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--vscode-descriptionForeground);
+        border-top-color: var(--vscode-button-background);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      /* Preview Mode Indicator */
+      .preview-mode-indicator {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+        text-align: center;
+        margin-top: 8px;
+        padding: 8px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+
+      /* =========================================================================
+       * Step 8: Generate - Post-Generation UI
+       * Task Group 6: Button Handlers and Post-Generation CSS Styles
+       * ========================================================================= */
+
+      /* Step 8 Action Buttons */
+      .step8-action-buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      .generate-btn {
+        padding: 10px 24px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .generate-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .generate-kiro-btn {
+        padding: 10px 20px;
+        font-size: 13px;
+      }
+
+      /* Post-Generation Success */
+      .post-generation-success {
+        padding: 20px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-testing-iconPassed, #73c991);
+        border-radius: 6px;
+        text-align: center;
+      }
+      .success-message {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--vscode-testing-iconPassed, #73c991);
+        margin-bottom: 16px;
+      }
+      .file-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 16px;
+        text-align: left;
+      }
+      .generated-file-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+      .generated-file-name {
+        font-size: 12px;
+        font-family: var(--vscode-editor-font-family, monospace);
+        color: var(--vscode-foreground);
+      }
+      .open-file-link {
+        font-size: 11px;
+        color: var(--vscode-textLink-foreground, #3794ff);
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 4px 8px;
+      }
+      .open-file-link:hover {
+        text-decoration: underline;
+      }
+      .kiro-hint {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin-bottom: 16px;
+      }
+      .start-over-button {
+        padding: 10px 24px;
+        font-size: 13px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .start-over-button:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+      .start-over-button.secondary {
+        background: transparent;
+      }
+
+      /* Generation Error */
+      .generation-error {
+        padding: 16px;
+        background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+        border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+        border-radius: 6px;
+        margin-top: 16px;
+      }
+      .generation-error .error-message {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--vscode-errorForeground, #f48771);
+        margin-bottom: 8px;
+      }
+      .error-details {
+        font-size: 12px;
+        color: var(--vscode-foreground);
+        margin-bottom: 12px;
+        padding: 8px;
+        background: var(--vscode-input-background);
+        border-radius: 4px;
+      }
+      .error-actions {
+        display: flex;
+        gap: 8px;
+      }
     `;
 }

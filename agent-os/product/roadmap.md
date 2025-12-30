@@ -478,7 +478,47 @@ interface ProposedEdge {
 **Output:**
 - Stored in wizard state for `demo-strategy.md` generation in Phase 4 `M`
 
-24. [ ] Generate Step (Wizard Step 8) — Build the final wizard step that orchestrates steering file generation and Kiro handoff:
+23.5. [ ] Demo Script Export — Add ability to export demo strategy as a presenter-ready markdown file:
+
+**Export Button:**
+- "📄 Export Demo Script" button in Step 7 UI (near Generate All)
+- Disabled until at least one section has content (persona, moments, or scenes)
+
+**Generated Markdown Format:**
+- Header with business objective from Step 1
+- Demo Persona section: name, role, pain point
+- Aha Moments section: numbered list with title, trigger, and talking point as blockquote
+- Narrative Flow section: ordered scenes with descriptions and highlighted agents
+- Footer with generation timestamp
+
+**File Output:**
+- Creates `demo-script.md` in workspace root (or `.agentify/demo-script.md`)
+- Auto-opens file in editor after creation
+- Overwrites existing file with confirmation if present
+
+**Example Output:**
+```md
+# Demo Script: Reduce customer support response time by 40%
+
+## Persona
+**Maria, Regional Inventory Manager** — Reviews morning replenishment recommendations...
+Pain Point: Currently spends 2 hours manually checking stock levels
+
+## Aha Moments
+### 1. Real-time VIP customer detection
+**Trigger:** Ticket Analyzer
+> Watch as the system instantly recognizes this is a VIP customer...
+
+## Narrative Flow
+### Scene 1: Opening Context
+...
+```
+
+**Future Enhancement (Pro Tier):**
+- PDF export with polished formatting
+- PPTX export for slide-ready presentation `S`
+
+24. [x] Generate Step (Wizard Step 8) — Build the final wizard step that orchestrates steering file generation and Kiro handoff:
 
 **Pre-Generation Checklist Display:**
 - Show read-only summary of all wizard inputs across steps 1-7
@@ -590,6 +630,83 @@ When generating steering docs, analyze tools across all agents to identify share
 4. Write files to `.kiro/steering/`
 5. Clear wizard state (item 22) on success
 6. Show success notification with "Open in Kiro" button
+
+**Implementation Approach — One Prompt Per Document Type:**
+
+Use Bedrock to transform wizard state JSON into well-written steering markdown. Each document type has its own system prompt combined with relevant wizard state sections.
+
+**Prompt File Structure:**
+```
+src/prompts/steering/
+├── product-steering.prompt.md          → product.md
+├── tech-steering.prompt.md             → tech.md
+├── structure-steering.prompt.md        → structure.md (mostly template)
+├── customer-context.prompt.md          → customer-context.md
+├── integration-landscape.prompt.md     → integration-landscape.md
+├── security-policies.prompt.md         → security-policies.md
+├── demo-strategy-steering.prompt.md    → demo-strategy.md
+└── agentify-integration.prompt.md      → agentify-integration.md
+```
+
+**Each Prompt Defines:**
+- Expected markdown structure and sections for that document
+- What the document is for (Kiro steering context)
+- Formatting guidelines and examples
+
+**State Mapping Per Document:**
+| Document | Wizard State Sections Used |
+|----------|---------------------------|
+| `product.md` | businessObjective, industry, outcome (primaryOutcome, successMetrics, stakeholders) |
+| `tech.md` | agentDesign (agents, orchestration, edges), securityGuardrails (for policy mapping) |
+| `structure.md` | agentDesign.confirmedAgents (for folder names), mockData.mockDefinitions (for tools) |
+| `customer-context.md` | industry, systems, aiGapFillingState.confirmedAssumptions |
+| `integration-landscape.md` | systems, agentDesign (for shared tools analysis), mockData |
+| `security-policies.md` | securityGuardrails (sensitivity, frameworks, approvalGates) |
+| `demo-strategy.md` | demoStrategy (ahaMoments, persona, narrativeScenes) |
+| `agentify-integration.md` | agentDesign.confirmedAgents (agent IDs) |
+
+**Service Implementation:**
+```typescript
+// src/services/steeringGenerationService.ts
+class SteeringGenerationService {
+  async generateSteeringFiles(state: IdeationState): Promise<GenerationResult> {
+    // Generate all documents in parallel for speed
+    const [productMd, techMd, structureMd, ...rest] = await Promise.all([
+      this.generateDocument('product-steering', {
+        businessObjective: state.businessObjective,
+        industry: state.industry,
+        outcome: state.outcome,
+      }),
+      this.generateDocument('tech-steering', {
+        agentDesign: state.agentDesign,
+        securityGuardrails: state.securityGuardrails,
+      }),
+      this.generateDocument('structure-steering', {
+        agents: state.agentDesign.confirmedAgents,
+        mockDefinitions: state.mockData?.mockDefinitions,
+      }),
+      // ... other documents
+    ]);
+
+    // Write all files to .kiro/steering/
+    await this.writeSteeringFiles(results);
+  }
+
+  private async generateDocument(promptName: string, context: object): Promise<string> {
+    const systemPrompt = await loadPrompt(`steering/${promptName}.prompt.md`);
+    return bedrockService.generate({
+      systemPrompt,
+      userMessage: JSON.stringify(context, null, 2),
+    });
+  }
+}
+```
+
+**Why Per-Document (Not Single Mega-Prompt):**
+- **Focused context**: Only send relevant state sections per document (saves tokens)
+- **Parallel generation**: Generate all 7-8 documents concurrently
+- **Easier debugging**: If one document is wrong, fix that specific prompt
+- **Matches existing patterns**: Follows AgentDesignService, MockDataService, DemoStrategyService approach
 
 **Conflict Handling:**
 - If `.kiro/steering/` exists, prompt: "Overwrite existing steering files?"

@@ -453,10 +453,49 @@ export function getIdeationScript(): string {
       }
 
       // =========================================================================
-      // Step 8: Generate Steering Files function (Task Group 8)
-      // Task 8.2: Trigger steering file generation with auto-clear on success
+      // Step 8: Generate Steering Files functions (Task Group 6)
+      // Task 6.6: JavaScript handlers for Step 8 commands
       // =========================================================================
 
+      /**
+       * Main dispatcher for Step 8 commands (called from HTML onclick handlers)
+       * Follows pattern from handleStep7Command()
+       */
+      function handleStep8Command(command, params) {
+        switch (command) {
+          // Generation commands
+          case 'step8Generate':
+            vscode.postMessage({ command: 'step8Generate' });
+            break;
+          case 'step8GenerateAndOpenKiro':
+            vscode.postMessage({ command: 'step8GenerateAndOpenKiro' });
+            break;
+
+          // Post-generation actions
+          case 'step8StartOver':
+            vscode.postMessage({ command: 'step8StartOver' });
+            break;
+          case 'step8OpenFile':
+            vscode.postMessage({ command: 'step8OpenFile', filePath: params.filePath });
+            break;
+          case 'step8Retry':
+            vscode.postMessage({ command: 'step8Retry' });
+            break;
+
+          // UI interaction
+          case 'step8ToggleAccordion':
+            vscode.postMessage({ command: 'step8ToggleAccordion' });
+            break;
+          case 'step8EditStep':
+            vscode.postMessage({ command: 'step8EditStep', step: params.step });
+            break;
+
+          default:
+            console.warn('Unknown Step 8 command:', command);
+        }
+      }
+
+      // Legacy function for backward compatibility (Task 8.2)
       function generateSteeringFiles() {
         vscode.postMessage({ command: 'generateSteeringFiles' });
       }

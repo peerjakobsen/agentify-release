@@ -46,15 +46,22 @@ import {
 import {
   Step7LogicHandler,
 } from './ideationStep7Logic';
+// Task 6.7: Import Step8LogicHandler
+import {
+  Step8LogicHandler,
+  Step8ContextInputs,
+} from './ideationStep8Logic';
 import {
   createDefaultAgentDesignState,
   createDefaultMockDataState,
   createDefaultDemoStrategyState,
+  createDefaultGenerationState,
   createDefaultWizardState,
   persistedStateToWizardState,
   AgentDesignState,
   MockDataState,
   DemoStrategyState,
+  GenerationState,
   OutcomeDefinitionState,
   SuccessMetric,
   RefinedSectionsState,
@@ -128,6 +135,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _step6Handler?: Step6LogicHandler;
   // Task 4.10: Step 7 handler for demo strategy
   private _step7Handler?: Step7LogicHandler;
+  // Task 6.7: Step 8 handler for generation
+  private _step8Handler?: Step8LogicHandler;
 
   // Task 6.2: Persistence service and resume banner state
   private _persistenceService: WizardStatePersistenceService | null = null;
@@ -217,6 +226,23 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       {
         updateWebviewContent: callbacks.updateWebviewContent,
         syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    // Task 6.7: Initialize Step 8 handler
+    this._step8Handler = new Step8LogicHandler(
+      this._ideationState.generation,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+        showConfirmDialog: async (message: string, options: string[]) => {
+          return vscode.window.showWarningMessage(message, { modal: true }, ...options);
+        },
+        openFile: async (filePath: string) => {
+          const fileUri = vscode.Uri.file(filePath);
+          await vscode.commands.executeCommand('vscode.open', fileUri);
+        },
+        onStartOver: () => this.handleStartFresh(),
       }
     );
   }
@@ -377,6 +403,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.mockData = wizardState.mockData;
         // Task 3.2: Restore demo strategy state
         this._ideationState.demoStrategy = wizardState.demoStrategy;
+        // Task 6.7: Restore generation state
+        this._ideationState.generation = wizardState.generation;
 
         // Re-initialize step handlers with restored state
         this.initStepHandlers();
@@ -497,6 +525,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       mockData: this._ideationState.mockData,
       // Task 3.2: Include demo strategy in persisted state
       demoStrategy: this._ideationState.demoStrategy,
+      // Task 6.7: Include generation state
+      generation: this._ideationState.generation,
     };
   }
 
@@ -1109,10 +1139,40 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         break;
 
       // =========================================================================
-      // Step 8: Generate Steering Files command (Task Group 8)
-      // Task 8.2: Handle steering file generation with auto-clear on success
+      // Step 8: Generate Steering Files commands (Task Group 6)
+      // Task 6.7: Handle Step 8 commands
       // =========================================================================
 
+      case 'step8Generate':
+        this._step8Handler?.handleGenerate(this.getStep8Inputs());
+        break;
+
+      case 'step8GenerateAndOpenKiro':
+        this._step8Handler?.handleGenerateAndOpenKiro(this.getStep8Inputs());
+        break;
+
+      case 'step8StartOver':
+        this._step8Handler?.handleStartOver();
+        break;
+
+      case 'step8OpenFile':
+        this._step8Handler?.handleOpenFile(message.filePath as string);
+        break;
+
+      case 'step8Retry':
+        this._step8Handler?.handleRetry(this.getStep8Inputs());
+        break;
+
+      case 'step8ToggleAccordion':
+        this._step8Handler?.handleToggleAccordion();
+        break;
+
+      case 'step8EditStep':
+        // Navigate to the specified step for editing
+        this.ideationNavigateToStep(message.step as number);
+        break;
+
+      // Legacy command for backward compatibility
       case 'generateSteeringFiles':
         this.handleGenerateSteeringFiles();
         break;
@@ -1413,6 +1473,32 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get inputs for Step 8 steering file generation
+   * Task 6.7: Get inputs for Step 8 generation
+   */
+  private getStep8Inputs(): Step8ContextInputs {
+    return {
+      businessObjective: this._ideationState.businessObjective,
+      industry: this._ideationState.industry === 'Other'
+        ? (this._ideationState.customIndustry || this._ideationState.industry)
+        : this._ideationState.industry,
+      systems: this._ideationState.systems,
+      aiGapFillingState: this._ideationState.aiGapFillingState,
+      outcome: this._ideationState.outcome,
+      security: {
+        dataSensitivity: this._ideationState.securityGuardrails.dataSensitivity as 'public' | 'internal' | 'confidential' | 'restricted',
+        complianceFrameworks: this._ideationState.securityGuardrails.complianceFrameworks,
+        approvalGates: this._ideationState.securityGuardrails.approvalGates,
+        guardrailNotes: this._ideationState.securityGuardrails.guardrailNotes,
+        skipped: this._ideationState.securityGuardrails.skipped,
+      },
+      agentDesign: this._ideationState.agentDesign,
+      mockData: this._ideationState.mockData,
+      demoStrategy: this._ideationState.demoStrategy,
+    };
+  }
+
+  /**
    * Validate Ideation Step 1
    */
   private validateIdeationStep1(): void {
@@ -1509,6 +1595,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       }
 
       // Note: Step 7 does NOT auto-trigger AI on entry (manual Generate buttons only)
+
+      // Task 6.7: Update Step 8 canGenerate when entering Step 8
+      if (this._ideationState.currentStep === 8) {
+        this.updateStep8CanGenerate();
+      }
     }
   }
 
@@ -1572,6 +1663,19 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       this.updateWebviewContent();
       this.syncStateToWebview();
     }
+  }
+
+  /**
+   * Update Step 8 canGenerate flag based on validation status
+   * Task 6.7: Calculate canGenerate from step summaries
+   */
+  private updateStep8CanGenerate(): void {
+    if (!this._step8Handler) return;
+
+    const summaries = this._step8Handler.getStepSummaries(this.getStep8Inputs());
+    const hasError = summaries.some(s => s.validationStatus === 'error');
+    this._ideationState.generation.canGenerate = !hasError;
+    this._step8Handler.setState(this._ideationState.generation);
   }
 
   /**
@@ -1948,6 +2052,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step6Handler?.dispose();
     // Task 4.10: Dispose Step 7 handler
     this._step7Handler?.dispose();
+    // Task 6.7: Dispose Step 8 handler
+    this._step8Handler?.dispose();
     this._persistenceService?.dispose(); // Task 6.2: Clean up persistence service
   }
 }
@@ -1987,6 +2093,8 @@ interface IdeationState {
   mockData: MockDataState;
   // Task 3.2: Demo strategy state for Step 7
   demoStrategy: DemoStrategyState;
+  // Task 6.7: Generation state for Step 8
+  generation: GenerationState;
 }
 
 interface IdeationValidationError {
@@ -2021,6 +2129,8 @@ function createDefaultIdeationState(): IdeationState {
     mockData: createDefaultMockDataState(),
     // Task 3.2: Initialize demo strategy
     demoStrategy: createDefaultDemoStrategyState(),
+    // Task 6.7: Initialize generation state
+    generation: createDefaultGenerationState(),
   };
 }
 

@@ -12,7 +12,18 @@ import {
   APPROVAL_GATE_OPTIONS,
   STAKEHOLDER_OPTIONS,
 } from './ideationConstants';
-import type { MockDataState, MockToolDefinition, PersistedFileMetadata, DemoStrategyState, AhaMoment, NarrativeScene } from '../types/wizardPanel';
+import type {
+  MockDataState,
+  MockToolDefinition,
+  PersistedFileMetadata,
+  DemoStrategyState,
+  AhaMoment,
+  NarrativeScene,
+  GenerationState,
+  StepSummary,
+  StepValidationStatus,
+} from '../types/wizardPanel';
+import { STEERING_FILES } from '../types/wizardPanel';
 import { getFileReuploadIndicatorHtml } from './resumeBannerHtml';
 
 // ============================================================================
@@ -148,6 +159,8 @@ export interface IdeationState {
   mockData?: MockDataState;
   /** Task 3.2: Demo strategy state for Step 7 */
   demoStrategy?: DemoStrategyState;
+  /** Task 1.7: Generation state for Step 8 */
+  generation?: GenerationState;
 }
 
 interface IdeationValidationError {
@@ -475,6 +488,19 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
   }
   if (state.currentStep === 7) {
     return getStep7Html(state);
+  }
+  if (state.currentStep === 8) {
+    const generationState = state.generation || {
+      isGenerating: false,
+      currentFileIndex: 0,
+      completedFiles: [],
+      generatedFilePaths: [],
+      accordionExpanded: false,
+      canGenerate: true,
+      isPlaceholderMode: true,
+    };
+    const summaries = computeStepSummaries(state);
+    return generateStep8Html(generationState, summaries);
   }
   return `
       <div class="placeholder-content">
@@ -2109,6 +2135,11 @@ export function getNavigationButtonsHtml(state: IdeationState): string {
   const isLastStep = state.currentStep === 8;
   const isStep4 = state.currentStep === 4;
 
+  // Step 8 has its own action buttons in generateStep8Html(), so don't render navigation buttons
+  if (isLastStep) {
+    return '';
+  }
+
   // Skip button for Step 4 (optional step)
   const skipButton = isStep4
     ? '<button class="nav-btn skip-btn" onclick="skipSecurityStep()">Skip</button>'
@@ -2119,10 +2150,7 @@ export function getNavigationButtonsHtml(state: IdeationState): string {
         ${isFirstStep ? '<div></div>' : '<button class="nav-btn secondary" onclick="previousStep()">Back</button>'}
         <div class="nav-buttons-right">
           ${skipButton}
-          ${isLastStep
-            ? '<button class="nav-btn primary" onclick="generateSteeringFiles()">Generate</button>'
-            : '<button class="nav-btn primary" onclick="nextStep()">Next</button>'
-          }
+          <button class="nav-btn primary" onclick="nextStep()">Next</button>
         </div>
       </div>
     `;
@@ -2137,4 +2165,545 @@ export function getIdeationContentHtml(state: IdeationState, validation: Ideatio
       ${getStepContentHtml(state, validation)}
       ${getNavigationButtonsHtml(state)}
     `;
+}
+
+// ============================================================================
+// Step 8: Helper Functions
+// ============================================================================
+
+/** Step names for display */
+const STEP_NAMES: Record<number, string> = {
+  1: 'Business Context',
+  2: 'AI Gap Filling',
+  3: 'Outcomes',
+  4: 'Security',
+  5: 'Agent Design',
+  6: 'Mock Data',
+  7: 'Demo Strategy',
+};
+
+/**
+ * Truncate text to a maximum length with ellipsis
+ */
+function truncateText(text: string, maxLength: number): string {
+  if (!text || text.length <= maxLength) return text || '';
+  return text.substring(0, maxLength - 3) + '...';
+}
+
+/**
+ * Compute step summaries from IdeationState
+ * Used by getStepContentHtml for Step 8 rendering
+ */
+export function computeStepSummaries(state: IdeationState): StepSummary[] {
+  const summaries: StepSummary[] = [];
+
+  for (let stepNumber = 1; stepNumber <= 7; stepNumber++) {
+    const { status, message } = getValidationStatusForStep(stepNumber, state);
+    const summaryData = getSummaryDataForStep(stepNumber, state);
+
+    summaries.push({
+      stepNumber,
+      stepName: STEP_NAMES[stepNumber],
+      summaryData,
+      validationStatus: status,
+      validationMessage: message,
+    });
+  }
+
+  return summaries;
+}
+
+/**
+ * Get validation status for a specific step
+ */
+function getValidationStatusForStep(
+  stepNumber: number,
+  state: IdeationState
+): { status: StepValidationStatus; message?: string } {
+  switch (stepNumber) {
+    case 1:
+      if (!state.businessObjective || state.businessObjective.trim() === '') {
+        return { status: 'error', message: 'Business objective is required' };
+      }
+      if (!state.industry || state.industry.trim() === '') {
+        return { status: 'error', message: 'Industry is required' };
+      }
+      if (state.systems.length === 0) {
+        return { status: 'warning', message: 'No systems selected' };
+      }
+      return { status: 'complete' };
+
+    case 2:
+      if (!state.aiGapFillingState.assumptionsAccepted) {
+        return { status: 'warning', message: 'Assumptions not yet accepted' };
+      }
+      return { status: 'complete' };
+
+    case 3:
+      if (!state.outcome.primaryOutcome || state.outcome.primaryOutcome.trim() === '') {
+        return { status: 'error', message: 'Primary outcome is required' };
+      }
+      if (state.outcome.successMetrics.length === 0) {
+        return { status: 'warning', message: 'No success metrics defined' };
+      }
+      return { status: 'complete' };
+
+    case 4:
+      if (state.securityGuardrails.skipped) {
+        return { status: 'warning', message: 'Security configuration was skipped' };
+      }
+      return { status: 'complete' };
+
+    case 5:
+      if (!state.agentDesign.confirmedAgents || state.agentDesign.confirmedAgents.length === 0) {
+        return { status: 'error', message: 'No agents configured' };
+      }
+      return { status: 'complete' };
+
+    case 6: {
+      const mockData = state.mockData;
+      if (!mockData || mockData.mockDefinitions.length === 0) {
+        return { status: 'warning', message: 'No mock data defined' };
+      }
+      const hasEmptySampleData = mockData.mockDefinitions.some(
+        (def) => def.sampleData.length === 0
+      );
+      if (hasEmptySampleData) {
+        return { status: 'warning', message: 'Some tools have no sample data' };
+      }
+      return { status: 'complete' };
+    }
+
+    case 7: {
+      const demoStrategy = state.demoStrategy;
+      if (!demoStrategy) {
+        return { status: 'warning', message: 'Demo strategy not configured' };
+      }
+      if (demoStrategy.ahaMoments.length === 0) {
+        return { status: 'warning', message: 'No aha moments defined' };
+      }
+      if (demoStrategy.narrativeScenes.length === 0) {
+        return { status: 'warning', message: 'No narrative scenes defined' };
+      }
+      return { status: 'complete' };
+    }
+
+    default:
+      return { status: 'complete' };
+  }
+}
+
+/**
+ * Get summary data for a specific step
+ */
+function getSummaryDataForStep(
+  stepNumber: number,
+  state: IdeationState
+): Record<string, string> {
+  switch (stepNumber) {
+    case 1:
+      return {
+        'Industry': state.industry || 'Not specified',
+        'Systems': state.systems.length > 0 ? `${state.systems.length} system(s)` : 'None selected',
+        'Objective': truncateText(state.businessObjective, 50) || 'Not specified',
+      };
+
+    case 2:
+      return {
+        'Assumptions': `${state.aiGapFillingState.confirmedAssumptions.length} confirmed`,
+        'Status': state.aiGapFillingState.assumptionsAccepted ? 'Accepted' : 'Pending',
+      };
+
+    case 3:
+      return {
+        'Outcome': truncateText(state.outcome.primaryOutcome, 40) || 'Not specified',
+        'KPIs': `${state.outcome.successMetrics.length} metric(s)`,
+        'Stakeholders': `${state.outcome.stakeholders.length} stakeholder(s)`,
+      };
+
+    case 4:
+      if (state.securityGuardrails.skipped) {
+        return { 'Status': 'Skipped' };
+      }
+      return {
+        'Sensitivity': state.securityGuardrails.dataSensitivity || 'Not specified',
+        'Frameworks': state.securityGuardrails.complianceFrameworks.length > 0
+          ? state.securityGuardrails.complianceFrameworks.join(', ')
+          : 'None',
+      };
+
+    case 5: {
+      const agents = state.agentDesign.confirmedAgents || [];
+      return {
+        'Agents': `${agents.length} configured`,
+        'Pattern': state.agentDesign.confirmedOrchestration || 'Not specified',
+      };
+    }
+
+    case 6: {
+      const mockData = state.mockData;
+      if (!mockData) {
+        return { 'Status': 'Not configured' };
+      }
+      return {
+        'Tools': `${mockData.mockDefinitions.length} defined`,
+        'Status': mockData.mockDefinitions.length > 0 ? 'Configured' : 'Pending',
+      };
+    }
+
+    case 7: {
+      const demoStrategy = state.demoStrategy;
+      if (!demoStrategy) {
+        return { 'Status': 'Not configured' };
+      }
+      return {
+        'Aha Moments': `${demoStrategy.ahaMoments.length} defined`,
+        'Scenes': `${demoStrategy.narrativeScenes.length} scenes`,
+        'Persona': demoStrategy.persona.name || 'Not specified',
+      };
+    }
+
+    default:
+      return {};
+  }
+}
+
+// ============================================================================
+// Step 8: Generation HTML Functions
+// Task Group 4: Pre-Generation Summary UI
+// ============================================================================
+
+/**
+ * Task 4.5: Get status icon SVG based on validation status
+ * Following logPanelHtmlGenerator.ts pattern for consistent icons
+ */
+export function getStatusIconSvg(status: StepValidationStatus): string {
+  switch (status) {
+    case 'complete':
+      return `<svg class="status-icon status-complete" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+      </svg>`;
+    case 'warning':
+      return `<svg class="status-icon status-warning" viewBox="0 0 16 16" fill="currentColor">
+        <path fill-rule="evenodd" d="M8.22 1.754a.25.25 0 00-.44 0L1.698 13.132a.25.25 0 00.22.368h12.164a.25.25 0 00.22-.368L8.22 1.754zm-1.763-.707c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575L6.457 1.047zM9 11a1 1 0 11-2 0 1 1 0 012 0zm-.25-5.25a.75.75 0 00-1.5 0v2.5a.75.75 0 001.5 0v-2.5z"/>
+      </svg>`;
+    case 'error':
+      return `<svg class="status-icon status-error" viewBox="0 0 16 16" fill="currentColor">
+        <path fill-rule="evenodd" d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+      </svg>`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Task 4.4: Render a single step summary card
+ * Uses .agent-card class structure from Step 5 for consistent styling
+ */
+export function renderStepSummaryCard(summary: StepSummary): string {
+  const statusIcon = getStatusIconSvg(summary.validationStatus);
+
+  // Build summary data rows
+  const dataRowsHtml = Object.entries(summary.summaryData)
+    .map(([key, value]) => `
+      <div class="summary-card-data-row">
+        <span class="summary-card-data-key">${escapeHtml(key)}:</span>
+        <span class="summary-card-data-value">${escapeHtml(value)}</span>
+      </div>
+    `)
+    .join('');
+
+  // Build validation message if present
+  const validationMessageHtml = summary.validationMessage
+    ? `<div class="validation-message ${summary.validationStatus}">${escapeHtml(summary.validationMessage)}</div>`
+    : '';
+
+  return `
+    <div class="summary-card" data-step="${summary.stepNumber}">
+      <div class="summary-card-header">
+        <span class="summary-card-title">${escapeHtml(summary.stepName)}</span>
+        ${statusIcon}
+      </div>
+      ${validationMessageHtml}
+      <div class="summary-card-body">
+        ${dataRowsHtml}
+      </div>
+      <div class="summary-card-footer">
+        <button
+          class="summary-card-edit-btn"
+          data-step="${summary.stepNumber}"
+          onclick="handleStep8Command('step8EditStep', { step: ${summary.stepNumber} })"
+        >
+          Edit
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Task 4.3: Render pre-generation summary grid
+ * Displays summary cards for Steps 1-7
+ */
+export function renderPreGenerationSummary(summaries: StepSummary[]): string {
+  const cardsHtml = summaries.map(summary => renderStepSummaryCard(summary)).join('');
+
+  return `
+    <div class="summary-cards-grid">
+      ${cardsHtml}
+    </div>
+  `;
+}
+
+/**
+ * Task 5.4: Render file progress list for the generation accordion
+ * Shows status for each steering file during generation
+ */
+export function renderFileProgressList(state: GenerationState): string {
+  const filesHtml = STEERING_FILES.map((fileName, index) => {
+    let statusClass = 'pending';
+    let statusIcon = '<span class="file-status-pending">○</span>';
+    let errorMessage = '';
+
+    if (state.completedFiles.includes(fileName)) {
+      statusClass = 'complete';
+      statusIcon = getStatusIconSvg('complete');
+    } else if (state.failedFile?.name === fileName) {
+      statusClass = 'error';
+      statusIcon = getStatusIconSvg('error');
+      errorMessage = `<span class="file-error-message">${escapeHtml(state.failedFile.error)}</span>`;
+    } else if (state.currentFileIndex === index && state.isGenerating) {
+      statusClass = 'active';
+      statusIcon = '<span class="spinner-icon"></span>';
+    } else if (state.failedFile && index > STEERING_FILES.indexOf(state.failedFile.name)) {
+      statusClass = 'skipped';
+      statusIcon = '<span class="file-status-skipped">—</span>';
+    }
+
+    return `
+      <div class="file-progress-item ${statusClass}">
+        <span class="file-progress-icon">${statusIcon}</span>
+        <span class="file-progress-name">${escapeHtml(fileName)}</span>
+        ${errorMessage}
+      </div>
+    `;
+  }).join('');
+
+  return `<div class="file-progress-list">${filesHtml}</div>`;
+}
+
+/**
+ * Task 5.2: Render generation progress checklist
+ * Shows the 3-item checklist with nested file progress accordion
+ */
+export function renderGenerationProgress(state: GenerationState): string {
+  const completedCount = state.completedFiles.length;
+  const totalCount = STEERING_FILES.length;
+
+  // Determine status of each checklist item
+  const validateStatus = state.isGenerating || completedCount > 0 ? 'complete' : 'pending';
+  const generateStatus = state.failedFile ? 'error' :
+    completedCount === totalCount ? 'complete' :
+    state.isGenerating ? 'active' : 'pending';
+  const readyStatus = completedCount === totalCount && !state.failedFile ? 'complete' : 'pending';
+
+  // Status icons
+  const validateIcon = validateStatus === 'complete' ? getStatusIconSvg('complete') : '<span class="progress-pending">○</span>';
+  const generateIcon = generateStatus === 'active' ? '<span class="spinner-icon"></span>' :
+    generateStatus === 'complete' ? getStatusIconSvg('complete') :
+    generateStatus === 'error' ? getStatusIconSvg('error') : '<span class="progress-pending">○</span>';
+  const readyIcon = readyStatus === 'complete' ? getStatusIconSvg('complete') : '<span class="progress-pending">○</span>';
+
+  // Accordion summary text
+  const summaryText = state.isGenerating
+    ? `Generating... (${completedCount}/${totalCount} files)`
+    : state.failedFile
+      ? `Failed at ${state.failedFile.name}`
+      : `${completedCount}/${totalCount} files created`;
+
+  // Accordion expanded state
+  const accordionClass = state.accordionExpanded ? 'expanded' : '';
+  const chevronIcon = state.accordionExpanded ? 'chevron-down' : 'chevron-right';
+
+  // Placeholder mode indicator
+  const placeholderModeHtml = state.isPlaceholderMode
+    ? '<p class="preview-mode-indicator">Preview mode — actual file generation coming in Phase 3</p>'
+    : '';
+
+  return `
+    <div class="progress-checklist">
+      <div class="progress-item ${validateStatus}">
+        <span class="progress-icon">${validateIcon}</span>
+        <span class="progress-label">Validate wizard inputs</span>
+      </div>
+
+      <div class="progress-item ${generateStatus}">
+        <div class="progress-accordion ${accordionClass}">
+          <div class="progress-accordion-header" onclick="handleStep8Command('step8ToggleAccordion', {})">
+            <span class="progress-icon">${generateIcon}</span>
+            <span class="progress-label">Generate steering files</span>
+            <span class="progress-summary">${summaryText}</span>
+            <span class="accordion-chevron ${chevronIcon}"></span>
+          </div>
+          <div class="progress-accordion-content">
+            ${renderFileProgressList(state)}
+          </div>
+        </div>
+      </div>
+
+      <div class="progress-item ${readyStatus}">
+        <span class="progress-icon">${readyIcon}</span>
+        <span class="progress-label">Ready for Kiro</span>
+      </div>
+    </div>
+    ${placeholderModeHtml}
+  `;
+}
+
+/**
+ * Task 6.4: Render post-generation success UI
+ * Shows list of generated files with open links
+ */
+export function renderPostGenerationSuccess(state: GenerationState): string {
+  const filesHtml = state.generatedFilePaths.map((filePath, index) => {
+    const fileName = STEERING_FILES[index] || filePath.split('/').pop() || 'unknown';
+    return `
+      <div class="generated-file-item">
+        <span class="generated-file-name">${escapeHtml(fileName)}</span>
+        <button
+          class="open-file-link"
+          data-file-path="${escapeHtml(filePath)}"
+          onclick="handleStep8Command('step8OpenFile', { filePath: '${escapeHtml(filePath)}' })"
+        >
+          Open File
+        </button>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="post-generation-success">
+      <div class="success-message">
+        ${getStatusIconSvg('complete')}
+        <span>Steering files generated successfully!</span>
+      </div>
+      <div class="file-list">
+        ${filesHtml}
+      </div>
+      <p class="kiro-hint">Open this project in Kiro to activate your steering files</p>
+      <button
+        class="start-over-button"
+        onclick="handleStep8Command('step8StartOver', {})"
+      >
+        Start Over
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Task 6.5: Render generation error UI
+ * Shows error message with retry option
+ */
+export function renderGenerationError(state: GenerationState): string {
+  if (!state.failedFile) return '';
+
+  return `
+    <div class="generation-error">
+      <div class="error-message">
+        ${getStatusIconSvg('error')}
+        <span>Generation failed at ${escapeHtml(state.failedFile.name)}</span>
+      </div>
+      <p class="error-details">${escapeHtml(state.failedFile.error)}</p>
+      <div class="error-actions">
+        <button
+          class="retry-btn"
+          onclick="handleStep8Command('step8Retry', {})"
+        >
+          Retry
+        </button>
+        <button
+          class="start-over-button secondary"
+          onclick="handleStep8Command('step8StartOver', {})"
+        >
+          Start Over
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Task 6.2: Render action buttons for Step 8
+ * Shows Generate and Generate & Open in Kiro buttons
+ */
+export function renderStep8ActionButtons(state: GenerationState): string {
+  const disabledGenerate = state.isGenerating || !state.canGenerate ? 'disabled' : '';
+  const generateTooltip = !state.canGenerate
+    ? 'title="Fix validation errors to generate"'
+    : state.isGenerating
+      ? 'title="Generation in progress"'
+      : '';
+
+  return `
+    <div class="step8-action-buttons">
+      <button
+        class="generate-btn nav-btn primary"
+        ${disabledGenerate}
+        ${generateTooltip}
+        onclick="handleStep8Command('step8Generate', {})"
+      >
+        ${state.isGenerating ? 'Generating...' : 'Generate'}
+      </button>
+      <button
+        class="generate-kiro-btn nav-btn secondary"
+        ${disabledGenerate}
+        onclick="handleStep8Command('step8GenerateAndOpenKiro', {})"
+      >
+        Generate & Open in Kiro
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Task 4.2: Generate Step 8 HTML
+ * Main entry point for Step 8 rendering
+ */
+export function generateStep8Html(state: GenerationState, summaries: StepSummary[]): string {
+  const isComplete = state.generatedFilePaths.length === STEERING_FILES.length && !state.failedFile;
+  const hasError = !!state.failedFile;
+
+  // Determine which section to render
+  let contentHtml = '';
+  if (isComplete && !state.isGenerating) {
+    // Post-generation success
+    contentHtml = renderPostGenerationSuccess(state);
+  } else if (hasError && !state.isGenerating) {
+    // Error state with retry
+    contentHtml = `
+      ${renderGenerationProgress(state)}
+      ${renderGenerationError(state)}
+    `;
+  } else if (state.isGenerating || state.completedFiles.length > 0) {
+    // Generation in progress
+    contentHtml = `
+      ${renderGenerationProgress(state)}
+      ${renderStep8ActionButtons(state)}
+    `;
+  } else {
+    // Pre-generation summary
+    contentHtml = `
+      ${renderPreGenerationSummary(summaries)}
+      ${renderStep8ActionButtons(state)}
+    `;
+  }
+
+  return `
+    <div class="step8-header">
+      <h2>Generate</h2>
+      <p class="step-description">Review your wizard inputs and generate steering files for your agent workflow.</p>
+    </div>
+    ${contentHtml}
+  `;
 }
