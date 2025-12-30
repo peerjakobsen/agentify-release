@@ -362,6 +362,97 @@ export function getIdeationScript(): string {
       }
 
       // =========================================================================
+      // Step 7: Demo Strategy functions (Task Group 3)
+      // Task 3.9: JavaScript handlers for Step 7 commands
+      // =========================================================================
+
+      /**
+       * Main dispatcher for Step 7 commands (called from HTML onclick handlers)
+       * Follows pattern from handleStep6Command()
+       */
+      function handleStep7Command(command, params) {
+        switch (command) {
+          // Generate commands
+          case 'step7GenerateAll':
+            vscode.postMessage({ command: 'step7GenerateAll' });
+            break;
+          case 'step7GenerateMoments':
+            vscode.postMessage({ command: 'step7GenerateMoments' });
+            break;
+          case 'step7GeneratePersona':
+            vscode.postMessage({ command: 'step7GeneratePersona' });
+            break;
+          case 'step7GenerateNarrative':
+            vscode.postMessage({ command: 'step7GenerateNarrative' });
+            break;
+
+          // Aha Moments CRUD commands
+          case 'step7AddMoment':
+            vscode.postMessage({ command: 'step7AddMoment' });
+            break;
+          case 'step7UpdateMoment':
+            vscode.postMessage({
+              command: 'step7UpdateMoment',
+              index: params.index,
+              field: params.field,
+              value: params.value
+            });
+            break;
+          case 'step7RemoveMoment':
+            vscode.postMessage({ command: 'step7RemoveMoment', index: params.index });
+            break;
+
+          // Persona update commands
+          case 'step7UpdatePersonaName':
+            vscode.postMessage({ command: 'step7UpdatePersonaName', value: params.value });
+            break;
+          case 'step7UpdatePersonaRole':
+            vscode.postMessage({ command: 'step7UpdatePersonaRole', value: params.value });
+            break;
+          case 'step7UpdatePersonaPainPoint':
+            vscode.postMessage({ command: 'step7UpdatePersonaPainPoint', value: params.value });
+            break;
+
+          // Narrative Scenes CRUD commands
+          case 'step7AddScene':
+            vscode.postMessage({ command: 'step7AddScene' });
+            break;
+          case 'step7UpdateScene':
+            // Handle highlighted agents multi-select toggle
+            if (params.field === 'highlightedAgents') {
+              vscode.postMessage({
+                command: 'step7ToggleSceneAgent',
+                index: params.index,
+                agentId: params.agentId,
+                checked: params.checked
+              });
+            } else {
+              vscode.postMessage({
+                command: 'step7UpdateScene',
+                index: params.index,
+                field: params.field,
+                value: params.value
+              });
+            }
+            break;
+          case 'step7RemoveScene':
+            vscode.postMessage({ command: 'step7RemoveScene', index: params.index });
+            break;
+
+          // Scene reordering commands
+          case 'step7MoveSceneUp':
+            vscode.postMessage({ command: 'step7MoveSceneUp', index: params.index });
+            break;
+          case 'step7MoveSceneDown':
+            vscode.postMessage({ command: 'step7MoveSceneDown', index: params.index });
+            break;
+
+          default:
+            console.warn('Unknown Step 7 command:', command);
+        }
+      }
+
+      // =========================================================================
       // Step 8: Generate Steering Files function (Task Group 8)
       // Task 8.2: Trigger steering file generation with auto-clear on success
       // =========================================================================

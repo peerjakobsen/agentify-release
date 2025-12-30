@@ -72,7 +72,7 @@ export interface PersistedWizardState {
   uploadedFileMetadata?: PersistedFileMetadata;
 
   // -------------------------------------------------------------------------
-  // Step 2-6: State Objects
+  // Step 2-7: State Objects
   // -------------------------------------------------------------------------
 
   /** AI gap-filling conversation state */
@@ -85,6 +85,8 @@ export interface PersistedWizardState {
   agentDesign: AgentDesignState;
   /** Mock data state */
   mockData: MockDataState;
+  /** Demo strategy state */
+  demoStrategy: DemoStrategyState;
 }
 
 /**
@@ -661,6 +663,80 @@ export interface MockDataState {
   aiCalled: boolean;
 }
 
+// ============================================================================
+// Step 7: Demo Strategy Types (Roadmap Item 23)
+// ============================================================================
+
+/**
+ * Aha moment - a key demonstration point tied to a specific agent or tool
+ * Task 1.2: Represents impressive capabilities to highlight in the demo
+ */
+export interface AhaMoment {
+  /** Unique identifier for the moment */
+  id: string;
+  /** Title describing what should impress the audience */
+  title: string;
+  /** Type of trigger - either an agent or a tool */
+  triggerType: 'agent' | 'tool';
+  /** Name of the agent or tool that triggers this moment */
+  triggerName: string;
+  /** Suggested talking point for the presenter */
+  talkingPoint: string;
+}
+
+/**
+ * Demo persona - a realistic user profile for the demo narrative
+ * Task 1.2: Single persona to focus the demo story
+ */
+export interface DemoPersona {
+  /** Persona name (e.g., "Maria, Regional Inventory Manager") */
+  name: string;
+  /** Role description (e.g., "Reviews morning replenishment recommendations for 12 stores") */
+  role: string;
+  /** Pain point the agent addresses (e.g., "Currently spends 2 hours manually checking stock levels") */
+  painPoint: string;
+}
+
+/**
+ * Narrative scene - a scene in the demo flow
+ * Task 1.2: Ordered scene with agent highlighting
+ */
+export interface NarrativeScene {
+  /** Unique identifier for the scene */
+  id: string;
+  /** Scene title (e.g., "Morning Check-In") */
+  title: string;
+  /** Scene description (max 500 characters) */
+  description: string;
+  /** Array of agent IDs highlighted in this scene */
+  highlightedAgents: string[];
+}
+
+/**
+ * Demo strategy state for Step 7
+ * Task 1.2: Tracks aha moments, persona, narrative scenes, and generation state
+ */
+export interface DemoStrategyState {
+  /** Array of aha moments (max 5) */
+  ahaMoments: AhaMoment[];
+  /** Demo persona (single) */
+  persona: DemoPersona;
+  /** Array of narrative scenes (max 8) */
+  narrativeScenes: NarrativeScene[];
+  /** Whether AI is generating aha moments */
+  isGeneratingMoments: boolean;
+  /** Whether AI is generating persona */
+  isGeneratingPersona: boolean;
+  /** Whether AI is generating narrative */
+  isGeneratingNarrative: boolean;
+  /** Whether user has edited aha moments */
+  momentsEdited: boolean;
+  /** Whether user has edited persona */
+  personaEdited: boolean;
+  /** Whether user has edited narrative */
+  narrativeEdited: boolean;
+}
+
 /**
  * Wizard state interface
  * Holds all form data and navigation state for the ideation wizard
@@ -769,6 +845,16 @@ export interface WizardState {
   mockData: MockDataState;
 
   // -------------------------------------------------------------------------
+  // Step 7: Demo Strategy (Roadmap Item 23)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Demo strategy state
+   * Contains aha moments, persona, and narrative scenes
+   */
+  demoStrategy: DemoStrategyState;
+
+  // -------------------------------------------------------------------------
   // Navigation State
   // -------------------------------------------------------------------------
 
@@ -849,6 +935,7 @@ export interface WizardValidationState {
  * Task 1.4: Extended with Phase 2 action commands for Step 5 Agent Design Editing
  * Task 1.5: Extended with Step 6 Mock Data Strategy commands
  * Task 5.2: Extended with Resume Banner commands
+ * Task 1.6: Extended with Step 7 Demo Strategy commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -971,6 +1058,40 @@ export const WIZARD_COMMANDS = {
   STEP6_IMPORT_DATA: 'step6ImportData',
   /** Toggle customer terminology setting */
   STEP6_TOGGLE_TERMINOLOGY: 'step6ToggleTerminology',
+  // -------------------------------------------------------------------------
+  // Step 7: Demo Strategy commands (Roadmap Item 23)
+  // Task 1.6: Commands for demo strategy management
+  // -------------------------------------------------------------------------
+  /** Add a new aha moment */
+  STEP7_ADD_MOMENT: 'step7AddMoment',
+  /** Update an existing aha moment */
+  STEP7_UPDATE_MOMENT: 'step7UpdateMoment',
+  /** Remove an aha moment */
+  STEP7_REMOVE_MOMENT: 'step7RemoveMoment',
+  /** Update persona name */
+  STEP7_UPDATE_PERSONA_NAME: 'step7UpdatePersonaName',
+  /** Update persona role */
+  STEP7_UPDATE_PERSONA_ROLE: 'step7UpdatePersonaRole',
+  /** Update persona pain point */
+  STEP7_UPDATE_PERSONA_PAIN_POINT: 'step7UpdatePersonaPainPoint',
+  /** Add a new narrative scene */
+  STEP7_ADD_SCENE: 'step7AddScene',
+  /** Update an existing narrative scene */
+  STEP7_UPDATE_SCENE: 'step7UpdateScene',
+  /** Remove a narrative scene */
+  STEP7_REMOVE_SCENE: 'step7RemoveScene',
+  /** Move a scene up in the order */
+  STEP7_MOVE_SCENE_UP: 'step7MoveSceneUp',
+  /** Move a scene down in the order */
+  STEP7_MOVE_SCENE_DOWN: 'step7MoveSceneDown',
+  /** Generate aha moments via AI */
+  STEP7_GENERATE_MOMENTS: 'step7GenerateMoments',
+  /** Generate persona via AI */
+  STEP7_GENERATE_PERSONA: 'step7GeneratePersona',
+  /** Generate narrative via AI */
+  STEP7_GENERATE_NARRATIVE: 'step7GenerateNarrative',
+  /** Generate all sections via AI sequentially */
+  STEP7_GENERATE_ALL: 'step7GenerateAll',
   // -------------------------------------------------------------------------
   // Resume Banner commands (Task 5.2)
   // -------------------------------------------------------------------------
@@ -1097,6 +1218,35 @@ export function createDefaultMockDataState(): MockDataState {
 }
 
 /**
+ * Creates default demo strategy state
+ * Used to initialize or reset Step 7 state
+ *
+ * Task 1.3: Factory function following createDefaultMockDataState() pattern
+ */
+export function createDefaultDemoStrategyState(): DemoStrategyState {
+  return {
+    // Aha moments - empty until user adds or AI generates
+    ahaMoments: [],
+    // Persona - empty until user adds or AI generates
+    persona: {
+      name: '',
+      role: '',
+      painPoint: '',
+    },
+    // Narrative scenes - empty until user adds or AI generates
+    narrativeScenes: [],
+    // Loading flags - all false by default
+    isGeneratingMoments: false,
+    isGeneratingPersona: false,
+    isGeneratingNarrative: false,
+    // Edited flags - all false by default
+    momentsEdited: false,
+    personaEdited: false,
+    narrativeEdited: false,
+  };
+}
+
+/**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  */
@@ -1127,6 +1277,8 @@ export function createDefaultWizardState(): WizardState {
     agentDesign: createDefaultAgentDesignState(),
     // Step 6: Mock Data Strategy
     mockData: createDefaultMockDataState(),
+    // Step 7: Demo Strategy
+    demoStrategy: createDefaultDemoStrategyState(),
     // Navigation
     highestStepReached: 1,
     validationAttempted: false,
@@ -1247,12 +1399,13 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
     customSystems: truncatedState.customSystems,
     uploadedFileMetadata,
 
-    // Step 2-6: State Objects
+    // Step 2-7: State Objects
     aiGapFillingState: truncatedState.aiGapFillingState,
     outcome: truncatedState.outcome,
     security: truncatedState.security,
     agentDesign: truncatedState.agentDesign,
     mockData: truncatedState.mockData,
+    demoStrategy: truncatedState.demoStrategy,
   };
 }
 
@@ -1279,11 +1432,12 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     uploadedFile: undefined, // Binary data not persisted
     uploadedFileMetadata: persisted.uploadedFileMetadata, // Preserve for UI display
 
-    // Step 2-6: State Objects
+    // Step 2-7: State Objects
     aiGapFillingState: persisted.aiGapFillingState,
     outcome: persisted.outcome,
     security: persisted.security,
     agentDesign: persisted.agentDesign,
     mockData: persisted.mockData,
+    demoStrategy: persisted.demoStrategy ?? createDefaultDemoStrategyState(),
   };
 }

@@ -457,7 +457,7 @@ interface ProposedEdge {
 - "Reset Wizard" command clears state file and restarts
 - State automatically cleared when steering files successfully generated (Phase 4) `S`
 
-23. [ ] Demo Design Step — Build wizard step 7 for capturing demo presentation strategy:
+23. [x] Demo Design Step — Build wizard step 7 for capturing demo presentation strategy:
 
 **Key "Aha Moments" (repeatable field group):**
 - Moment title: "What should impress the audience?" — e.g., "Real-time SAP inventory sync"

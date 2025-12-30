@@ -12,7 +12,7 @@ import {
   APPROVAL_GATE_OPTIONS,
   STAKEHOLDER_OPTIONS,
 } from './ideationConstants';
-import type { MockDataState, MockToolDefinition, PersistedFileMetadata } from '../types/wizardPanel';
+import type { MockDataState, MockToolDefinition, PersistedFileMetadata, DemoStrategyState, AhaMoment, NarrativeScene } from '../types/wizardPanel';
 import { getFileReuploadIndicatorHtml } from './resumeBannerHtml';
 
 // ============================================================================
@@ -146,6 +146,8 @@ export interface IdeationState {
   securityGuardrails: SecurityGuardrailsState;
   agentDesign: AgentDesignState;
   mockData?: MockDataState;
+  /** Task 3.2: Demo strategy state for Step 7 */
+  demoStrategy?: DemoStrategyState;
 }
 
 interface IdeationValidationError {
@@ -159,6 +161,19 @@ export interface IdeationValidationState {
   errors: IdeationValidationError[];
   hasWarnings: boolean;
 }
+
+// ============================================================================
+// Constants for Step 7
+// ============================================================================
+
+/** Maximum number of aha moments allowed */
+const MAX_AHA_MOMENTS = 5;
+
+/** Maximum number of narrative scenes allowed */
+const MAX_NARRATIVE_SCENES = 8;
+
+/** Maximum characters for scene description */
+const MAX_SCENE_DESCRIPTION_LENGTH = 500;
 
 // ============================================================================
 // Helper Functions
@@ -327,6 +342,80 @@ function getAgentDesignValidationWarnings(agents: ProposedAgent[], edges: Propos
 }
 
 // ============================================================================
+// Step 7 Helper Functions
+// ============================================================================
+
+/**
+ * Task 3.5: Build trigger dropdown options grouped by agents and tools
+ * @param confirmedAgents Array of confirmed agents from Step 5
+ * @returns HTML string for dropdown options
+ */
+function buildTriggerDropdownOptions(confirmedAgents: ProposedAgent[], selectedValue?: string): string {
+  // Build agent options group
+  const agentOptionsHtml = confirmedAgents.map(agent => {
+    const value = `agent:${agent.name}`;
+    const selected = selectedValue === value ? 'selected' : '';
+    return `<option value="${escapeHtml(value)}" ${selected}>${escapeHtml(agent.name)}</option>`;
+  }).join('');
+
+  // Build tool options group
+  const toolOptionsHtml: string[] = [];
+  confirmedAgents.forEach(agent => {
+    agent.tools.forEach(tool => {
+      const value = `tool:${tool}`;
+      const selected = selectedValue === value ? 'selected' : '';
+      toolOptionsHtml.push(
+        `<option value="${escapeHtml(value)}" ${selected}>${escapeHtml(tool)} (${escapeHtml(agent.name)})</option>`
+      );
+    });
+  });
+
+  return `
+    <option value="">Select trigger...</option>
+    <optgroup label="-- Agents --">
+      ${agentOptionsHtml}
+    </optgroup>
+    <optgroup label="-- Tools --">
+      ${toolOptionsHtml.join('')}
+    </optgroup>
+  `;
+}
+
+/**
+ * Task 3.8: Build multi-select checkbox list for highlighted agents
+ * @param sceneIndex Index of the scene
+ * @param selectedAgents Array of selected agent IDs
+ * @param confirmedAgents Array of confirmed agents from Step 5
+ * @returns HTML string for agent checkboxes
+ */
+function buildAgentMultiSelect(
+  sceneIndex: number,
+  selectedAgents: string[],
+  confirmedAgents: ProposedAgent[]
+): string {
+  if (confirmedAgents.length === 0) {
+    return '<p class="no-agents-hint">No agents available</p>';
+  }
+
+  const checkboxesHtml = confirmedAgents.map(agent => {
+    const checked = selectedAgents.includes(agent.id) ? 'checked' : '';
+    return `
+      <label class="agent-checkbox">
+        <input
+          type="checkbox"
+          value="${escapeHtml(agent.id)}"
+          ${checked}
+          onchange="handleStep7Command('step7UpdateScene', { index: ${sceneIndex}, field: 'highlightedAgents', agentId: '${escapeHtml(agent.id)}', checked: this.checked })"
+        >
+        <span class="checkbox-label">${escapeHtml(agent.name)}</span>
+      </label>
+    `;
+  }).join('');
+
+  return `<div class="agent-multiselect">${checkboxesHtml}</div>`;
+}
+
+// ============================================================================
 // Step HTML Generators
 // ============================================================================
 
@@ -383,6 +472,9 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
   }
   if (state.currentStep === 6) {
     return getStep6Html(state);
+  }
+  if (state.currentStep === 7) {
+    return getStep7Html(state);
   }
   return `
       <div class="placeholder-content">
@@ -1624,6 +1716,387 @@ export function getStep6Html(state: IdeationState): string {
 
     ${validationWarningsHtml}
     ${actionButtonsHtml}
+  `;
+}
+
+// ============================================================================
+// Step 7: Demo Strategy
+// ============================================================================
+
+/**
+ * Render an aha moment row
+ * Task 3.4: Repeatable row pattern following Step 3 metrics
+ */
+function renderAhaMomentRow(
+  moment: AhaMoment,
+  index: number,
+  confirmedAgents: ProposedAgent[]
+): string {
+  // Build the selected value for dropdown
+  const selectedValue = moment.triggerType && moment.triggerName
+    ? `${moment.triggerType}:${moment.triggerName}`
+    : '';
+
+  return `
+    <div class="aha-moment-row" data-index="${index}">
+      <div class="moment-fields">
+        <div class="moment-field">
+          <label class="field-label">Title</label>
+          <input
+            type="text"
+            class="moment-title-input"
+            placeholder="What impresses the audience?"
+            value="${escapeHtml(moment.title)}"
+            oninput="handleStep7Command('step7UpdateMoment', { index: ${index}, field: 'title', value: this.value })"
+          >
+        </div>
+        <div class="moment-field">
+          <label class="field-label">Trigger</label>
+          <select
+            class="moment-trigger-select"
+            onchange="handleStep7Command('step7UpdateMoment', { index: ${index}, field: 'trigger', value: this.value })"
+          >
+            ${buildTriggerDropdownOptions(confirmedAgents, selectedValue)}
+          </select>
+        </div>
+        <div class="moment-field moment-field-wide">
+          <label class="field-label">Talking Point</label>
+          <textarea
+            class="moment-talking-point"
+            placeholder="What should the presenter say?"
+            oninput="handleStep7Command('step7UpdateMoment', { index: ${index}, field: 'talkingPoint', value: this.value })"
+          >${escapeHtml(moment.talkingPoint)}</textarea>
+        </div>
+      </div>
+      <button
+        class="remove-moment-btn"
+        onclick="handleStep7Command('step7RemoveMoment', { index: ${index} })"
+        title="Remove moment"
+      >🗑️</button>
+    </div>
+  `;
+}
+
+/**
+ * Render a narrative scene card
+ * Task 3.7: Scene with title, description, and highlighted agents
+ */
+function renderNarrativeSceneCard(
+  scene: NarrativeScene,
+  index: number,
+  totalScenes: number,
+  confirmedAgents: ProposedAgent[]
+): string {
+  const isFirst = index === 0;
+  const isLast = index === totalScenes - 1;
+  const descriptionLength = scene.description.length;
+  const warningClass = descriptionLength > 450 ? 'warning' : '';
+
+  return `
+    <div class="narrative-scene-card" data-index="${index}">
+      <div class="scene-header">
+        <span class="scene-number">${index + 1}</span>
+        <div class="scene-actions">
+          <button
+            class="scene-arrow-btn"
+            onclick="handleStep7Command('step7MoveSceneUp', { index: ${index} })"
+            ${isFirst ? 'disabled' : ''}
+            title="Move up"
+          >↑</button>
+          <button
+            class="scene-arrow-btn"
+            onclick="handleStep7Command('step7MoveSceneDown', { index: ${index} })"
+            ${isLast ? 'disabled' : ''}
+            title="Move down"
+          >↓</button>
+          <button
+            class="remove-scene-btn"
+            onclick="handleStep7Command('step7RemoveScene', { index: ${index} })"
+            title="Remove scene"
+          >🗑️</button>
+        </div>
+      </div>
+      <div class="scene-fields">
+        <div class="scene-field">
+          <label class="field-label">Scene Title</label>
+          <input
+            type="text"
+            class="scene-title-input"
+            placeholder="Scene title..."
+            value="${escapeHtml(scene.title)}"
+            oninput="handleStep7Command('step7UpdateScene', { index: ${index}, field: 'title', value: this.value })"
+          >
+        </div>
+        <div class="scene-field">
+          <label class="field-label">Description</label>
+          <textarea
+            class="scene-description-input"
+            placeholder="What happens in this scene? (max 500 characters)"
+            maxlength="${MAX_SCENE_DESCRIPTION_LENGTH}"
+            oninput="handleStep7Command('step7UpdateScene', { index: ${index}, field: 'description', value: this.value })"
+          >${escapeHtml(scene.description)}</textarea>
+          <span class="char-counter ${warningClass}">${descriptionLength}/${MAX_SCENE_DESCRIPTION_LENGTH} characters</span>
+        </div>
+        <div class="scene-field">
+          <label class="field-label">Highlighted Agents</label>
+          ${buildAgentMultiSelect(index, scene.highlightedAgents, confirmedAgents)}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Get Step 7 HTML - Demo Strategy
+ * Task 3.2: Main Step 7 HTML generator
+ */
+export function getStep7Html(state: IdeationState): string {
+  const demoStrategy = state.demoStrategy;
+  const confirmedAgents = state.agentDesign?.confirmedAgents ?? [];
+
+  // Handle missing demoStrategy state
+  if (!demoStrategy) {
+    return `
+      <div class="step7-header">
+        <h2>Demo Strategy</h2>
+        <p class="step-description">Define your demo presentation strategy with aha moments, persona, and narrative flow.</p>
+      </div>
+      <div class="demo-strategy-error">
+        <span class="error-text">Demo strategy state not initialized. Please go back and complete previous steps.</span>
+      </div>
+    `;
+  }
+
+  const {
+    ahaMoments,
+    persona,
+    narrativeScenes,
+    isGeneratingMoments,
+    isGeneratingPersona,
+    isGeneratingNarrative,
+  } = demoStrategy;
+
+  // Check if any section is generating
+  const anyGenerating = isGeneratingMoments || isGeneratingPersona || isGeneratingNarrative;
+
+  // =========================================================================
+  // Task 3.3: Generate All Button
+  // =========================================================================
+  const generateAllHtml = `
+    <div class="generate-all-section">
+      <button
+        class="generate-all-btn"
+        onclick="handleStep7Command('step7GenerateAll', {})"
+        ${anyGenerating ? 'disabled' : ''}
+      >
+        <span class="sparkle-icon">✨</span>
+        Generate All
+      </button>
+    </div>
+  `;
+
+  // =========================================================================
+  // Task 3.4: Aha Moments Section
+  // =========================================================================
+  let ahaMomentsContentHtml = '';
+  if (isGeneratingMoments) {
+    ahaMomentsContentHtml = `
+      <div class="section-loading">
+        <div class="typing-indicator">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <span class="loading-text">Generating aha moments...</span>
+      </div>
+    `;
+  } else if (ahaMoments.length === 0) {
+    ahaMomentsContentHtml = `
+      <div class="empty-state">
+        <p>No aha moments yet. Add one manually or click <span class="sparkle-icon">✨</span> Generate Moments</p>
+      </div>
+    `;
+  } else {
+    ahaMomentsContentHtml = ahaMoments.map((moment, index) =>
+      renderAhaMomentRow(moment, index, confirmedAgents)
+    ).join('');
+  }
+
+  const canAddMoment = ahaMoments.length < MAX_AHA_MOMENTS;
+  const ahaMomentsHtml = `
+    <div class="demo-strategy-section aha-moments-section">
+      <div class="section-header">
+        <div class="section-header-left">
+          <h3>Aha Moments</h3>
+        </div>
+        <button
+          class="generate-section-btn"
+          onclick="handleStep7Command('step7GenerateMoments', {})"
+          ${isGeneratingMoments ? 'disabled' : ''}
+        >
+          <span class="sparkle-icon">✨</span>
+          Generate Moments
+        </button>
+      </div>
+      <p class="section-tip">Tip: 2-3 key moments keeps your demo focused</p>
+
+      <div class="aha-moments-list">
+        ${ahaMomentsContentHtml}
+      </div>
+
+      <button
+        class="add-moment-btn"
+        onclick="handleStep7Command('step7AddMoment', {})"
+        ${!canAddMoment ? 'disabled' : ''}
+      >
+        + Add Moment
+      </button>
+      ${!canAddMoment ? '<span class="max-rows-hint">Maximum 5 moments reached</span>' : ''}
+    </div>
+  `;
+
+  // =========================================================================
+  // Task 3.6: Demo Persona Section
+  // =========================================================================
+  let personaContentHtml = '';
+  if (isGeneratingPersona) {
+    personaContentHtml = `
+      <div class="section-loading">
+        <div class="typing-indicator">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <span class="loading-text">Generating persona...</span>
+      </div>
+    `;
+  } else {
+    personaContentHtml = `
+      <div class="persona-fields">
+        <div class="persona-field">
+          <label class="field-label">Name</label>
+          <input
+            type="text"
+            class="persona-input"
+            placeholder="e.g., Maria, Regional Inventory Manager"
+            value="${escapeHtml(persona.name)}"
+            oninput="handleStep7Command('step7UpdatePersonaName', { value: this.value })"
+          >
+        </div>
+        <div class="persona-field">
+          <label class="field-label">Role</label>
+          <input
+            type="text"
+            class="persona-input"
+            placeholder="e.g., Reviews morning replenishment recommendations for 12 stores"
+            value="${escapeHtml(persona.role)}"
+            oninput="handleStep7Command('step7UpdatePersonaRole', { value: this.value })"
+          >
+        </div>
+        <div class="persona-field">
+          <label class="field-label">Pain Point</label>
+          <textarea
+            class="persona-textarea"
+            placeholder="e.g., Currently spends 2 hours manually checking stock levels"
+            oninput="handleStep7Command('step7UpdatePersonaPainPoint', { value: this.value })"
+          >${escapeHtml(persona.painPoint)}</textarea>
+        </div>
+      </div>
+    `;
+  }
+
+  const personaHtml = `
+    <div class="demo-strategy-section persona-section">
+      <div class="section-header">
+        <div class="section-header-left">
+          <h3>Demo Persona</h3>
+        </div>
+        <button
+          class="generate-section-btn"
+          onclick="handleStep7Command('step7GeneratePersona', {})"
+          ${isGeneratingPersona ? 'disabled' : ''}
+        >
+          <span class="sparkle-icon">✨</span>
+          Generate Persona
+        </button>
+      </div>
+
+      ${personaContentHtml}
+    </div>
+  `;
+
+  // =========================================================================
+  // Task 3.7: Narrative Flow Section
+  // =========================================================================
+  let narrativeContentHtml = '';
+  if (isGeneratingNarrative) {
+    narrativeContentHtml = `
+      <div class="section-loading">
+        <div class="typing-indicator">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <span class="loading-text">Generating narrative...</span>
+      </div>
+    `;
+  } else if (narrativeScenes.length === 0) {
+    narrativeContentHtml = `
+      <div class="empty-state">
+        <p>No scenes defined yet. Add one manually or click <span class="sparkle-icon">✨</span> Generate Narrative</p>
+      </div>
+    `;
+  } else {
+    narrativeContentHtml = narrativeScenes.map((scene, index) =>
+      renderNarrativeSceneCard(scene, index, narrativeScenes.length, confirmedAgents)
+    ).join('');
+  }
+
+  const canAddScene = narrativeScenes.length < MAX_NARRATIVE_SCENES;
+  const narrativeHtml = `
+    <div class="demo-strategy-section narrative-section">
+      <div class="section-header">
+        <div class="section-header-left">
+          <h3>Narrative Flow</h3>
+        </div>
+        <button
+          class="generate-section-btn"
+          onclick="handleStep7Command('step7GenerateNarrative', {})"
+          ${isGeneratingNarrative ? 'disabled' : ''}
+        >
+          <span class="sparkle-icon">✨</span>
+          Generate Narrative
+        </button>
+      </div>
+
+      <div class="narrative-scenes-list">
+        ${narrativeContentHtml}
+      </div>
+
+      <button
+        class="add-scene-btn"
+        onclick="handleStep7Command('step7AddScene', {})"
+        ${!canAddScene ? 'disabled' : ''}
+      >
+        + Add Scene
+      </button>
+      ${!canAddScene ? '<span class="max-rows-hint">Maximum 8 scenes reached</span>' : ''}
+    </div>
+  `;
+
+  // =========================================================================
+  // Combine all sections
+  // =========================================================================
+  return `
+    <div class="step7-header">
+      <h2>Demo Strategy</h2>
+      <p class="step-description">Define your demo presentation strategy with aha moments, persona, and narrative flow.</p>
+    </div>
+
+    ${generateAllHtml}
+    ${ahaMomentsHtml}
+    ${personaHtml}
+    ${narrativeHtml}
   `;
 }
 
