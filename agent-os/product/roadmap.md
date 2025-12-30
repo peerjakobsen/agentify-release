@@ -558,100 +558,26 @@ Pain Point: Currently spends 2 hours manually checking stock levels
 - **Tools:** Either inline with agent code OR as Lambda functions (for shared tools across agents)
 - **Orchestration:** Steering files describe the pattern (graph/swarm/workflow), agent definitions, edges, and entry point(s)
 
-28. [ ] Kiro Steering Generation — Generate complete `.kiro/steering/` directory from wizard state on "Generate Steering Files" button click:
+28.1. [x] Steering Document Prompts — Create system prompts for transforming wizard state into Kiro steering markdown:
 
-**Files Generated:**
-
-| File | Source | Content |
-|------|--------|---------|
-| `product.md` | Item 13, 16 | Business objective as product description, success metrics, stakeholders |
-| `tech.md` | Item 17, 18, 19, 20 | Strands SDK, Python 3.12+, orchestration pattern, agent definitions with roles/tools, edges defining data flow, entry point agent(s), **AgentCore features mapping** (see below), DynamoDB for observability events |
-| `structure.md` | Static template | Standard agentic project layout (`agents/`, `tools/`, `mocks/`, etc.) |
-| `customer-context.md` | Item 13, 15 | Industry, confirmed system assumptions, strategic priorities |
-| `integration-landscape.md` | Item 15, 19, 21 | Systems, data sources, mock definitions with sample data, **shared tools analysis** (see below) |
-| `security-policies.md` | Item 17 | Data classification, compliance frameworks, approval gates, guardrails |
-| `demo-strategy.md` | Item 23 | Key aha moments, demo persona, narrative flow sequence |
-| `agentify-integration.md` | Static + Item 18 | Event emission patterns, CLI contract, agent IDs from design |
-
-**AgentCore Features Mapping (in `tech.md`):**
-
-Steering docs should guide Kiro on which AgentCore features to use:
-
-| AgentCore Feature | Demo Usage | Notes |
-|-------------------|------------|-------|
-| **Runtime** | ✅ Deploy agents via AgentCore CLI | Serverless, session isolation |
-| **Gateway** | ✅ Register shared Lambda tools | Auto-converts to MCP-compatible |
-| **Memory** | Optional | If agents need session context |
-| **Identity** | Skip | Mock tools don't need real auth |
-| **Policy** | ✅ Map Step 4 guardrails to Cedar policies | Approval gates → boundaries |
-| **Evaluations** | Optional | Test demo quality |
-| **Observability** | ✅ Agentify DynamoDB events | Powers the Agentify panel UI |
-
-**Policy Mapping from Step 4:**
-```markdown
-## AgentCore Policy Configuration
-Based on Security & Guardrails (Step 4):
-
-Approval Gates → Cedar Policies:
-- "Before external API calls" → require_approval(action == "external_api")
-- "Before data modification" → require_approval(action == "write")
-- "Before financial transactions" → require_approval(action == "financial")
-
-Data Sensitivity → Access Boundaries:
-- "Confidential" → restrict PII fields, audit all access
-- "Restricted" → encryption required, no external transmission
+**Prompt File Location:**
 ```
-
-**Shared Tools Analysis (in `integration-landscape.md`):**
-
-When generating steering docs, analyze tools across all agents to identify shared vs per-agent tools:
-
-- **Identify duplicates:** If multiple agents use the same system integration (e.g., `databricks_query`, `salesforce_get_customer`), flag as shared tool
-- **Shared tools:** Deploy as Lambda functions, register with Gateway (auto-converts to MCP-compatible)
-- **Per-agent tools:** Inline with agent code
-- **Output format in steering doc:**
-```markdown
-## Shared Tools (Lambda functions, registered with Gateway)
-| Tool | Used By | Mock Data Source |
-|------|---------|------------------|
-| databricks_query | Credit Agent, Risk Agent, Compliance Agent | Item 21 mock definitions |
-| salesforce_get_customer | Document Agent, Credit Agent | Item 21 mock definitions |
-
-## Per-Agent Tools (inline with agent code)
-| Tool | Agent | Notes |
-|------|-------|-------|
-| fraud_score_calculator | Fraud Agent | Agent-specific logic |
-```
-
-**Generation Flow:**
-1. Validate all required wizard steps completed
-2. Show preview of files to be generated
-3. User confirms "Generate"
-4. Write files to `.kiro/steering/`
-5. Clear wizard state (item 22) on success
-6. Show success notification with "Open in Kiro" button
-
-**Implementation Approach — One Prompt Per Document Type:**
-
-Use Bedrock to transform wizard state JSON into well-written steering markdown. Each document type has its own system prompt combined with relevant wizard state sections.
-
-**Prompt File Structure:**
-```
-src/prompts/steering/
-├── product-steering.prompt.md          → product.md
-├── tech-steering.prompt.md             → tech.md
-├── structure-steering.prompt.md        → structure.md (mostly template)
-├── customer-context.prompt.md          → customer-context.md
-├── integration-landscape.prompt.md     → integration-landscape.md
-├── security-policies.prompt.md         → security-policies.md
-├── demo-strategy-steering.prompt.md    → demo-strategy.md
-└── agentify-integration.prompt.md      → agentify-integration.md
+resources/prompts/steering/
+├── product-steering.prompt.md
+├── tech-steering.prompt.md
+├── structure-steering.prompt.md
+├── customer-context-steering.prompt.md
+├── integration-landscape-steering.prompt.md
+├── security-policies-steering.prompt.md
+├── demo-strategy-steering.prompt.md
+└── agentify-integration-steering.prompt.md
 ```
 
 **Each Prompt Defines:**
 - Expected markdown structure and sections for that document
 - What the document is for (Kiro steering context)
 - Formatting guidelines and examples
+- JSON input schema it expects from wizard state
 
 **State Mapping Per Document:**
 | Document | Wizard State Sections Used |
@@ -663,54 +589,130 @@ src/prompts/steering/
 | `integration-landscape.md` | systems, agentDesign (for shared tools analysis), mockData |
 | `security-policies.md` | securityGuardrails (sensitivity, frameworks, approvalGates) |
 | `demo-strategy.md` | demoStrategy (ahaMoments, persona, narrativeScenes) |
-| `agentify-integration.md` | agentDesign.confirmedAgents (agent IDs) |
+| `agentify-integration.md` | agentDesign.confirmedAgents (agent IDs), orchestration pattern |
 
-**Service Implementation:**
+**AgentCore Features Guidance (in tech-steering.prompt.md):**
+Prompt should guide Kiro on which AgentCore features to use:
+- **Runtime**: Deploy agents via AgentCore CLI (serverless, session isolation)
+- **Gateway**: Register shared Lambda tools (auto-converts to MCP-compatible)
+- **Policy**: Map Step 4 guardrails to Cedar policies (approval gates → boundaries)
+- **Observability**: Agentify DynamoDB events (powers Demo Viewer panel)
+- **Memory/Identity/Evaluations**: Optional, note when useful
+
+**Shared Tools Analysis (in integration-landscape-steering.prompt.md):**
+Prompt should instruct model to:
+- Identify duplicate tools across agents (e.g., multiple agents use `databricks_query`)
+- Flag shared tools for Lambda deployment + Gateway registration
+- Keep per-agent tools inline with agent code
+- Output as markdown tables with "Used By" column
+
+**agentify-integration.md Content:**
+- Event emission contract (DynamoDB schema for workflow events)
+- Agent IDs for OpenTelemetry trace correlation
+- CLI invocation pattern for Demo Viewer (`python main.py --workflow-id {id}`)
+- Required decorators/instrumentation patterns `M`
+
+28.2. [ ] Steering Generation Service — Implement service that generates steering files using prompts from Item 28.1:
+
+**Service Interface:**
 ```typescript
 // src/services/steeringGenerationService.ts
+interface GenerationResult {
+  success: boolean;
+  files: GeneratedFile[];
+  errors?: { file: string; error: string }[];
+}
+
+interface GeneratedFile {
+  fileName: string;
+  filePath: string;
+  content: string;
+  status: 'created' | 'failed';
+}
+
 class SteeringGenerationService {
-  async generateSteeringFiles(state: IdeationState): Promise<GenerationResult> {
-    // Generate all documents in parallel for speed
-    const [productMd, techMd, structureMd, ...rest] = await Promise.all([
-      this.generateDocument('product-steering', {
-        businessObjective: state.businessObjective,
-        industry: state.industry,
-        outcome: state.outcome,
-      }),
-      this.generateDocument('tech-steering', {
-        agentDesign: state.agentDesign,
-        securityGuardrails: state.securityGuardrails,
-      }),
-      this.generateDocument('structure-steering', {
-        agents: state.agentDesign.confirmedAgents,
-        mockDefinitions: state.mockData?.mockDefinitions,
-      }),
-      // ... other documents
-    ]);
-
-    // Write all files to .kiro/steering/
-    await this.writeSteeringFiles(results);
-  }
-
-  private async generateDocument(promptName: string, context: object): Promise<string> {
-    const systemPrompt = await loadPrompt(`steering/${promptName}.prompt.md`);
-    return bedrockService.generate({
-      systemPrompt,
-      userMessage: JSON.stringify(context, null, 2),
-    });
-  }
+  async generateSteeringFiles(state: IdeationState): Promise<GenerationResult>;
+  async generateDocument(promptName: string, context: object): Promise<string>;
 }
 ```
 
-**Why Per-Document (Not Single Mega-Prompt):**
-- **Focused context**: Only send relevant state sections per document (saves tokens)
-- **Parallel generation**: Generate all 7-8 documents concurrently
-- **Easier debugging**: If one document is wrong, fix that specific prompt
-- **Matches existing patterns**: Follows AgentDesignService, MockDataService, DemoStrategyService approach
+**Generation Flow:**
+1. Load all prompt files from `resources/prompts/steering/`
+2. Extract relevant state sections for each document (per mapping in 28.1)
+3. Generate all 8 documents in parallel using Bedrock
+4. Return results with content and status per file
+
+**Per-Document Generation:**
+```typescript
+private async generateDocument(promptName: string, context: object): Promise<string> {
+  const systemPrompt = await this.loadPrompt(`steering/${promptName}.prompt.md`);
+  return this.bedrockService.generate({
+    systemPrompt,
+    userMessage: JSON.stringify(context, null, 2),
+  });
+}
+```
+
+**Why Parallel Generation:**
+- 8 independent documents with no cross-dependencies
+- Reduces total generation time from ~40s (sequential) to ~5-8s (parallel)
+- Individual failures don't block other documents
+
+**Error Handling:**
+- Catch per-document generation errors
+- Continue generating remaining documents on failure
+- Return partial results with error details for failed documents
+- Step 8 UI handles display of partial success
+
+**Relationship to Step 8:**
+This service replaces the stub service from Item 24. Step 8 calls this service and handles UI/progress display. Service is responsible only for content generation, not file I/O. `M`
+
+28.3. [ ] Steering File Writer & Step 8 Integration — Write generated steering files to workspace and integrate with Step 8 UI:
+
+**File Writing:**
+- Create `.kiro/steering/` directory if not exists
+- Write each generated document from Item 28.2 to corresponding file
+- Emit progress events for Step 8 UI updates
 
 **Conflict Handling:**
-- If `.kiro/steering/` exists, prompt: "Overwrite existing steering files?"
-- Option to backup existing files to `.kiro/steering.backup/` `M`
+- Check if `.kiro/steering/` directory exists with files
+- If exists, prompt: "Overwrite existing steering files?"
+- Options: "Overwrite", "Backup & Overwrite", "Cancel"
+- "Backup & Overwrite" copies existing to `.kiro/steering.backup-{timestamp}/`
+
+**Step 8 Integration:**
+- Replace stub service calls with real `SteeringGenerationService`
+- Update progress UI to show per-file generation status
+- Remove `isPlaceholderMode` flag and "Preview mode" indicator
+- On success: show generated file list with "Open File" links
+- On partial failure: show which files succeeded/failed with retry option
+
+**Post-Generation Actions:**
+- Clear wizard state (per Item 22) on full success only
+- Keep wizard state on partial failure (allow retry)
+- "Open in Kiro" button reveals `.kiro/steering/` folder
+- If in Kiro IDE: TODO placeholder for `kiro.startSpecFlow` command (Item 34)
+
+**Validation Before Generation:**
+- Verify required wizard steps have content (Steps 1, 3, 5 minimum)
+- Show validation errors in Step 8 summary cards
+- Block generation if critical steps incomplete
+
+**Files Written:**
+```
+.kiro/steering/
+├── product.md
+├── tech.md
+├── structure.md
+├── customer-context.md
+├── integration-landscape.md
+├── security-policies.md
+├── demo-strategy.md
+└── agentify-integration.md
+```
+
+**Demo Script Note:**
+`demo-script.md` (Item 23.5) is a separate presenter-focused export to workspace root. `demo-strategy.md` here is Kiro steering for code generation — different purpose, different audience. `M`
 
 29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
 
