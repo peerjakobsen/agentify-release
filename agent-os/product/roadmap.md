@@ -885,7 +885,7 @@ This is an Agentify demo project. Follow these rules strictly:
 - Phase 2 complete → Usage instructions + action buttons appear
 - "Start Over" clears wizard state and returns to Step 1 `M`
 
-28.5. [ ] CDK Infrastructure Bundling & Extraction — Replace CloudFormation SDK deployment with bundled CDK infrastructure:
+28.5. [x] CDK Infrastructure Bundling & Extraction — Replace CloudFormation SDK deployment with bundled CDK infrastructure:
 
 **File Extraction on "Initialize Project":**
 - Extract bundled `resources/cdk/` to `{workspace}/cdk/` (full CDK project with NetworkingStack + ObservabilityStack)

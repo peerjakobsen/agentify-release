@@ -12,6 +12,8 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 4. **Establish Naming Conventions**: Define snake_case tool names, agent ID formats, and file naming patterns.
 
+5. **Distinguish Tool Locations**: Separate agent-local tools (deployed with agent) from Gateway Lambda targets (shared tools deployed separately).
+
 ## Input Schema
 
 You will receive a JSON object with the following structure:
@@ -113,21 +115,38 @@ project-root/
 │   │   ├── __init__.py
 │   │   ├── agent.py               # Agent definition
 │   │   ├── prompts.py             # System prompts
-│   │   └── tools/                 # Agent-specific tools
+│   │   └── tools/                 # Agent-specific local tools (@tool decorated)
 │   │       ├── __init__.py
-│   │       └── {tool_name}.py     # Individual tool implementations
-│   └── shared/                    # Shared utilities
+│   │       └── {tool_name}.py     # Local tool implementations
+│   └── shared/                    # Shared utilities (NOT Gateway tools)
 │       ├── __init__.py
-│       ├── tools/                 # Tools used by multiple agents
-│       │   ├── __init__.py
-│       │   └── {tool_name}.py
 │       └── utils/                 # Common utilities
 │           └── __init__.py
+├── cdk/                           # AWS CDK infrastructure
+│   ├── bin/
+│   │   └── app.ts                 # CDK app entry point
+│   ├── lib/
+│   │   ├── dynamodb-stack.ts      # Observability events table
+│   │   └── gateway-tools-stack.ts # Lambda functions for Gateway
+│   ├── package.json
+│   └── cdk.json
+├── gateway/                       # AgentCore Gateway configuration
+│   ├── handlers/                  # Lambda handler source code
+│   │   ├── {tool_name}/           # One folder per shared tool
+│   │   │   ├── handler.py         # Lambda handler
+│   │   │   └── requirements.txt   # Lambda dependencies
+│   │   └── ...
+│   ├── schemas/                   # Tool schemas for Gateway registration
+│   │   └── {tool_name}.json       # JSON schema per tool
+│   ├── setup_gateway.py           # Creates Gateway + registers targets
+│   └── cleanup_gateway.py         # Tears down Gateway resources
 ├── tests/
 │   ├── agents/                    # Agent tests
 │   │   └── {agent_id}/
 │   │       └── test_agent.py
-│   └── tools/                     # Tool tests
+│   ├── tools/                     # Local tool tests
+│   │   └── test_{tool_name}.py
+│   └── handlers/                  # Gateway Lambda handler tests
 │       └── test_{tool_name}.py
 ├── mocks/
 │   └── {system}/                  # Mock data organized by system
@@ -141,8 +160,28 @@ project-root/
 │       ├── structure.md           # This document
 │       └── ...
 ├── pyproject.toml                 # Python project configuration
+├── requirements.txt               # Python dependencies
+├── cdk-outputs.json               # Generated: Lambda ARNs from CDK deploy
+├── gateway_config.json            # Generated: Gateway URL and OAuth credentials
 └── README.md
 ```
+
+### Tool Location Decision Tree
+
+When placing tools, use this decision tree:
+
+1. **Is this tool used by only ONE agent?**
+   - YES → Place in `agents/{agent_id}/tools/{tool_name}.py` (local `@tool`)
+   - NO → Continue to step 2
+
+2. **Is this tool used by MULTIPLE agents?**
+   - YES → Create as Gateway Lambda:
+     - Handler: `gateway/handlers/{tool_name}/handler.py`
+     - Schema: `gateway/schemas/{tool_name}.json`
+     - CDK deploys Lambda, Gateway registration happens in `setup_gateway.py`
+
+3. **Is this a utility function (not an agent tool)?**
+   - YES → Place in `agents/shared/utils/`
 
 ## Agent Folder Template
 
@@ -155,23 +194,40 @@ agents/{agent_id}/
 ├── prompts.py         # System prompt text and prompt templates
 └── tools/
     ├── __init__.py    # Tool exports
-    └── {tool}.py      # One file per tool assigned to this agent
+    └── {tool}.py      # One file per LOCAL tool assigned to this agent
 ```
+
+**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `gateway/targets/`.
 
 ### Agent File Contents
 
-**agent.py** - Creates the Strands agent with tools:
+**agent.py** - Creates the Strands agent with local and Gateway tools:
 ```python
 from strands import Agent
 from strands.models.bedrock import BedrockModel
-from .tools import {tool_imports}
+from strands.tools.mcp import MCPClient
+from mcp.client.streamable_http import streamablehttp_client
+from .tools import {local_tool_imports}
 
-def create_{agent_id}() -> Agent:
+# Local tools (agent-specific)
+from .tools import analyze_trends, calculate_forecast
+
+# Gateway tools (shared across agents) - loaded at runtime
+def get_gateway_tools(gateway_url: str) -> list:
+    """Load shared tools from AgentCore Gateway."""
+    client = MCPClient(lambda: streamablehttp_client(gateway_url))
+    with client:
+        return client.list_tools_sync()
+
+def create_{agent_id}(gateway_url: str = None) -> Agent:
     """Create the {Agent Name} agent."""
+    local_tools = [analyze_trends, calculate_forecast]
+    shared_tools = get_gateway_tools(gateway_url) if gateway_url else []
+    
     return Agent(
         model=BedrockModel(model_id="..."),
         system_prompt=SYSTEM_PROMPT,
-        tools=[{tools_list}]
+        tools=local_tools + shared_tools
     )
 ```
 
@@ -183,15 +239,109 @@ You are the {Agent Name}.
 """
 ```
 
-**tools/{tool_name}.py** - Individual tool:
+**tools/{tool_name}.py** - Individual LOCAL tool (agent-specific):
 ```python
 from strands import tool
 
 @tool
 def {tool_name}(param: str) -> dict:
-    """Tool description from mockDefinitions."""
-    # Implementation
+    """Tool description from mockDefinitions.
+    
+    This is a LOCAL tool - only this agent uses it.
+    For shared tools, see gateway/targets/.
+    """
+    # Implementation runs in same process as agent
     pass
+```
+
+## CDK Infrastructure
+
+The `cdk/` folder contains AWS CDK stacks for deploying infrastructure. This is managed separately from the Python agent code.
+
+```
+cdk/
+├── bin/
+│   └── app.ts                     # CDK app - instantiates all stacks
+├── lib/
+│   ├── dynamodb-stack.ts          # Observability events table
+│   └── gateway-tools-stack.ts     # Lambda functions for shared tools
+├── package.json
+├── cdk.json
+└── tsconfig.json
+```
+
+### DynamoDB Stack
+
+Creates the observability events table for workflow tracing:
+- Table name: `{project}-events`
+- Partition key: `workflow_id` (String)
+- Sort key: `timestamp` (Number)
+- TTL enabled for automatic cleanup
+
+### Gateway Tools Stack
+
+Deploys Lambda functions for shared tools:
+- Reads handler code from `gateway/handlers/{tool_name}/`
+- Bundles mock data from `mocks/` into Lambda package
+- Exports Lambda ARNs as CloudFormation outputs
+- ARNs written to `cdk-outputs.json` for Gateway registration
+
+### Deployment Sequence
+
+1. `cd cdk && npm install` - Install CDK dependencies
+2. `cdk deploy --all --outputs-file ../cdk-outputs.json` - Deploy both stacks
+3. `python gateway/setup_gateway.py` - Create Gateway and register Lambda targets
+
+## Gateway Lambda Template
+
+For shared tools used by multiple agents, create Lambda handlers in `gateway/handlers/`. The CDK stack (`cdk/lib/gateway-tools-stack.ts`) deploys these as Lambda functions.
+
+```
+gateway/handlers/{tool_name}/
+├── handler.py         # Lambda function handler
+└── requirements.txt   # Dependencies (if any beyond boto3)
+```
+
+**handler.py** - Gateway Lambda handler:
+```python
+import json
+
+def lambda_handler(event, context):
+    """Gateway Lambda handler for {system} {operation}.
+    
+    This tool is SHARED - multiple agents can use it via Gateway MCP endpoint.
+    """
+    # Gateway passes tool name with target prefix
+    delimiter = "___"
+    tool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')
+    if delimiter in tool_name:
+        tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
+    
+    # Event contains input parameters directly from tool schema
+    param = event.get('param')
+    
+    # Implementation
+    result = {"status": "success", "data": param}
+    
+    return json.dumps(result)
+```
+
+**gateway/schemas/{tool_name}.json** - Tool schema for Gateway registration:
+```json
+{
+    "name": "{tool_name}",
+    "description": "Tool description",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "param": {
+                "type": "string",
+                "description": "Parameter description"
+            }
+        },
+        "required": ["param"]
+    }
+}
 ```
 
 ## Tool Naming Convention

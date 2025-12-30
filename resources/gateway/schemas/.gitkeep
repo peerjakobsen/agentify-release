@@ -1,0 +1,15 @@
+# Gateway tool schemas go here
+# Each JSON file defines the input/output schema for a Lambda tool
+#
+# Example: get_inventory.json
+# {
+#   "name": "get_inventory",
+#   "description": "Get inventory for a product",
+#   "input_schema": {
+#     "type": "object",
+#     "properties": {
+#       "product_id": {"type": "string", "description": "Product ID"}
+#     },
+#     "required": ["product_id"]
+#   }
+# }

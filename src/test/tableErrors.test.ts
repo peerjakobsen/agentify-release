@@ -2,6 +2,7 @@
  * Tests for error messages (Task Group 3)
  *
  * These tests validate the user-facing error messages are clear and actionable.
+ * Updated for CDK-based deployment (CloudFormation template has been removed).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -10,7 +11,7 @@ import {
   getCredentialsNotConfiguredMessage,
   getTableNotActiveMessage,
   getTableValidationSuccessMessage,
-  CLOUDFORMATION_TEMPLATE_PATH,
+  CDK_SETUP_SCRIPT_PATH,
 } from '../messages/tableErrors';
 
 describe('Table Error Messages', () => {
@@ -20,8 +21,8 @@ describe('Table Error Messages', () => {
 
     expect(message).toContain('my-table');
     expect(message).toContain('not found');
-    expect(message).toContain('cloudformation deploy');
-    expect(message).toContain(CLOUDFORMATION_TEMPLATE_PATH);
+    expect(message).toContain('setup.sh');
+    expect(message).toContain('cdk/README.md');
   });
 
   // Test: Credentials not configured message includes setup guidance
@@ -42,7 +43,7 @@ describe('Table Error Messages', () => {
 
     const deletingMessage = getTableNotActiveMessage('my-table', 'DELETING');
     expect(deletingMessage).toContain('DELETING');
-    expect(deletingMessage).toContain('redeploy');
+    expect(deletingMessage).toContain('setup.sh');
   });
 
   // Test: Success message is informative
@@ -53,8 +54,8 @@ describe('Table Error Messages', () => {
     expect(message).toContain('agentify-workflow-events');
   });
 
-  // Test: CloudFormation template path is correct
-  it('should have correct CloudFormation template path', () => {
-    expect(CLOUDFORMATION_TEMPLATE_PATH).toBe('infrastructure/dynamodb-table.yaml');
+  // Test: CDK setup script path is correct
+  it('should have correct CDK setup script path', () => {
+    expect(CDK_SETUP_SCRIPT_PATH).toBe('scripts/setup.sh');
   });
 });

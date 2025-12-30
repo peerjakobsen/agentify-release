@@ -16,7 +16,7 @@ import * as vscode from 'vscode';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDbEvent } from '../types/events';
 import { getDynamoDbDocumentClientAsync } from './dynamoDbClient';
-import { getConfigService } from './configService';
+import { getTableNameAsync } from '../config/dynamoDbConfig';
 
 // ============================================================================
 // Constants
@@ -233,10 +233,8 @@ export class DynamoDbPollingService implements vscode.Disposable {
     // Get DynamoDB client
     const client = await getDynamoDbDocumentClientAsync();
 
-    // Get table name from config
-    const configService = getConfigService();
-    const config = await configService?.getConfig();
-    const tableName = config?.infrastructure?.dynamodb?.tableName;
+    // Get table name using helper function for consistent infrastructure.json -> config.json fallback
+    const tableName = await getTableNameAsync();
 
     if (!tableName) {
       throw new Error('DynamoDB table name not configured');

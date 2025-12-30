@@ -3,6 +3,7 @@
  *
  * These tests validate the table existence checking logic.
  * Uses mocked AWS SDK for unit testing.
+ * Updated for CDK-based deployment (CloudFormation template has been removed).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -113,8 +114,8 @@ describe('Table Validator', () => {
     expect(result.error?.message).toContain('credentials');
   });
 
-  // Test 3.1.4: Error message directs user to deploy CloudFormation template
-  it('should include CloudFormation deployment instructions in error message', async () => {
+  // Test 3.1.4: Error message directs user to deploy infrastructure
+  it('should include setup script instructions in error message', async () => {
     const notFoundError = new Error('Table not found');
     notFoundError.name = 'ResourceNotFoundException';
     mockSend.mockRejectedValueOnce(notFoundError);
@@ -122,8 +123,8 @@ describe('Table Validator', () => {
     const { validateTableExists } = await import('../services/tableValidator');
     const result = await validateTableExists('missing-table');
 
-    expect(result.error?.message).toContain('cloudformation deploy');
-    expect(result.error?.message).toContain('infrastructure/dynamodb-table.yaml');
+    expect(result.error?.message).toContain('setup.sh');
+    expect(result.error?.message).toContain('cdk/README.md');
   });
 
   // Test 3.1.5: Handling of table in non-ACTIVE states

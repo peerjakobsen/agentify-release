@@ -35,11 +35,54 @@ FALLBACK_AZ_NAMES: dict[str, list[str]] = {
     "eu-west-1": ["eu-west-1a", "eu-west-1b", "eu-west-1c"],
 }
 
-# Project name used in resource naming
+# Project name used in resource naming (set via set_project_name() from app.py)
 PROJECT_NAME: str = "agentify"
 
 # Default environment for demo deployments
 DEFAULT_ENVIRONMENT: str = "demo"
+
+
+def set_project_name(name: str) -> None:
+    """
+    Set the project name for resource naming.
+
+    Called from app.py with the sanitized workspace folder name.
+    This allows multiple Agentify projects per AWS account.
+
+    Args:
+        name: The project identifier (lowercase, alphanumeric with hyphens)
+    """
+    global PROJECT_NAME
+    PROJECT_NAME = name
+
+
+def sanitize_project_name(name: str) -> str:
+    """
+    Sanitize a folder name into a valid project identifier.
+
+    Converts to lowercase and replaces invalid characters with hyphens.
+    CloudFormation stack names allow alphanumeric and hyphens only.
+
+    Args:
+        name: The raw folder name (e.g., "My-Demo_Project")
+
+    Returns:
+        Sanitized name suitable for resource naming (e.g., "my-demo-project")
+    """
+    import re
+
+    # Convert to lowercase
+    sanitized = name.lower()
+    # Replace underscores and spaces with hyphens
+    sanitized = re.sub(r"[_\s]+", "-", sanitized)
+    # Remove any character that isn't alphanumeric or hyphen
+    sanitized = re.sub(r"[^a-z0-9-]", "", sanitized)
+    # Collapse multiple hyphens
+    sanitized = re.sub(r"-+", "-", sanitized)
+    # Remove leading/trailing hyphens
+    sanitized = sanitized.strip("-")
+    # Ensure it's not empty
+    return sanitized or "agentify"
 
 
 @lru_cache(maxsize=8)

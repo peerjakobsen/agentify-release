@@ -58,12 +58,18 @@ export interface DynamoDbInfrastructureConfig {
 /**
  * Infrastructure configuration
  * Contains all infrastructure-related settings
+ *
+ * Note: For new projects, dynamodb is optional because it will be
+ * populated from infrastructure.json after user runs setup.sh.
+ * For backward compatibility, existing projects with dynamodb in
+ * config.json are still supported.
  */
 export interface InfrastructureConfig {
   /**
    * DynamoDB configuration for workflow events
+   * Optional for new projects - will be read from infrastructure.json after deployment
    */
-  dynamodb: DynamoDbInfrastructureConfig;
+  dynamodb?: DynamoDbInfrastructureConfig;
 
   /**
    * Bedrock configuration for AI model integration
@@ -172,6 +178,13 @@ export interface AwsConfig {
    * @example "my-dev-profile"
    */
   profile?: string;
+
+  /**
+   * AWS region selected during initialization
+   * Stored for user reference
+   * @example "us-east-1"
+   */
+  region?: string;
 }
 
 /**
@@ -260,6 +273,13 @@ export interface ConfigValidationResult {
 
 /**
  * Validates that a config object has all required fields
+ *
+ * Note: infrastructure.dynamodb is now OPTIONAL because new projects
+ * don't have this until the user runs setup.sh, which creates
+ * infrastructure.json with deployment outputs. The extension reads
+ * from infrastructure.json first, falling back to config.json for
+ * backward compatibility with existing projects.
+ *
  * @param config The config object to validate
  * @returns Validation result with isValid flag and any errors
  */
@@ -298,20 +318,26 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
     errors.push('Missing or invalid "infrastructure" field');
   } else {
     const infra = cfg.infrastructure as Record<string, unknown>;
-    if (!infra.dynamodb || typeof infra.dynamodb !== 'object') {
-      errors.push('Missing or invalid "infrastructure.dynamodb" field');
-    } else {
-      const dynamodb = infra.dynamodb as Record<string, unknown>;
-      if (typeof dynamodb.tableName !== 'string') {
-        errors.push('Missing or invalid "infrastructure.dynamodb.tableName" field');
-      }
-      if (typeof dynamodb.tableArn !== 'string') {
-        errors.push('Missing or invalid "infrastructure.dynamodb.tableArn" field');
-      }
-      if (typeof dynamodb.region !== 'string') {
-        errors.push('Missing or invalid "infrastructure.dynamodb.region" field');
+
+    // Validate infrastructure.dynamodb - NOW OPTIONAL
+    // Only validate if present (for backward compatibility with existing projects)
+    if (infra.dynamodb !== undefined) {
+      if (typeof infra.dynamodb !== 'object' || infra.dynamodb === null) {
+        errors.push('Invalid "infrastructure.dynamodb" field - must be an object when provided');
+      } else {
+        const dynamodb = infra.dynamodb as Record<string, unknown>;
+        if (typeof dynamodb.tableName !== 'string') {
+          errors.push('Missing or invalid "infrastructure.dynamodb.tableName" field');
+        }
+        if (typeof dynamodb.tableArn !== 'string') {
+          errors.push('Missing or invalid "infrastructure.dynamodb.tableArn" field');
+        }
+        if (typeof dynamodb.region !== 'string') {
+          errors.push('Missing or invalid "infrastructure.dynamodb.region" field');
+        }
       }
     }
+    // Note: If dynamodb is not present, that's OK - extension reads from infrastructure.json
 
     // Validate infrastructure.bedrock
     if (!infra.bedrock || typeof infra.bedrock !== 'object') {
@@ -375,6 +401,14 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
           errors.push('Invalid "aws.profile" field - must be a string when provided');
         } else if (aws.profile.trim() === '') {
           errors.push('Invalid "aws.profile" field - must be a non-empty string when provided');
+        }
+      }
+      // Validate aws.region when provided (optional field)
+      if (aws.region !== undefined) {
+        if (typeof aws.region !== 'string') {
+          errors.push('Invalid "aws.region" field - must be a string when provided');
+        } else if (aws.region.trim() === '') {
+          errors.push('Invalid "aws.region" field - must be a non-empty string when provided');
         }
       }
     }

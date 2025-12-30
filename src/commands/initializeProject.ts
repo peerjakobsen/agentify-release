@@ -6,10 +6,11 @@
  * 1. Checks for existing config (idempotency)
  * 2. Prompts for AWS profile selection
  * 3. Prompts for AWS region selection
- * 4. Validates credentials
- * 5. Deploys CloudFormation stack
+ * 4. Checks for existing CDK folder
+ * 5. Extracts bundled CDK and scripts resources
  * 6. Generates .agentify/config.json
  * 7. Creates .kiro/steering/agentify-integration.md
+ * 8. Auto-opens cdk/README.md for deployment instructions
  */
 
 import * as vscode from 'vscode';
@@ -17,15 +18,12 @@ import * as path from 'path';
 import { getProfileDiscoveryService } from '../services/profileDiscoveryService';
 import { getConfigService } from '../services/configService';
 import {
-  getDefaultCredentialProvider,
-  validateCredentials,
-} from '../services/credentialProvider';
-import {
-  CloudFormationService,
-  sanitizeStackName,
-  getCloudFormationTemplate,
-} from '../services/cloudFormationService';
-import { createSteeringFile, STEERING_FILE_PATH } from '../templates/steeringFile';
+  extractBundledResources,
+  checkExistingCdkFolder,
+  showOverwritePrompt,
+  CDK_DEST_PATH,
+} from '../services/resourceExtractionService';
+import { createSteeringFile } from '../templates/steeringFile';
 import type { AgentifyConfig } from '../types';
 
 /**
@@ -65,8 +63,9 @@ type IdempotencyResult = 'continue' | 'reinitialize' | 'skip' | 'cancelled';
  */
 export interface InitializationResult {
   success: boolean;
-  tableName?: string;
   region?: string;
+  cdkExtracted?: boolean;
+  scriptsExtracted?: boolean;
   steeringFileCreated?: boolean;
 }
 
@@ -90,7 +89,7 @@ export async function checkExistingConfig(): Promise<IdempotencyResult> {
   const items = [
     {
       label: 'Reinitialize project',
-      description: 'Deploy new infrastructure (existing stack will remain)',
+      description: 'Re-extract CDK files and update config (existing stack will remain)',
     },
     {
       label: 'Skip initialization',
@@ -182,160 +181,12 @@ export async function showRegionSelection(): Promise<string | null> {
 }
 
 /**
- * Validate AWS credentials with selected profile
- * @param profile Profile name or undefined for default
- * @returns true if valid, false if invalid
- */
-async function validateSelectedCredentials(profile: string | undefined): Promise<boolean> {
-  try {
-    const credentialProvider = getDefaultCredentialProvider();
-    credentialProvider.setProfile(profile);
-    await validateCredentials(credentialProvider);
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-
-    // Check for SSO token expiration
-    if (message.toLowerCase().includes('sso') || message.toLowerCase().includes('token')) {
-      vscode.window.showErrorMessage(
-        `AWS SSO token expired. Run 'aws sso login${profile ? ` --profile ${profile}` : ''}' to refresh.`,
-        'Learn More'
-      ).then((selection) => {
-        if (selection === 'Learn More') {
-          vscode.env.openExternal(
-            vscode.Uri.parse('https://docs.aws.amazon.com/cli/latest/userguide/sso-using-profile.html')
-          );
-        }
-      });
-    } else {
-      vscode.window.showErrorMessage(
-        `Failed to validate AWS credentials: ${message}`
-      );
-    }
-
-    return false;
-  }
-}
-
-/**
- * Deploy CloudFormation stack with progress notification
- * @param stackName Name for the stack
- * @param region AWS region
- * @param extensionPath Path to extension root
- * @returns Stack outputs or null on failure
- */
-async function deployCloudFormationStack(
-  stackName: string,
-  region: string,
-  extensionPath: string
-): Promise<{ tableName: string; tableArn: string } | null> {
-  // Create CloudFormation service
-  const cfService = new CloudFormationService({ region });
-
-  // Read template
-  let template: string;
-  try {
-    template = getCloudFormationTemplate(extensionPath);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    vscode.window.showErrorMessage(`Failed to read CloudFormation template: ${message}`);
-    return null;
-  }
-
-  // Generate table name from stack name
-  const tableName = stackName.replace('agentify-workflow-events-', 'agentify-events-');
-
-  try {
-    // Deploy with progress
-    const result = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'Agentify: Deploying infrastructure',
-        cancellable: true,
-      },
-      async (progress, token) => {
-        // Check for cancellation
-        if (token.isCancellationRequested) {
-          return null;
-        }
-
-        progress.report({ message: 'Creating CloudFormation stack...' });
-
-        // Create stack
-        const stackId = await cfService.deployStack(stackName, template, tableName);
-
-        // Check for cancellation
-        if (token.isCancellationRequested) {
-          vscode.window.showWarningMessage(
-            'Deployment cancelled. Note: Stack creation may continue in AWS. Check AWS Console to clean up if needed.'
-          );
-          return null;
-        }
-
-        progress.report({ message: 'Waiting for stack creation to complete...' });
-
-        // Wait for completion with 5-second polling
-        await cfService.waitForStackComplete(stackId, 5000);
-
-        progress.report({ message: 'Retrieving stack outputs...' });
-
-        // Get outputs
-        const outputs = await cfService.getStackOutputs(stackId);
-
-        return outputs;
-      }
-    );
-
-    return result;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-
-    // Provide user-friendly error messages
-    if (message.includes('already exists')) {
-      vscode.window.showErrorMessage(
-        `Stack '${stackName}' already exists. Delete it from AWS Console or choose a different workspace name.`,
-        'Open AWS Console'
-      ).then((selection) => {
-        if (selection === 'Open AWS Console') {
-          vscode.env.openExternal(
-            vscode.Uri.parse(`https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`)
-          );
-        }
-      });
-    } else if (message.includes('Access denied') || message.includes('permissions')) {
-      vscode.window.showErrorMessage(
-        `Access denied when creating CloudFormation stack. Ensure your AWS credentials have cloudformation:CreateStack and dynamodb:CreateTable permissions.`
-      );
-    } else if (message.includes('timed out')) {
-      vscode.window.showErrorMessage(
-        `Stack creation timed out. Check AWS Console for status. The stack may still complete successfully.`,
-        'Open AWS Console'
-      ).then((selection) => {
-        if (selection === 'Open AWS Console') {
-          vscode.env.openExternal(
-            vscode.Uri.parse(`https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`)
-          );
-        }
-      });
-    } else {
-      vscode.window.showErrorMessage(`CloudFormation deployment failed: ${message}`);
-    }
-
-    return null;
-  }
-}
-
-/**
- * Generate config.json with deployment results
- * @param tableName DynamoDB table name
- * @param tableArn DynamoDB table ARN
- * @param region AWS region
+ * Generate config.json with extension settings (without infrastructure.dynamodb)
+ * @param region AWS region selected by user
  * @param profile AWS profile (undefined for default)
  * @returns true on success, false on failure
  */
 async function generateConfig(
-  tableName: string,
-  tableArn: string,
   region: string,
   profile: string | undefined
 ): Promise<boolean> {
@@ -346,6 +197,8 @@ async function generateConfig(
   }
 
   // Build config object with placeholder values for workflow configuration
+  // Note: infrastructure.dynamodb is NOT included - it will be populated from
+  // infrastructure.json after user runs setup.sh manually
   const config: AgentifyConfig = {
     version: '1.0.0',
     project: {
@@ -354,11 +207,8 @@ async function generateConfig(
       industry: 'tech',
     },
     infrastructure: {
-      dynamodb: {
-        tableName,
-        tableArn,
-        region,
-      },
+      // Note: dynamodb is intentionally omitted - will be read from infrastructure.json
+      // after user deploys via setup.sh
       bedrock: {
         modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
         region,
@@ -371,12 +221,12 @@ async function generateConfig(
       agents: [],
       edges: [],
     },
+    // Store AWS settings for reference
+    aws: {
+      region,
+      ...(profile && { profile }),
+    },
   };
-
-  // Add profile if non-default was selected
-  if (profile) {
-    config.aws = { profile };
-  }
 
   try {
     await configService.createConfig(config);
@@ -386,18 +236,6 @@ async function generateConfig(
     vscode.window.showErrorMessage(`Failed to create configuration: ${message}`);
     return false;
   }
-}
-
-/**
- * Get workspace name for stack naming
- * @returns Workspace name or 'default'
- */
-function getWorkspaceName(): string {
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders && folders.length > 0) {
-    return folders[0].name;
-  }
-  return 'default';
 }
 
 /**
@@ -413,44 +251,58 @@ function getWorkspaceRoot(): string | null {
 }
 
 /**
+ * Open the CDK README file in the editor
+ * @param workspaceRoot Workspace root path
+ */
+async function openReadme(workspaceRoot: string): Promise<void> {
+  const readmePath = path.join(workspaceRoot, CDK_DEST_PATH, 'README.md');
+  const readmeUri = vscode.Uri.file(readmePath);
+
+  try {
+    const doc = await vscode.workspace.openTextDocument(readmeUri);
+    await vscode.window.showTextDocument(doc);
+    console.log('[Agentify] Opened CDK README.md');
+  } catch (error) {
+    console.warn('[Agentify] Failed to open README.md:', error);
+  }
+}
+
+/**
  * Show success notification with initialization summary
- * Includes table name, region, and offers to open the steering file
- * @param tableName DynamoDB table name
+ * Includes region and offers to open the CDK README
  * @param region AWS region
- * @param steeringFileCreated Whether the steering file was created
- * @param workspaceRoot Workspace root path for opening steering file
+ * @param cdkExtracted Whether CDK files were extracted
+ * @param scriptsExtracted Whether script files were extracted
+ * @param workspaceRoot Workspace root path for opening README
  */
 export async function showSuccessNotification(
-  tableName: string,
   region: string,
-  steeringFileCreated: boolean,
+  cdkExtracted: boolean,
+  scriptsExtracted: boolean,
   workspaceRoot: string | null
 ): Promise<void> {
-  // Build summary message with table name and region
-  const summaryMessage = `Agentify: Project initialized successfully! Table: '${tableName}' in region '${region}'.`;
-
-  // Determine available actions based on steering file status
-  const actions: string[] = [];
-  if (steeringFileCreated && workspaceRoot) {
-    actions.push('Open Steering File');
+  // Build summary message based on extraction results
+  let summaryMessage: string;
+  if (cdkExtracted && scriptsExtracted) {
+    summaryMessage = `Agentify: Infrastructure files extracted successfully! Region: '${region}'. Run ./scripts/setup.sh to deploy.`;
+  } else if (cdkExtracted || scriptsExtracted) {
+    summaryMessage = `Agentify: Partial extraction complete. Region: '${region}'. Check cdk/ and scripts/ folders.`;
+  } else {
+    summaryMessage = `Agentify: Project initialized. Region: '${region}'. Existing CDK files preserved.`;
   }
 
-  // Show message with optional action
+  // Always offer to open CDK README
+  const actions: string[] = ['Open CDK README'];
+
+  // Show message with action
   const selection = await vscode.window.showInformationMessage(
     summaryMessage,
     ...actions
   );
 
   // Handle action selection
-  if (selection === 'Open Steering File' && workspaceRoot) {
-    const steeringFilePath = path.join(workspaceRoot, STEERING_FILE_PATH);
-    const steeringFileUri = vscode.Uri.file(steeringFilePath);
-    try {
-      const doc = await vscode.workspace.openTextDocument(steeringFileUri);
-      await vscode.window.showTextDocument(doc);
-    } catch (error) {
-      console.warn('[Agentify] Failed to open steering file:', error);
-    }
+  if (selection === 'Open CDK README' && workspaceRoot) {
+    await openReadme(workspaceRoot);
   }
 }
 
@@ -490,69 +342,83 @@ export async function handleInitializeProject(
     return { success: false };
   }
 
-  // Step 4: Validate credentials
-  const credentialsValid = await validateSelectedCredentials(profile);
-
-  if (!credentialsValid) {
+  const workspaceRoot = getWorkspaceRoot();
+  if (!workspaceRoot) {
+    vscode.window.showErrorMessage('No workspace folder open. Please open a folder first.');
     return { success: false };
   }
 
-  // Step 5: Generate stack name from workspace
-  const workspaceName = getWorkspaceName();
-  const stackName = sanitizeStackName(workspaceName);
+  // Step 4: Check for existing CDK folder and prompt if exists
+  const cdkFolderExists = await checkExistingCdkFolder(workspaceRoot);
+  let shouldOverwrite = true;
 
-  // Step 6: Deploy CloudFormation stack
-  const deploymentResult = await deployCloudFormationStack(
-    stackName,
-    region,
-    context.extensionPath
-  );
+  if (cdkFolderExists) {
+    const overwriteChoice = await showOverwritePrompt();
+    if (overwriteChoice === null) {
+      // User cancelled
+      return { success: false };
+    }
+    shouldOverwrite = overwriteChoice === 'overwrite';
+  }
 
-  if (!deploymentResult) {
+  // Step 5: Extract bundled CDK and scripts resources
+  let extractionResult;
+  try {
+    extractionResult = await extractBundledResources(
+      context.extensionPath,
+      workspaceRoot,
+      shouldOverwrite
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    vscode.window.showErrorMessage(`Extraction error: ${message}`);
     return { success: false };
   }
 
-  // Step 7: Generate config.json
-  const configCreated = await generateConfig(
-    deploymentResult.tableName,
-    deploymentResult.tableArn,
-    region,
-    profile
-  );
+  if (!extractionResult.success) {
+    vscode.window.showErrorMessage(`Failed to extract infrastructure files: ${extractionResult.message}`);
+    return { success: false };
+  }
+
+  // Step 6: Generate config.json (without infrastructure.dynamodb)
+  const configCreated = await generateConfig(region, profile);
 
   if (!configCreated) {
     return { success: false };
   }
 
-  // Step 8: Create steering file (non-blocking - errors don't fail initialization)
+  // Step 7: Create steering file (non-blocking - errors don't fail initialization)
   let steeringFileCreated = false;
-  const workspaceRoot = getWorkspaceRoot();
-  if (workspaceRoot) {
-    try {
-      const steeringResult = await createSteeringFile(workspaceRoot);
-      if (steeringResult.success && !steeringResult.skipped) {
-        steeringFileCreated = true;
-      }
-    } catch (error) {
-      // Log error but don't fail initialization
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      console.warn('[Agentify] Steering file creation error:', message);
+  try {
+    const steeringResult = await createSteeringFile(workspaceRoot);
+    if (steeringResult.success && !steeringResult.skipped) {
+      steeringFileCreated = true;
     }
+  } catch (error) {
+    // Log error but don't fail initialization
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.warn('[Agentify] Steering file creation error:', message);
+  }
+
+  // Step 8: Auto-open README.md if CDK was extracted
+  if (extractionResult.cdkExtracted) {
+    await openReadme(workspaceRoot);
   }
 
   // Step 9: Show success notification with summary
   await showSuccessNotification(
-    deploymentResult.tableName,
     region,
-    steeringFileCreated,
+    extractionResult.cdkExtracted,
+    extractionResult.scriptsExtracted,
     workspaceRoot
   );
 
   // Return success result for post-initialization handling
   return {
     success: true,
-    tableName: deploymentResult.tableName,
     region,
+    cdkExtracted: extractionResult.cdkExtracted,
+    scriptsExtracted: extractionResult.scriptsExtracted,
     steeringFileCreated,
   };
 }

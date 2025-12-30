@@ -64,13 +64,28 @@ Generate items in this order:
 
 #### Item 1: Mock Data Infrastructure
 - Prompt for Kiro to create shared mock data files (JSON) and utilities
-- NO agent code yet — just data and utilities
+- These are used by both local agent tools AND Gateway Lambda handlers
 - Acceptance: JSON files load correctly, mock_utils imports work
 
-#### Items 2-N: One Item Per Agent
+#### Item 2: Gateway Lambda Stack (CDK)
+- Prompt for Kiro to extend `cdk/lib/` with `gateway-tools-stack.ts`
+- Creates Lambda functions for each shared tool (reads handlers from `gateway/handlers/`)
+- Outputs Lambda ARNs for Gateway registration
+- Acceptance: `cdk deploy` creates Lambda functions in AWS
+
+#### Item 3: Gateway Setup & Target Registration
+- Prompt for Kiro to create `gateway/setup_gateway.py` using `bedrock-agentcore-starter-toolkit`
+- Creates Gateway with OAuth authorizer (Cognito)
+- Reads Lambda ARNs from CDK outputs or `cdk-outputs.json`
+- Registers each Lambda as a Gateway target with tool schemas from `gateway/schemas/`
+- Saves `gateway_config.json` with Gateway URL, ID, and credentials
+- Acceptance: Gateway URL accessible, tools discoverable via MCP
+
+#### Items 4-N: One Item Per Agent
 For each agent in the design:
 - Prompt for Kiro to create `agents/{agent_name}.py` with Agent class and inline tools
-- Tools defined inline (not imported) unless shared
+- LOCAL tools defined inline using @tool decorator
+- SHARED tools accessed via Gateway MCP client (not imported locally)
 - MUST mention AgentCore deployment in the prompt
 - Reference mock data from Item 1
 
@@ -252,14 +267,179 @@ Do NOT create any agent code yet — this item is only for mock data infrastruct
 
 ---
 
-## Item 2: Ticket Analyzer Agent
+## Item 2: Gateway Lambda Stack (CDK)
 
-**Purpose:** Create the Ticket Analyzer agent with its 5 inline tools.
+**Purpose:** Extend CDK to deploy Lambda functions for shared tools behind AgentCore Gateway.
 
 **Depends on:** Item 1
 
 **Files to be created:**
-- `agents/ticket_analyzer.py` — Agent with zendesk and AI/ML tools
+- `cdk/lib/gateway-tools-stack.ts` — CDK stack for Lambda functions
+- `cdk/bin/app.ts` — Update to include new stack
+- `gateway/handlers/zendesk_get_ticket/handler.py` — Lambda handler code
+- `gateway/handlers/zendesk_get_ticket/requirements.txt` — Lambda dependencies
+- `gateway/schemas/zendesk_get_ticket.json` — Tool schema for Gateway registration
+
+**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
+
+\`\`\`
+Extend the CDK infrastructure to deploy Lambda functions for AgentCore Gateway shared tools.
+
+## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
+
+This is an Agentify demo project. Follow these rules strictly:
+
+1. **Shared Tools**: Tools used by multiple agents are deployed as Lambda functions behind Gateway.
+
+2. **CDK Structure**: The `cdk/` folder already exists with DynamoDB stack. Add a new stack for Gateway tools.
+
+3. **Lambda Handler Pattern**: Gateway passes tool name with target prefix. Parse using:
+   ```python
+   delimiter = "___"
+   tool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')
+   if delimiter in tool_name:
+       tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
+   ```
+
+4. **Mock Data**: Lambda handlers load mock data from `mocks/` (bundled in deployment package).
+
+Reference: 
+- .kiro/steering/integration-landscape.md for shared tools list
+- .kiro/steering/tech.md for Gateway Lambda patterns
+- .kiro/steering/structure.md for CDK folder location
+
+## Requirements
+
+### 1. Lambda Handlers
+For each shared tool in integration-landscape.md, create `gateway/handlers/{tool_name}/`:
+- `handler.py` — Lambda handler that parses tool name from context, loads mock data, returns JSON
+- `requirements.txt` — Minimal dependencies
+
+### 2. Tool Schemas
+Create `gateway/schemas/{tool_name}.json` with MCP tool schema:
+- name, description, inputSchema with properties and required fields
+
+### 3. CDK Stack
+Create `cdk/lib/gateway-tools-stack.ts` that:
+- Imports Lambda handlers from `gateway/handlers/`
+- Creates a Lambda function for each shared tool using `lambda.Function` with Python runtime
+- Bundles mock data from `mocks/` into Lambda deployment package
+- Exports Lambda ARNs as CloudFormation outputs
+- Uses `CfnOutput` to write ARNs for later Gateway registration
+
+### 4. Update CDK App
+Update `cdk/bin/app.ts` to:
+- Import and instantiate `GatewayToolsStack`
+- Pass outputs to JSON file using `--outputs-file cdk-outputs.json`
+
+Include comment: "After `cdk deploy`, run `python gateway/setup_gateway.py` to register Lambdas with Gateway."
+\`\`\`
+
+**Acceptance Criteria (verify after Kiro implements):**
+- [ ] `cdk/lib/gateway-tools-stack.ts` exists with Lambda definitions
+- [ ] `gateway/handlers/` contains handler code for each shared tool
+- [ ] `gateway/schemas/` contains tool schemas
+- [ ] `cdk deploy GatewayToolsStack` creates Lambda functions in AWS
+- [ ] Lambda ARNs appear in `cdk-outputs.json`
+
+---
+
+## Item 3: Gateway Setup & Target Registration
+
+**Purpose:** Create AgentCore Gateway and register deployed Lambda functions as targets.
+
+**Depends on:** Items 1, 2
+
+**Files to be created:**
+- `gateway/setup_gateway.py` — Script to create Gateway and register Lambda targets
+- `gateway/cleanup_gateway.py` — Script to tear down Gateway resources
+- `gateway_config.json` — Gateway URL, ID, and OAuth credentials (generated at runtime)
+
+**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
+
+\`\`\`
+Create the AgentCore Gateway setup and Lambda target registration scripts.
+
+## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
+
+This is an Agentify demo project. Follow these rules strictly:
+
+1. **Gateway Purpose**: AgentCore Gateway exposes shared tools as MCP-compatible endpoints. Multiple agents connect to one Gateway.
+
+2. **Prerequisites**: Lambda functions must already be deployed via CDK (`cdk deploy GatewayToolsStack`).
+
+3. **OAuth Security**: Gateway uses Cognito OAuth for authentication. Agents obtain tokens to call Gateway.
+
+4. **Toolkit**: Use `bedrock-agentcore-starter-toolkit` Python SDK (GatewayClient) for Gateway operations.
+
+Reference:
+- .kiro/steering/tech.md for Gateway architecture
+- .kiro/steering/integration-landscape.md for shared tools list
+
+## Requirements
+
+### 1. Create `gateway/setup_gateway.py` that:
+
+a) **Reads CDK outputs** from `cdk-outputs.json` to get Lambda ARNs:
+   ```python
+   with open('cdk-outputs.json') as f:
+       outputs = json.load(f)
+   lambda_arns = outputs['GatewayToolsStack']
+   ```
+
+b) **Creates Gateway** with OAuth:
+   ```python
+   from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+   client = GatewayClient(region_name="us-east-1")
+   cognito = client.create_oauth_authorizer_with_cognito("ProjectGateway")
+   gateway = client.create_mcp_gateway(
+       name="ProjectGateway",
+       authorizer_config=cognito["authorizer_config"],
+       enable_semantic_search=True
+   )
+   client.fix_iam_permissions(gateway)
+   time.sleep(30)  # IAM propagation
+   ```
+
+c) **Registers each Lambda as a target** by reading schemas from `gateway/schemas/`:
+   ```python
+   for tool_name, lambda_arn in lambda_arns.items():
+       schema = load_schema(f"gateway/schemas/{tool_name}.json")
+       client.create_mcp_gateway_target(
+           gateway=gateway,
+           name=tool_name,
+           target_type="lambda",
+           target_payload={"lambdaArn": lambda_arn},
+           tool_schema=schema
+       )
+   ```
+
+d) **Saves config** to `gateway_config.json` with gateway_url, gateway_id, region, client_info
+
+### 2. Create `gateway/cleanup_gateway.py` that:
+- Loads `gateway_config.json`
+- Calls `client.cleanup_gateway()` to remove all resources
+
+### 3. Add to `requirements.txt`:
+- `bedrock-agentcore-starter-toolkit`
+\`\`\`
+
+**Acceptance Criteria (verify after Kiro implements):**
+- [ ] Running `python gateway/setup_gateway.py` creates Gateway and registers targets
+- [ ] `gateway_config.json` contains gateway_url and client_info
+- [ ] Gateway tools/list endpoint returns all shared tools
+- [ ] Running `python gateway/cleanup_gateway.py` removes resources
+
+---
+
+## Item 4: Ticket Analyzer Agent
+
+**Purpose:** Create the Ticket Analyzer agent with local tools and Gateway connection.
+
+**Depends on:** Items 1, 2, 3
+
+**Files to be created:**
+- `agents/ticket_analyzer.py` — Agent with local and Gateway tools
 
 **Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
 
@@ -276,14 +456,16 @@ This is an Agentify demo project. Follow these rules strictly:
 
 3. **Strands SDK**: Use `from strands import Agent, tool` for agent and tool definitions.
 
-4. **Mock Tools**: All integrations are mocks returning realistic fake data. This is a demo system.
+4. **Two Tool Types**:
+   - LOCAL tools: Defined inline with @tool decorator (agent-specific)
+   - SHARED tools: Loaded from Gateway via MCP client (used by multiple agents)
 
 5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md
 
 Reference these steering files:
-- .kiro/steering/tech.md — deployment architecture
+- .kiro/steering/tech.md — deployment architecture and Gateway patterns
 - .kiro/steering/agentify-integration.md — event contracts
-- .kiro/steering/integration-landscape.md — tool definitions and mock data
+- .kiro/steering/integration-landscape.md — tool definitions (local vs shared)
 
 ## Requirements
 
@@ -293,25 +475,38 @@ Create `agents/ticket_analyzer.py` with:
    - Name: "Ticket Analyzer"
    - Role: Analyzes incoming support tickets for sentiment, urgency, and classification
 
-2. **Inline Tools** (define within this file, not imported):
-   - `zendesk_get_ticket(ticket_id: str) -> dict` — Fetches ticket details
-   - `zendesk_get_ticket_comments(ticket_id: str) -> list` — Gets ticket conversation
-   - `ecommerce_get_customer_orders(customer_id: str) -> list` — Gets order history
+2. **LOCAL Tools** (defined inline with @tool, only this agent uses them):
    - `aiml_analyze_sentiment(text: str) -> dict` — Returns sentiment analysis
    - `aiml_classify_text(text: str, categories: list) -> str` — Classifies text
 
-3. Each tool uses `load_mock_data()` from `tools/mock_utils.py`
+3. **SHARED Tools** (loaded from Gateway, used by multiple agents):
+   ```python
+   from strands.tools.mcp import MCPClient
+   from mcp.client.streamable_http import streamablehttp_client
+   
+   def get_gateway_tools(gateway_url: str, access_token: str) -> list:
+       client = MCPClient(lambda: streamablehttp_client(
+           gateway_url, 
+           headers={"Authorization": f"Bearer {access_token}"}
+       ))
+       with client:
+           return client.list_tools_sync()
+   ```
+   - zendesk_get_ticket, zendesk_get_ticket_comments, ecommerce_get_customer_orders come from Gateway
 
-4. Agent emits events to DynamoDB for tool calls
+4. Agent combines local + shared tools: `Agent(tools=local_tools + shared_tools)`
+
+5. Agent emits events to DynamoDB for tool calls
 
 This agent deploys to AgentCore Runtime. Include a comment with the deployment command.
 \`\`\`
 
 **Acceptance Criteria (verify after Kiro implements):**
 - [ ] `agents/ticket_analyzer.py` exists with Agent class
-- [ ] All 5 tools defined with @tool decorator
+- [ ] Local tools (aiml_*) defined with @tool decorator
+- [ ] Shared tools loaded from Gateway via MCP client
 - [ ] `agentcore deploy agents/ticket_analyzer.py` succeeds
-- [ ] Tools return mock data correctly when tested
+- [ ] Both local and shared tools work when agent is invoked
 
 ---
 

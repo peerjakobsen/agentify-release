@@ -2,7 +2,7 @@
  * Tests for Post-Initialization Flow (Task Group 6)
  *
  * These tests validate the post-initialization behavior including:
- * - Success message shows after initialization completes with table name and region
+ * - Success message shows after initialization completes with region
  * - Demo Viewer panel refreshes after initialization
  * - Status bar updates after initialization
  */
@@ -91,64 +91,63 @@ describe('Post-Initialization - Success Notification', () => {
     mockShowInformationMessage.mockResolvedValue(undefined);
   });
 
-  // Test 6.1.1: Success message shows with table name and region
-  it('should show success message with table name and region after initialization', async () => {
+  // Test 6.1.1: Success message shows with region
+  it('should show success message with region after initialization', async () => {
     mockShowInformationMessage.mockResolvedValue(undefined);
 
     await showSuccessNotification(
-      'test-table',
       'us-east-1',
-      false,
+      true, // cdkExtracted
+      true, // scriptsExtracted
       '/test/workspace'
     );
 
     expect(mockShowInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('test-table')
+      expect.stringContaining('us-east-1'),
+      expect.any(String)
     );
     expect(mockShowInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('us-east-1')
-    );
-    expect(mockShowInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('initialized successfully')
+      expect.stringContaining('extracted'),
+      expect.any(String)
     );
   });
 
-  // Test 6.1.2: Success message offers to open steering file when created
-  it('should offer to open steering file when it was created', async () => {
+  // Test 6.1.2: Success message offers to open CDK README
+  it('should offer to open CDK README after extraction', async () => {
     mockShowInformationMessage.mockResolvedValue(undefined);
 
     await showSuccessNotification(
-      'test-table',
       'eu-west-1',
+      true,
       true,
       '/test/workspace'
     );
 
-    // Verify the message includes the "Open Steering File" action
+    // Verify the message includes the "Open CDK README" action
     expect(mockShowInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('test-table'),
-      'Open Steering File'
+      expect.any(String),
+      'Open CDK README'
     );
   });
 
-  // Test 6.1.3: Clicking "Open Steering File" opens the file
-  it('should open steering file when user clicks action button', async () => {
-    // Simulate user clicking "Open Steering File"
-    mockShowInformationMessage.mockResolvedValue('Open Steering File');
-    mockOpenTextDocument.mockResolvedValue({ uri: { fsPath: '/test/workspace/.kiro/steering/agentify-integration.md' } });
+  // Test 6.1.3: Clicking "Open CDK README" opens the file
+  it('should open CDK README when user clicks action button', async () => {
+    // Simulate user clicking "Open CDK README"
+    mockShowInformationMessage.mockResolvedValue('Open CDK README');
+    mockOpenTextDocument.mockResolvedValue({ uri: { fsPath: '/test/workspace/cdk/README.md' } });
     mockShowTextDocument.mockResolvedValue(undefined);
 
     await showSuccessNotification(
-      'test-table',
       'us-west-2',
+      true,
       true,
       '/test/workspace'
     );
 
-    // Verify openTextDocument was called with steering file path
+    // Verify openTextDocument was called with CDK README path
     expect(mockOpenTextDocument).toHaveBeenCalledWith(
       expect.objectContaining({
-        fsPath: expect.stringContaining('agentify-integration.md'),
+        fsPath: expect.stringContaining('cdk/README.md'),
       })
     );
     expect(mockShowTextDocument).toHaveBeenCalled();

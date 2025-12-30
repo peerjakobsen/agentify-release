@@ -46,6 +46,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CDK_DIR="${PROJECT_ROOT}/cdk"
 
+# Derive project name from workspace folder (sanitized for CloudFormation)
+sanitize_project_name() {
+    local name="$1"
+    # Convert to lowercase, replace underscores/spaces with hyphens
+    # Remove invalid characters, collapse multiple hyphens
+    echo "$name" | tr '[:upper:]' '[:lower:]' | \
+        sed 's/[_ ]/-/g' | \
+        sed 's/[^a-z0-9-]//g' | \
+        sed 's/-\+/-/g' | \
+        sed 's/^-//;s/-$//'
+}
+
+WORKSPACE_FOLDER="$(basename "${PROJECT_ROOT}")"
+PROJECT_NAME="$(sanitize_project_name "${WORKSPACE_FOLDER}")"
+PROJECT_NAME="${PROJECT_NAME:-agentify}"  # Fallback if empty
+
 # Load environment variables if .env exists
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     print_step "Loading environment variables from .env"
@@ -53,6 +69,18 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     source "${PROJECT_ROOT}/.env"
     set +a
     print_success "Environment loaded"
+fi
+
+# Load AWS profile from config.json if not already set
+CONFIG_JSON="${PROJECT_ROOT}/.agentify/config.json"
+if [ -z "$AWS_PROFILE" ] && [ -f "${CONFIG_JSON}" ]; then
+    if command -v jq &> /dev/null; then
+        PROFILE_FROM_CONFIG=$(jq -r '.aws.profile // empty' "${CONFIG_JSON}" 2>/dev/null)
+        if [ -n "$PROFILE_FROM_CONFIG" ]; then
+            export AWS_PROFILE="$PROFILE_FROM_CONFIG"
+            print_success "Using AWS profile from config.json: ${AWS_PROFILE}"
+        fi
+    fi
 fi
 
 # Check required tools
@@ -128,6 +156,7 @@ done
 echo ""
 echo "============================================="
 echo "  Agentify Infrastructure Setup"
+echo "  Project: ${PROJECT_NAME}"
 echo "  Region: ${REGION}"
 echo "============================================="
 echo ""
@@ -156,12 +185,12 @@ if [ "$SKIP_CDK" = false ]; then
 
     # Synthesize first to validate
     print_step "Running cdk synth..."
-    uv run cdk synth -c region="${REGION}" --quiet
+    uv run cdk synth -c project="${PROJECT_NAME}" -c region="${REGION}" --quiet
     print_success "CDK synthesis complete"
 
     # Deploy all stacks
     print_step "Deploying CDK stacks (this may take 5-10 minutes)..."
-    uv run cdk deploy -c region="${REGION}" --all --require-approval never
+    uv run cdk deploy -c project="${PROJECT_NAME}" -c region="${REGION}" --all --require-approval never
     print_success "CDK deployment complete"
 
     # Return to project root
@@ -170,22 +199,22 @@ if [ "$SKIP_CDK" = false ]; then
     # Fetch and display infrastructure outputs
     print_step "Fetching infrastructure outputs..."
 
-    NETWORKING_STACK="Agentify-Networking-${REGION}"
-    OBSERVABILITY_STACK="Agentify-Observability-${REGION}"
+    NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
+    OBSERVABILITY_STACK="Agentify-${PROJECT_NAME}-Observability-${REGION}"
 
     SUBNET_IDS=$(aws cloudformation describe-stacks \
         --stack-name "${NETWORKING_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='agentify-PrivateSubnetIds'].OutputValue" \
+        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-PrivateSubnetIds'].OutputValue" \
         --output text --region "${REGION}" 2>/dev/null)
 
     SG_ID=$(aws cloudformation describe-stacks \
         --stack-name "${NETWORKING_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='agentify-AgentSecurityGroupId'].OutputValue" \
+        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-AgentSecurityGroupId'].OutputValue" \
         --output text --region "${REGION}" 2>/dev/null)
 
     TABLE_NAME=$(aws cloudformation describe-stacks \
         --stack-name "${OBSERVABILITY_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='agentify-WorkflowEventsTableName'].OutputValue" \
+        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-WorkflowEventsTableName'].OutputValue" \
         --output text --region "${REGION}" 2>/dev/null)
 
     echo ""
@@ -200,6 +229,7 @@ if [ "$SKIP_CDK" = false ]; then
     mkdir -p "$(dirname "${CONFIG_FILE}")"
     cat > "${CONFIG_FILE}" << EOF
 {
+  "project_name": "${PROJECT_NAME}",
   "region": "${REGION}",
   "vpc_subnet_ids": "${SUBNET_IDS}",
   "vpc_security_group_id": "${SG_ID}",
@@ -220,16 +250,16 @@ else
         print_success "Loaded infrastructure config from ${CONFIG_FILE}"
     else
         # Fetch from CloudFormation
-        NETWORKING_STACK="Agentify-Networking-${REGION}"
+        NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
 
         SUBNET_IDS=$(aws cloudformation describe-stacks \
             --stack-name "${NETWORKING_STACK}" \
-            --query "Stacks[0].Outputs[?ExportName=='agentify-PrivateSubnetIds'].OutputValue" \
+            --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-PrivateSubnetIds'].OutputValue" \
             --output text --region "${REGION}" 2>/dev/null)
 
         SG_ID=$(aws cloudformation describe-stacks \
             --stack-name "${NETWORKING_STACK}" \
-            --query "Stacks[0].Outputs[?ExportName=='agentify-AgentSecurityGroupId'].OutputValue" \
+            --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-AgentSecurityGroupId'].OutputValue" \
             --output text --region "${REGION}" 2>/dev/null)
 
         if [ -z "$SUBNET_IDS" ] || [ -z "$SG_ID" ]; then

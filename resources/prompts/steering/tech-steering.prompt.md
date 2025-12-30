@@ -14,6 +14,8 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 5. **Include Gateway Configuration**: Document gateway registration patterns for API-to-agent tool transformation.
 
+6. **Distinguish Tool Deployment Patterns**: Explain when to use local `@tool` decorators vs AgentCore Gateway Lambda targets based on whether tools are agent-specific or shared across agents.
+
 ## Input Schema
 
 You will receive a JSON object with the following structure:
@@ -104,11 +106,138 @@ For each agent, deploy using the AgentCore runtime:
 
 [Describe runtime options and environment variables]
 
+## Tool Deployment Strategy
+
+AgentCore supports two distinct patterns for tool deployment. Choose based on whether tools are agent-specific or shared across agents.
+
+### Pattern 1: Local Tools (Agent-Specific)
+
+For tools used by only one agent, define them locally using the Strands `@tool` decorator:
+
+```python
+from strands import Agent, tool
+
+@tool
+def analyze_inventory_trends(sku: str, days: int = 30) -> dict:
+    """Analyze inventory trends for a specific SKU.
+    Only the Inventory Agent uses this specialized analysis.
+    """
+    # Tool logic runs in same process as agent
+    return {"sku": sku, "trend": "increasing", "forecast": 150}
+
+agent = Agent(tools=[analyze_inventory_trends])
+```
+
+**When to use local tools:**
+- Tool is specific to one agent's responsibilities
+- No other agents need this capability
+- Tool logic benefits from direct access to agent context
+- Simpler deployment (tool deploys with agent code)
+
+### Pattern 2: Gateway Lambda Targets (Shared Tools)
+
+For tools used by multiple agents, deploy as Lambda functions behind AgentCore Gateway:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AgentCore Gateway                                │
+│  MCP Endpoint: https://{gateway-id}.gateway.bedrock-agentcore.{region}  │
+│                                                                         │
+│            ┌─────────────────┬─────────────────┐                        │
+│            ▼                 ▼                 ▼                        │
+│     ┌──────────┐      ┌──────────┐      ┌──────────┐                   │
+│     │  Lambda  │      │  Lambda  │      │  Lambda  │                   │
+│     │  Target  │      │  Target  │      │  Target  │                   │
+│     │          │      │          │      │          │      Multiple     │
+│     │ SAP Get  │      │ SAP      │      │ Weather  │  ◄── Agents       │
+│     │ Inventory│      │ Update   │      │ Forecast │      Connect      │
+│     └──────────┘      └──────────┘      └──────────┘                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**When to use Gateway Lambda targets:**
+- Tool is used by 2+ agents (shared capability)
+- Tool represents an enterprise integration (SAP, Salesforce, etc.)
+- Centralized credential management is needed
+- You want unified observability via CloudWatch
+
+**Folder structure:**
+- Handler code: `gateway/handlers/{tool_name}/handler.py` (Python 3.11)
+- Tool schema: `gateway/schemas/{tool_name}.json`
+- CDK stack: `cdk/lib/gateway-tools-stack.ts` (auto-deploys all handlers)
+
+### Gateway Lambda Function Structure
+
+Lambda handlers live in `gateway/handlers/{tool_name}/handler.py` and are deployed by the CDK stack (`cdk/lib/gateway-tools-stack.ts`):
+
+```python
+# gateway/handlers/sap_get_inventory/handler.py
+
+import json
+
+# Tool schema (uploaded to Gateway or provided inline)
+TOOL_SCHEMA = {
+    "name": "get_inventory",
+    "description": "Get current inventory levels from SAP S/4HANA",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "sku": {"type": "string", "description": "Product SKU"},
+            "store_id": {"type": "string", "description": "Store identifier"}
+        },
+        "required": ["sku"]
+    }
+}
+
+def lambda_handler(event, context):
+    """Gateway Lambda handler for SAP inventory lookup."""
+    # Gateway passes tool name with target prefix in context
+    delimiter = "___"
+    tool_name = context.client_context.custom['bedrockAgentCoreToolName']
+    tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
+    
+    # Event contains the input parameters directly
+    sku = event.get('sku')
+    store_id = event.get('store_id', 'ALL')
+    
+    # Call actual SAP API or return mock data
+    result = {
+        "sku": sku,
+        "store_id": store_id,
+        "quantity": 42,
+        "last_updated": "2025-01-15T10:30:00Z"
+    }
+    
+    return json.dumps(result)
+```
+
+### Connecting Agents to Gateway
+
+Agents connect to Gateway tools via MCP client:
+
+```python
+from strands import Agent
+from strands.tools.mcp import MCPClient
+from mcp.client.streamable_http import streamablehttp_client
+
+# Gateway provides a single MCP endpoint for all registered tools
+gateway_url = "https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
+
+gateway_client = MCPClient(lambda: streamablehttp_client(gateway_url))
+
+with gateway_client:
+    # Discover all tools registered with Gateway
+    shared_tools = gateway_client.list_tools_sync()
+    
+    # Combine with local agent-specific tools
+    agent = Agent(
+        tools=[local_tool_1, local_tool_2] + shared_tools
+    )
+```
+
 ## Gateway Configuration
 
-Register API endpoints as agent tools using AgentCore Gateway:
-
-[Gateway registration patterns with placeholders]
+Register Lambda targets with AgentCore Gateway:
 
 ## Policy Mapping
 
@@ -148,20 +277,48 @@ agentcore agent deploy \
 | `{agent_id}` | Lowercase agent identifier | `inventory_agent` |
 | `{region}` | AWS region for deployment | `us-east-1` |
 | `{gateway_id}` | Gateway identifier | `gateway-abc123` |
+| `{target_name}` | Gateway target name | `sap-inventory-target` |
+| `{function_name}` | Lambda function name | `sap-get-inventory` |
+| `{account_id}` | AWS account ID | `123456789012` |
 | `{policy_name}` | Cedar policy name | `approval-gate-external-api` |
 | `{table_name}` | DynamoDB table for events | `agentify-workflow-events` |
 
 ### Gateway Registration Command
 
 ```bash
-# Register API endpoint as agent tool via Gateway
-agentcore gateway register-tool \
-  --gateway-id {gateway_id} \
-  --tool-name {tool_name} \
-  --api-endpoint {api_endpoint} \
-  --method {http_method} \
-  --auth-type iam \
+# Create Gateway (once per project)
+agentcore gateway create \
+  --name {project_name}-gateway \
   --region {region}
+
+# Register Lambda function as Gateway target
+agentcore gateway add-target \
+  --gateway-id {gateway_id} \
+  --target-name {target_name} \
+  --target-type lambda \
+  --lambda-arn arn:aws:lambda:{region}:{account_id}:function:{function_name} \
+  --tool-schema file://schemas/{tool_name}.json \
+  --region {region}
+
+# For OpenAPI-based targets (REST APIs)
+agentcore gateway add-target \
+  --gateway-id {gateway_id} \
+  --target-name {target_name} \
+  --target-type openapi \
+  --openapi-spec file://specs/{api_name}.yaml \
+  --region {region}
+```
+
+### Gateway Lambda Permissions
+
+```bash
+# Allow Gateway to invoke Lambda target
+aws lambda add-permission \
+  --function-name {function_name} \
+  --statement-id AgentCoreGatewayInvoke \
+  --action lambda:InvokeFunction \
+  --principal bedrock-agentcore.amazonaws.com \
+  --source-arn arn:aws:bedrock-agentcore:{region}:{account_id}:gateway/{gateway_id}
 ```
 
 ### Runtime Environment Variables

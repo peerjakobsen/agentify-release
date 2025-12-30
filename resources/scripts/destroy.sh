@@ -43,6 +43,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CDK_DIR="${PROJECT_ROOT}/cdk"
 
+# Derive project name from workspace folder (sanitized for CloudFormation)
+sanitize_project_name() {
+    local name="$1"
+    # Convert to lowercase, replace underscores/spaces with hyphens
+    # Remove invalid characters, collapse multiple hyphens
+    echo "$name" | tr '[:upper:]' '[:lower:]' | \
+        sed 's/[_ ]/-/g' | \
+        sed 's/[^a-z0-9-]//g' | \
+        sed 's/-\+/-/g' | \
+        sed 's/^-//;s/-$//'
+}
+
+WORKSPACE_FOLDER="$(basename "${PROJECT_ROOT}")"
+PROJECT_NAME="$(sanitize_project_name "${WORKSPACE_FOLDER}")"
+PROJECT_NAME="${PROJECT_NAME:-agentify}"  # Fallback if empty
+
 # Load environment variables if .env exists
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     print_step "Loading environment variables from .env"
@@ -50,6 +66,18 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     source "${PROJECT_ROOT}/.env"
     set +a
     print_success "Environment loaded"
+fi
+
+# Load AWS profile from config.json if not already set
+CONFIG_JSON="${PROJECT_ROOT}/.agentify/config.json"
+if [ -z "$AWS_PROFILE" ] && [ -f "${CONFIG_JSON}" ]; then
+    if command -v jq &> /dev/null; then
+        PROFILE_FROM_CONFIG=$(jq -r '.aws.profile // empty' "${CONFIG_JSON}" 2>/dev/null)
+        if [ -n "$PROFILE_FROM_CONFIG" ]; then
+            export AWS_PROFILE="$PROFILE_FROM_CONFIG"
+            print_success "Using AWS profile from config.json: ${AWS_PROFILE}"
+        fi
+    fi
 fi
 
 # Check required tools
@@ -117,6 +145,7 @@ cd "${PROJECT_ROOT}"
 echo ""
 echo "============================================="
 echo "  Agentify Infrastructure Teardown"
+echo "  Project: ${PROJECT_NAME}"
 echo "  Region: ${REGION}"
 echo "============================================="
 echo ""
@@ -185,13 +214,13 @@ uv sync --quiet 2>/dev/null || true
 
 # List stacks to show what will be destroyed
 print_step "Stacks to be destroyed:"
-uv run cdk list -c region="${REGION}" 2>/dev/null | while read -r stack; do
+uv run cdk list -c project="${PROJECT_NAME}" -c region="${REGION}" 2>/dev/null | while read -r stack; do
     echo "  - ${stack}"
 done
 
 # Destroy all stacks
 print_step "Running cdk destroy (this may take 5-10 minutes)..."
-uv run cdk destroy -c region="${REGION}" --all --force
+uv run cdk destroy -c project="${PROJECT_NAME}" -c region="${REGION}" --all --force
 print_success "CDK stacks destroyed"
 
 # Return to project root

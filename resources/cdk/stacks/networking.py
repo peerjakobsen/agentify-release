@@ -5,7 +5,8 @@ This module defines VPC, subnets, security groups, and network
 connectivity resources for Agentify demo environments.
 
 The VPC is configured specifically for AgentCore Runtime deployment,
-with private subnets in AZs that AgentCore supports.
+with isolated private subnets in AZs that AgentCore supports.
+All AWS service access is via VPC endpoints (no NAT Gateway needed).
 """
 
 from typing import Any
@@ -20,14 +21,16 @@ class NetworkingStack(Stack):
     """
     Networking infrastructure stack for Agentify.
 
-    Creates a 2-tier VPC with public and private subnets, VPC endpoints
-    for AWS service connectivity, and security groups for agents.
-    
+    Creates a minimal VPC with a single isolated private subnet and VPC
+    endpoints for AWS service connectivity. Optimized for demo costs.
+
     Key features:
-    - Private subnets in AgentCore-supported AZs
-    - NAT Gateway for outbound internet access
-    - VPC endpoints for AWS services (reduces NAT costs, improves security)
+    - Single isolated private subnet in one AgentCore-supported AZ
+    - VPC endpoints for all required AWS services
+    - No public subnets, no NAT Gateway, no internet egress
     - Security group for AgentCore agents
+
+    Cost optimization: ~$82/month saved vs traditional 2-AZ NAT setup.
     """
 
     def __init__(
@@ -63,7 +66,10 @@ class NetworkingStack(Stack):
         self._create_outputs()
 
     def _create_vpc(self) -> None:
-        """Create VPC with 2-tier architecture (public and private subnets).
+        """Create VPC with a single isolated private subnet.
+
+        No public subnets, no NAT Gateway, single AZ - minimal cost for demos.
+        All connectivity via VPC endpoints.
 
         Note: AgentCore Runtime only supports specific AZ IDs in each region.
         We dynamically look up which AZ names map to supported AZ IDs for
@@ -71,26 +77,21 @@ class NetworkingStack(Stack):
         """
         # Get AZs supported by AgentCore Runtime (dynamically per account)
         supported_azs = get_agentcore_supported_azs(self.region)
-        # Use first 2 supported AZs for cost efficiency
-        selected_azs = supported_azs[:2]
+        # Use single AZ for cost efficiency in demo environments
+        selected_az = [supported_azs[0]]
 
         self.vpc = ec2.Vpc(
             self,
             "Vpc",
             vpc_name=f"{PROJECT_NAME}-vpc-{self.environment_name}",
             ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
-            # Dynamically select AZs supported by AgentCore Runtime
-            availability_zones=selected_azs,
-            nat_gateways=1,  # Single NAT for cost efficiency in demo
+            # Single AZ supported by AgentCore Runtime
+            availability_zones=selected_az,
+            nat_gateways=0,  # No NAT - all access via VPC endpoints
             subnet_configuration=[
                 ec2.SubnetConfiguration(
-                    name="Public",
-                    subnet_type=ec2.SubnetType.PUBLIC,
-                    cidr_mask=24,
-                ),
-                ec2.SubnetConfiguration(
                     name="Private",
-                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
                     cidr_mask=24,
                 ),
             ],
@@ -100,9 +101,9 @@ class NetworkingStack(Stack):
 
     def _create_vpc_endpoints(self) -> None:
         """Create VPC endpoints for AWS service connectivity.
-        
-        These endpoints allow agents in private subnets to access AWS services
-        without going through the NAT Gateway, reducing costs and latency.
+
+        These endpoints are the ONLY way agents can access AWS services
+        since there is no NAT Gateway or internet access.
         """
         # Create security group for VPC Interface endpoints
         self.endpoint_security_group = ec2.SecurityGroup(
@@ -120,13 +121,13 @@ class NetworkingStack(Stack):
             description="Allow HTTPS from VPC",
         )
 
-        # Gateway VPC Endpoints (free tier)
+        # Gateway VPC Endpoints (free)
         # S3 Gateway endpoint - for agent artifacts
         self.vpc.add_gateway_endpoint(
             "S3Endpoint",
             service=ec2.GatewayVpcEndpointAwsService.S3,
             subnets=[
-                ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
+                ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
             ],
         )
 
@@ -135,17 +136,25 @@ class NetworkingStack(Stack):
             "DynamoDbEndpoint",
             service=ec2.GatewayVpcEndpointAwsService.DYNAMODB,
             subnets=[
-                ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)
+                ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
             ],
         )
 
-        # Interface VPC Endpoints (paid, but essential for agents)
-        
+        # Interface VPC Endpoints (paid, but required for isolated subnets)
+
+        # Lambda endpoint - for invoking Lambda-based AgentCore tools
+        self.vpc.add_interface_endpoint(
+            "LambdaEndpoint",
+            service=ec2.InterfaceVpcEndpointAwsService.LAMBDA_,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.endpoint_security_group],
+        )
+
         # CloudWatch Logs endpoint - for agent logging
         self.vpc.add_interface_endpoint(
             "CloudWatchLogsEndpoint",
             service=ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[self.endpoint_security_group],
         )
 
@@ -153,7 +162,7 @@ class NetworkingStack(Stack):
         self.vpc.add_interface_endpoint(
             "SecretsManagerEndpoint",
             service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[self.endpoint_security_group],
         )
 
@@ -161,7 +170,7 @@ class NetworkingStack(Stack):
         self.vpc.add_interface_endpoint(
             "StsEndpoint",
             service=ec2.InterfaceVpcEndpointAwsService.STS,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[self.endpoint_security_group],
         )
 
@@ -169,7 +178,7 @@ class NetworkingStack(Stack):
         self.vpc.add_interface_endpoint(
             "SsmEndpoint",
             service=ec2.InterfaceVpcEndpointAwsService.SSM,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[self.endpoint_security_group],
         )
 
@@ -177,7 +186,7 @@ class NetworkingStack(Stack):
         self.vpc.add_interface_endpoint(
             "BedrockRuntimeEndpoint",
             service=ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[self.endpoint_security_group],
         )
 
@@ -204,9 +213,10 @@ class NetworkingStack(Stack):
             description="VPC ID for Agentify",
         )
 
-        # Export private subnet IDs (comma-separated for agentcore configure)
+        # Export isolated subnet IDs (comma-separated for agentcore configure)
+        # Note: PRIVATE_ISOLATED subnets are accessed via isolated_subnets
         private_subnet_ids = ",".join(
-            [subnet.subnet_id for subnet in self.vpc.private_subnets]
+            [subnet.subnet_id for subnet in self.vpc.isolated_subnets]
         )
         CfnOutput(
             self,
@@ -214,18 +224,6 @@ class NetworkingStack(Stack):
             value=private_subnet_ids,
             export_name=f"{PROJECT_NAME}-PrivateSubnetIds",
             description="Private subnet IDs for AgentCore agents (comma-separated)",
-        )
-
-        # Export public subnet IDs
-        public_subnet_ids = ",".join(
-            [subnet.subnet_id for subnet in self.vpc.public_subnets]
-        )
-        CfnOutput(
-            self,
-            "PublicSubnetIds",
-            value=public_subnet_ids,
-            export_name=f"{PROJECT_NAME}-PublicSubnetIds",
-            description="Public subnet IDs for Agentify",
         )
 
         # Export Agent security group ID

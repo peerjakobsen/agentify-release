@@ -12,6 +12,8 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 4. **Describe Data Flow Patterns**: Explain how data flows between systems through agent-orchestrated tool calls.
 
+5. **Document Tool Deployment Strategy**: Explain which tools are deployed locally with agents vs as Gateway Lambda targets for shared access.
+
 ## Input Schema
 
 You will receive a JSON object with the following structure:
@@ -103,9 +105,13 @@ inclusion: always
 
 [After the table, explain the implications of shared tools - why these tools are used across agents and how this affects design decisions.]
 
-## Per-Agent Tools
+### Shared Tool Deployment
 
-[Introduction paragraph explaining that per-agent tools are exclusive to specific agents.]
+[Explain that shared tools are deployed as Lambda functions behind AgentCore Gateway, not as local @tool decorators. Include the Gateway MCP endpoint pattern and how agents connect to shared tools.]
+
+## Per-Agent Tools (Local Deployment)
+
+[Introduction paragraph explaining that per-agent tools are exclusive to specific agents and are deployed locally using the @tool decorator. These tools run in the same process as the agent.]
 
 ### {Agent Name}
 
@@ -154,6 +160,61 @@ Salesforce
 
 Use the operation names from mockDefinitions to indicate whether tools are primarily read or write operations.
 
+## Tool Deployment Architecture
+
+Tools are deployed differently based on their usage pattern:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     TOOL DEPLOYMENT PATTERNS                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  PER-AGENT TOOLS (Local)              SHARED TOOLS (Gateway Lambda)     │
+│  ─────────────────────────            ─────────────────────────────     │
+│                                                                         │
+│  ┌─────────────────────┐              ┌─────────────────────────────┐   │
+│  │   Agent Container   │              │     AgentCore Gateway       │   │
+│  │                     │              │                             │   │
+│  │  ┌───────────────┐  │              │  MCP Endpoint:              │   │
+│  │  │  @tool        │  │              │  https://{gateway-id}       │   │
+│  │  │  analyze_x()  │  │              │  .gateway.bedrock-agentcore │   │
+│  │  └───────────────┘  │              │  .{region}.amazonaws.com    │   │
+│  │                     │              │                             │   │
+│  │  Runs in-process    │              │     ┌─────────┐             │   │
+│  │  No network call    │              │     │ Lambda  │             │   │
+│  │  Agent-specific     │              │     │ Target  │             │   │
+│  └─────────────────────┘              │     └─────────┘             │   │
+│                                       │                             │   │
+│                                       │  Multiple agents connect    │   │
+│                                       │  Centralized credentials    │   │
+│                                       │  CloudWatch observability   │   │
+│                                       └─────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Deployment Implications
+
+| Tool Type | Deployment | Location | Connection Method |
+|-----------|------------|----------|-------------------|
+| Per-Agent | Local @tool | `agents/{id}/tools/` | Direct function call |
+| Shared | Gateway Lambda | `gateway/handlers/` | MCP client to Gateway endpoint |
+
+**Shared tools** (used by 2+ agents) should be deployed as Lambda functions behind AgentCore Gateway. This provides:
+- Single deployment, multiple consumers
+- Centralized credential management for enterprise systems
+- Unified observability via CloudWatch
+- Consistent tool behavior across all agents
+
+**Lambda Handler Location:** `gateway/handlers/{tool_name}/handler.py` (Python 3.11)
+
+**CDK Deployment:** The `cdk/lib/gateway-tools-stack.ts` stack automatically discovers and deploys all handlers in `gateway/handlers/`. Tool schemas go in `gateway/schemas/{tool_name}.json`.
+
+**Per-agent tools** (used by 1 agent) should be deployed locally using the `@tool` decorator. This provides:
+- Simpler deployment (deploys with agent code)
+- No network overhead
+- Direct access to agent context
+
 ## Guidelines
 
 1. **Use Pre-Computed Analysis**: The sharedTools and perAgentTools arrays are already computed. Do not recalculate which tools are shared - use the provided data directly.
@@ -162,7 +223,9 @@ Use the operation names from mockDefinitions to indicate whether tools are prima
 
 3. **Group by System**: In the Connected Systems section, organize information by system to help readers understand which systems are most heavily integrated.
 
-4. **Explain Integration Implications**: Don't just list tools - explain why certain tools are shared (e.g., "Both the planner and executor agents need inventory visibility").
+4. **Explain Integration Implications**: Don't just list tools - explain why certain tools are shared (e.g., "Both the planner and executor agents need inventory visibility") and note that shared tools are deployed as Gateway Lambda targets.
+
+5. **Document Gateway Deployment for Shared Tools**: When listing shared tools, note that they will be deployed as Lambda functions behind AgentCore Gateway, accessible via a single MCP endpoint.
 
 5. **Use Consistent Formatting**: Keep tables aligned and use consistent formatting for tool names (backticks), system names, and agent names.
 

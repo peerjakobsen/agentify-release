@@ -1,0 +1,10 @@
+# Lambda handler directories go here
+# Each subdirectory should contain a handler.py with a lambda_handler function
+#
+# Example structure:
+# handlers/
+#   get_inventory/
+#     handler.py
+#     requirements.txt (optional)
+#   create_order/
+#     handler.py

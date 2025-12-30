@@ -19,9 +19,10 @@ export interface TableValidationError {
 }
 
 /**
- * Path to the CloudFormation template relative to workspace root
+ * Path to the CDK setup script relative to workspace root
+ * Note: The old CloudFormation template has been replaced with CDK infrastructure
  */
-export const CLOUDFORMATION_TEMPLATE_PATH = 'infrastructure/dynamodb-table.yaml';
+export const CDK_SETUP_SCRIPT_PATH = 'scripts/setup.sh';
 
 /**
  * Get user-facing error message when table is not found
@@ -31,14 +32,11 @@ export const CLOUDFORMATION_TEMPLATE_PATH = 'infrastructure/dynamodb-table.yaml'
 export function getTableNotFoundMessage(tableName: string): string {
   return `DynamoDB table '${tableName}' not found.
 
-To create the table, deploy the CloudFormation template:
+To deploy the required infrastructure, run the setup script:
 
-  aws cloudformation deploy \\
-    --template-file ${CLOUDFORMATION_TEMPLATE_PATH} \\
-    --stack-name agentify-workflow-events \\
-    --region us-east-1
+  ./scripts/setup.sh --region us-east-1
 
-Or open ${CLOUDFORMATION_TEMPLATE_PATH} and follow the deployment instructions.`;
+Or open cdk/README.md for detailed deployment instructions.`;
 }
 
 /**
@@ -97,9 +95,9 @@ function getStatusGuidance(status: string): string {
     case 'UPDATING':
       return 'The table is being updated. Please wait for the update to complete.';
     case 'DELETING':
-      return 'The table is being deleted. You may need to redeploy the CloudFormation template.';
+      return 'The table is being deleted. You may need to redeploy the infrastructure using ./scripts/setup.sh.';
     case 'ARCHIVED':
-      return 'The table is archived. Please redeploy the CloudFormation template to create a new table.';
+      return 'The table is archived. Please redeploy the infrastructure using ./scripts/setup.sh.';
     default:
       return 'Please wait for the table to become ACTIVE or check the AWS Console for details.';
   }
