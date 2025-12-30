@@ -36,7 +36,11 @@ describe('Task Group 1: Step 8 Type Definitions', () => {
       expect(state.generatedFilePaths).toEqual([]);
       expect(state.accordionExpanded).toBe(false);
       expect(state.canGenerate).toBe(true);
-      expect(state.isPlaceholderMode).toBe(true);
+      // Phase 2 roadmap fields
+      expect(state.roadmapGenerating).toBe(false);
+      expect(state.roadmapGenerated).toBe(false);
+      expect(state.roadmapFilePath).toBe('');
+      expect(state.roadmapError).toBeUndefined();
     });
 
     it('should create independent state instances', () => {

@@ -797,8 +797,13 @@ export interface FailedFile {
  * Generation state for Step 8
  * Task 1.2: Interface following MockDataState pattern
  * Task 2.6: Removed isPlaceholderMode - now using real generation
+ * Phase 2: Extended with roadmap generation fields
  */
 export interface GenerationState {
+  // -------------------------------------------------------------------------
+  // Phase 1: Steering File Generation
+  // -------------------------------------------------------------------------
+
   /** Whether steering file generation is in progress */
   isGenerating: boolean;
   /** Current file index being generated (-1 if not started) */
@@ -813,6 +818,19 @@ export interface GenerationState {
   accordionExpanded: boolean;
   /** Whether generation can proceed (no 'error' validation status) */
   canGenerate: boolean;
+
+  // -------------------------------------------------------------------------
+  // Phase 2: Roadmap Generation
+  // -------------------------------------------------------------------------
+
+  /** Whether roadmap generation is in progress */
+  roadmapGenerating: boolean;
+  /** Whether roadmap has been successfully generated */
+  roadmapGenerated: boolean;
+  /** Path to the generated roadmap.md file */
+  roadmapFilePath: string;
+  /** Error message if roadmap generation failed */
+  roadmapError?: string;
 }
 
 /**
@@ -1026,6 +1044,7 @@ export interface WizardValidationState {
  * Task 5.2: Extended with Resume Banner commands
  * Task 1.6: Extended with Step 7 Demo Strategy commands
  * Task 1.5: Extended with Step 8 Generation commands
+ * Phase 2: Extended with Roadmap Generation commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -1201,6 +1220,15 @@ export const WIZARD_COMMANDS = {
   /** Edit a specific step from summary */
   STEP8_EDIT_STEP: 'step8EditStep',
   // -------------------------------------------------------------------------
+  // Step 8 Phase 2: Roadmap Generation commands
+  // -------------------------------------------------------------------------
+  /** Generate roadmap.md from steering files */
+  GENERATE_ROADMAP: 'generateRoadmap',
+  /** Open the generated roadmap.md file */
+  OPEN_ROADMAP: 'openRoadmap',
+  /** Open the .kiro/steering folder in explorer */
+  OPEN_KIRO_FOLDER: 'openKiroFolder',
+  // -------------------------------------------------------------------------
   // Resume Banner commands (Task 5.2)
   // -------------------------------------------------------------------------
   /** Resume previous session from persisted state */
@@ -1360,10 +1388,11 @@ export function createDefaultDemoStrategyState(): DemoStrategyState {
  *
  * Task 1.6: Factory function following createDefaultMockDataState() pattern
  * Task 2.6: Removed isPlaceholderMode - now using real generation
+ * Phase 2: Extended with roadmap generation defaults
  */
 export function createDefaultGenerationState(): GenerationState {
   return {
-    // Generation progress
+    // Phase 1: Generation progress
     isGenerating: false,
     currentFileIndex: -1,
     completedFiles: [],
@@ -1373,6 +1402,11 @@ export function createDefaultGenerationState(): GenerationState {
     accordionExpanded: false,
     // Validation
     canGenerate: true,
+    // Phase 2: Roadmap generation
+    roadmapGenerating: false,
+    roadmapGenerated: false,
+    roadmapFilePath: '',
+    roadmapError: undefined,
   };
 }
 
@@ -1543,6 +1577,7 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
     generation: {
       ...truncatedState.generation,
       isGenerating: false, // Cannot resume mid-generation
+      roadmapGenerating: false, // Cannot resume mid-generation
     },
   };
 }
@@ -1583,6 +1618,11 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
       ? {
           ...persisted.generation,
           isGenerating: false, // Cannot resume mid-generation
+          roadmapGenerating: false, // Cannot resume mid-generation
+          // Ensure roadmap fields exist even if persisted state is old
+          roadmapGenerated: (persisted.generation as GenerationState).roadmapGenerated ?? false,
+          roadmapFilePath: (persisted.generation as GenerationState).roadmapFilePath ?? '',
+          roadmapError: (persisted.generation as GenerationState).roadmapError,
         }
       : createDefaultGenerationState(),
   };

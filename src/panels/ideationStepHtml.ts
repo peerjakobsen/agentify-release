@@ -497,7 +497,10 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
       generatedFilePaths: [],
       accordionExpanded: false,
       canGenerate: true,
-      
+      roadmapGenerating: false,
+      roadmapGenerated: false,
+      roadmapFilePath: '',
+      roadmapError: undefined,
     };
     const summaries = computeStepSummaries(state);
     return generateStep8Html(generationState, summaries);
@@ -2580,17 +2583,123 @@ export function renderPostGenerationSuccess(state: GenerationState): string {
     <div class="post-generation-success">
       <div class="success-message">
         ${getStatusIconSvg('complete')}
-        <span>Steering files generated successfully!</span>
+        <span>Phase 1: Steering files generated successfully!</span>
       </div>
       <div class="file-list">
         ${filesHtml}
       </div>
-      <p class="kiro-hint">Open this project in Kiro to activate your steering files</p>
+    </div>
+    ${renderPhase2RoadmapSection(state)}
+    <div class="step8-bottom-actions">
       <button
         class="start-over-button"
         onclick="handleStep8Command('step8StartOver', {})"
       >
         Start Over
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Phase 2: Render roadmap generation section
+ * Shows Generate Roadmap button after Phase 1 steering files complete
+ */
+export function renderPhase2RoadmapSection(state: GenerationState): string {
+  // Show loading state
+  if (state.roadmapGenerating) {
+    return `
+      <div class="phase2-roadmap-section">
+        <h3>Phase 2: Implementation Roadmap</h3>
+        <div class="roadmap-generating">
+          <span class="spinner"></span>
+          <span>Generating roadmap.md...</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show success state
+  if (state.roadmapGenerated && state.roadmapFilePath) {
+    return `
+      <div class="phase2-roadmap-section">
+        <h3>Phase 2: Implementation Roadmap</h3>
+        <div class="roadmap-success">
+          <div class="success-message">
+            ${getStatusIconSvg('complete')}
+            <span>roadmap.md generated successfully!</span>
+          </div>
+          <div class="roadmap-instructions">
+            <p><strong>How to implement with Kiro:</strong></p>
+            <ol>
+              <li>Open roadmap.md</li>
+              <li>Copy the prompt from Item 1</li>
+              <li>Paste into Kiro chat</li>
+              <li>Kiro creates spec.md → requirements → design → tasks → implementation</li>
+              <li>Verify the acceptance criteria</li>
+              <li>Repeat with Item 2, 3, ... in order</li>
+            </ol>
+            <p class="roadmap-note">Each item builds on previous ones. Complete them sequentially.</p>
+          </div>
+          <div class="roadmap-actions">
+            <button
+              class="open-roadmap-btn nav-btn primary"
+              onclick="handleStep8Command('step8OpenRoadmap', {})"
+            >
+              Open roadmap.md
+            </button>
+            <button
+              class="open-kiro-btn nav-btn secondary"
+              onclick="handleStep8Command('step8OpenKiroFolder', {})"
+            >
+              Open Folder in Kiro
+            </button>
+            <button
+              class="regenerate-roadmap-link"
+              onclick="handleStep8Command('step8GenerateRoadmap', {})"
+            >
+              Regenerate
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show error state
+  if (state.roadmapError) {
+    return `
+      <div class="phase2-roadmap-section">
+        <h3>Phase 2: Implementation Roadmap</h3>
+        <div class="roadmap-error">
+          <div class="error-message">
+            ${getStatusIconSvg('error')}
+            <span>Roadmap generation failed</span>
+          </div>
+          <p class="error-details">${escapeHtml(state.roadmapError)}</p>
+          <button
+            class="retry-roadmap-btn nav-btn primary"
+            onclick="handleStep8Command('step8GenerateRoadmap', {})"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show initial state with Generate Roadmap button
+  return `
+    <div class="phase2-roadmap-section">
+      <h3>Phase 2: Implementation Roadmap</h3>
+      <p class="phase2-description">
+        Generate a step-by-step implementation roadmap with copy-paste prompts for Kiro IDE.
+      </p>
+      <button
+        class="generate-roadmap-btn nav-btn primary"
+        onclick="handleStep8Command('step8GenerateRoadmap', {})"
+      >
+        Generate Roadmap
       </button>
     </div>
   `;

@@ -2606,5 +2606,111 @@ export function getIdeationStyles(): string {
         display: flex;
         gap: 8px;
       }
+
+      /* Phase 2: Roadmap Generation */
+      .phase2-roadmap-section {
+        margin-top: 24px;
+        padding: 20px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 6px;
+      }
+      .phase2-roadmap-section h3 {
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+      .phase2-description {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin-bottom: 16px;
+      }
+      .generate-roadmap-btn {
+        width: 100%;
+      }
+      .roadmap-generating {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 16px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .roadmap-success {
+        text-align: left;
+      }
+      .roadmap-success .success-message {
+        justify-content: flex-start;
+        margin-bottom: 16px;
+      }
+      .roadmap-instructions {
+        background: var(--vscode-input-background);
+        padding: 16px;
+        border-radius: 6px;
+        margin-bottom: 16px;
+      }
+      .roadmap-instructions p {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+      }
+      .roadmap-instructions ol {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .roadmap-instructions li {
+        margin-bottom: 4px;
+      }
+      .roadmap-note {
+        margin-top: 12px;
+        font-style: italic;
+        color: var(--vscode-descriptionForeground);
+      }
+      .roadmap-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .open-roadmap-btn,
+      .open-kiro-btn {
+        flex: 1;
+        min-width: 140px;
+      }
+      .regenerate-roadmap-link {
+        background: transparent;
+        border: none;
+        color: var(--vscode-textLink-foreground, #3794ff);
+        cursor: pointer;
+        font-size: 12px;
+        padding: 4px 8px;
+      }
+      .regenerate-roadmap-link:hover {
+        text-decoration: underline;
+      }
+      .roadmap-error {
+        text-align: left;
+      }
+      .roadmap-error .error-message {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--vscode-errorForeground, #f48771);
+        margin-bottom: 8px;
+      }
+      .roadmap-error .error-details {
+        margin-bottom: 12px;
+      }
+      .retry-roadmap-btn {
+        width: 100%;
+      }
+      .step8-bottom-actions {
+        margin-top: 16px;
+        text-align: center;
+      }
     `;
 }

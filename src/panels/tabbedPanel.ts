@@ -1174,6 +1174,19 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.ideationNavigateToStep(message.step as number);
         break;
 
+      // Phase 2: Roadmap Generation commands
+      case 'step8GenerateRoadmap':
+        this._step8Handler?.handleGenerateRoadmap();
+        break;
+
+      case 'step8OpenRoadmap':
+        this._step8Handler?.handleOpenRoadmap();
+        break;
+
+      case 'step8OpenKiroFolder':
+        this._step8Handler?.handleOpenKiroFolder();
+        break;
+
       // Legacy command for backward compatibility
       case 'generateSteeringFiles':
         this.handleGenerateSteeringFiles();

@@ -5,6 +5,7 @@
  *
  * Task Group 3: Step 8 Logic Handler for Wizard Step 8 Generate
  * Task Group 4: Step 8 Integration with SteeringFileService
+ * Phase 2: Roadmap Generation - Extended with roadmap generation handlers
  */
 
 import * as vscode from 'vscode';
@@ -12,6 +13,11 @@ import {
   getSteeringFileService,
   SteeringFileService,
 } from '../services/steeringFileService';
+import {
+  getRoadmapGenerationService,
+  RoadmapGenerationService,
+  ROADMAP_OUTPUT_FILE,
+} from '../services/roadmapGenerationService';
 import type {
   GenerationState,
   StepSummary,
@@ -93,10 +99,12 @@ const STEP_NAMES: Record<number, string> = {
  * Step 8 Logic Handler
  * Task 3.2: Manages pre-generation summary, file generation, and post-generation actions
  * Task 4.2: Updated to pass full WizardState to SteeringFileService
+ * Phase 2: Extended with roadmap generation handlers
  * Follows pattern from Step6LogicHandler and Step7LogicHandler
  */
 export class Step8LogicHandler {
   private _steeringFileService?: SteeringFileService;
+  private _roadmapService?: RoadmapGenerationService;
   private _serviceDisposables: vscode.Disposable[] = [];
   private _state: GenerationState;
   private _callbacks: Step8Callbacks;
@@ -151,6 +159,55 @@ export class Step8LogicHandler {
     );
 
     return this._steeringFileService;
+  }
+
+  /**
+   * Initialize RoadmapGenerationService and subscribe to events
+   * Phase 2: Task 3.2 - Add RoadmapGenerationService initialization
+   */
+  private initRoadmapService(): RoadmapGenerationService {
+    if (this._roadmapService) {
+      return this._roadmapService;
+    }
+
+    const context = this._callbacks.getContext();
+    if (!context) {
+      throw new Error('Extension context is required for RoadmapGenerationService');
+    }
+
+    this._roadmapService = getRoadmapGenerationService(context);
+
+    // Phase 2: Task 3.3 - Subscribe to RoadmapGenerationService events
+    this._serviceDisposables.push(
+      this._roadmapService.onGenerationStart(() => {
+        this._state.roadmapGenerating = true;
+        this._state.roadmapError = undefined;
+        this._callbacks.updateWebviewContent();
+        this._callbacks.syncStateToWebview();
+      })
+    );
+
+    this._serviceDisposables.push(
+      this._roadmapService.onGenerationComplete((event) => {
+        this._state.roadmapGenerating = false;
+        this._state.roadmapGenerated = true;
+        this._state.roadmapFilePath = event.filePath;
+        this._state.roadmapError = undefined;
+        this._callbacks.updateWebviewContent();
+        this._callbacks.syncStateToWebview();
+      })
+    );
+
+    this._serviceDisposables.push(
+      this._roadmapService.onGenerationError((event) => {
+        this._state.roadmapGenerating = false;
+        this._state.roadmapError = event.error;
+        this._callbacks.updateWebviewContent();
+        this._callbacks.syncStateToWebview();
+      })
+    );
+
+    return this._roadmapService;
   }
 
   // ============================================================================
@@ -472,6 +529,137 @@ export class Step8LogicHandler {
   public handleToggleAccordion(): void {
     this._state.accordionExpanded = !this._state.accordionExpanded;
     this._callbacks.updateWebviewContent();
+  }
+
+  // ============================================================================
+  // Phase 2: Roadmap Generation Handlers
+  // ============================================================================
+
+  /**
+   * Generate roadmap.md from steering files
+   * Phase 2: Task 3.4 - Implement handleGenerateRoadmap() method
+   *
+   * Flow:
+   * 1. Initialize roadmap service
+   * 2. Call generateRoadmap() to get content
+   * 3. Write content to .kiro/steering/roadmap.md
+   * 4. State updates handled via event subscriptions
+   */
+  public async handleGenerateRoadmap(): Promise<void> {
+    try {
+      // Initialize roadmap service
+      const service = this.initRoadmapService();
+
+      // Generate roadmap content (events will update state)
+      const content = await service.generateRoadmap();
+
+      // Write to file
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        throw new Error('No workspace folder open');
+      }
+
+      const roadmapUri = vscode.Uri.joinPath(
+        workspaceFolder.uri,
+        '.kiro',
+        'steering',
+        ROADMAP_OUTPUT_FILE
+      );
+
+      await vscode.workspace.fs.writeFile(
+        roadmapUri,
+        Buffer.from(content, 'utf-8')
+      );
+
+      // Update file path in state (event handler already set roadmapGenerated)
+      this._state.roadmapFilePath = roadmapUri.fsPath;
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+
+      // Show success message
+      vscode.window.showInformationMessage(
+        'Implementation roadmap generated successfully!',
+        'Open Roadmap'
+      ).then((selection) => {
+        if (selection === 'Open Roadmap') {
+          this.handleOpenRoadmap();
+        }
+      });
+    } catch (error) {
+      // Error handling is done via event subscription, but catch unexpected errors
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!this._state.roadmapError) {
+        this._state.roadmapGenerating = false;
+        this._state.roadmapError = errorMessage;
+        this._callbacks.updateWebviewContent();
+        this._callbacks.syncStateToWebview();
+      }
+    }
+  }
+
+  /**
+   * Open the generated roadmap.md file in the editor
+   * Phase 2: Task 3.5 - Implement handleOpenRoadmap() method
+   */
+  public async handleOpenRoadmap(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder open');
+      return;
+    }
+
+    const roadmapUri = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      '.kiro',
+      'steering',
+      ROADMAP_OUTPUT_FILE
+    );
+
+    try {
+      // Check if file exists
+      await vscode.workspace.fs.stat(roadmapUri);
+
+      // Open the file in the editor
+      await vscode.window.showTextDocument(roadmapUri, {
+        preview: false,
+        viewColumn: vscode.ViewColumn.One,
+      });
+    } catch {
+      vscode.window.showErrorMessage(
+        'roadmap.md not found. Generate it first using the "Generate Roadmap" button.'
+      );
+    }
+  }
+
+  /**
+   * Reveal the .kiro/steering folder in the explorer
+   * Phase 2: Task 3.6 - Implement handleOpenKiroFolder() method
+   */
+  public async handleOpenKiroFolder(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder open');
+      return;
+    }
+
+    const steeringFolderUri = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      STEERING_DIR_PATH
+    );
+
+    try {
+      // Check if folder exists
+      await vscode.workspace.fs.stat(steeringFolderUri);
+
+      // Reveal in explorer
+      await vscode.commands.executeCommand('revealInExplorer', steeringFolderUri);
+    } catch {
+      // Fallback: just show the explorer view
+      await vscode.commands.executeCommand('workbench.view.explorer');
+      vscode.window.showWarningMessage(
+        'Steering folder not found. Generate steering files first.'
+      );
+    }
   }
 
   // ============================================================================
