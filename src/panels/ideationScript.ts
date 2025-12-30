@@ -490,6 +490,17 @@ export function getIdeationScript(): string {
             vscode.postMessage({ command: 'step8EditStep', step: params.step });
             break;
 
+          // Phase 2: Roadmap generation commands
+          case 'step8GenerateRoadmap':
+            vscode.postMessage({ command: 'step8GenerateRoadmap' });
+            break;
+          case 'step8OpenRoadmap':
+            vscode.postMessage({ command: 'step8OpenRoadmap' });
+            break;
+          case 'step8OpenKiroFolder':
+            vscode.postMessage({ command: 'step8OpenKiroFolder' });
+            break;
+
           default:
             console.warn('Unknown Step 8 command:', command);
         }
