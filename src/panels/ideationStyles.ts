@@ -2637,6 +2637,14 @@ export function getIdeationStyles(): string {
         padding: 16px;
         color: var(--vscode-descriptionForeground);
       }
+      .roadmap-generating .typing-indicator {
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+      }
+      .roadmap-generating .loading-text {
+        font-size: 13px;
+      }
       .roadmap-success {
         text-align: left;
       }

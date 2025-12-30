@@ -2612,8 +2612,12 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
       <div class="phase2-roadmap-section">
         <h3>Phase 2: Implementation Roadmap</h3>
         <div class="roadmap-generating">
-          <span class="spinner"></span>
-          <span>Generating roadmap.md...</span>
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating roadmap.md...</span>
         </div>
       </div>
     `;
