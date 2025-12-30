@@ -714,7 +714,7 @@ This service replaces the stub service from Item 24. Step 8 calls this service a
 **Demo Script Note:**
 `demo-script.md` (Item 23.5) is a separate presenter-focused export to workspace root. `demo-strategy.md` here is Kiro steering for code generation — different purpose, different audience. `M`
 
-28.4. [ ] Implementation Roadmap Generation (Phase 2) — Generate `roadmap.md` from steering files with Kiro usage guidance:
+28.4. [x] Implementation Roadmap Generation (Phase 2) — Generate `roadmap.md` from steering files with Kiro usage guidance:
 
 **Trigger:** "Generate Roadmap" button appears in Step 8 UI after Phase 1 steering files are written successfully
 
@@ -884,6 +884,32 @@ This is an Agentify demo project. Follow these rules strictly:
 - Phase 2 button: "Generate Roadmap"
 - Phase 2 complete → Usage instructions + action buttons appear
 - "Start Over" clears wizard state and returns to Step 1 `M`
+
+28.5. [ ] CDK Infrastructure Bundling & Extraction — Replace CloudFormation SDK deployment with bundled CDK infrastructure:
+
+**File Extraction on "Initialize Project":**
+- Extract bundled `resources/cdk/` to `{workspace}/cdk/` (full CDK project with NetworkingStack + ObservabilityStack)
+- Extract bundled `resources/scripts/` to `{workspace}/scripts/` (setup.sh, destroy.sh, Dockerfile template)
+- Auto-open `cdk/README.md` in editor with deployment instructions
+
+**User-Driven Deployment:**
+- User runs `./scripts/setup.sh --region {region}` manually
+- setup.sh outputs to `.agentify/infrastructure.json` (deployment info)
+- Clear instructions include CDK bootstrap (first-time), deployment command, cost estimate (~$32/mo)
+
+**Config Architecture:**
+- Keep separate files: `infrastructure.json` (deployment outputs), `config.json` (extension settings)
+- Extension reads from `infrastructure.json` when present for DynamoDB table name/region
+
+**Code Cleanup:**
+- Remove `src/services/cloudFormationService.ts`
+- Remove `infrastructure/dynamodb-table.yaml`
+- Remove `infrastructure/` folder
+- Update `initializeProject.ts` to use file extraction instead of SDK calls
+
+**Bundling:**
+- Ensure `resources/cdk/` and `resources/scripts/` included in VSIX package
+- Add `cdk/README.md` with comprehensive deployment instructions `M`
 
 29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
 

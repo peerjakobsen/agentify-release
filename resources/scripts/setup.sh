@@ -44,7 +44,7 @@ print_error() {
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CDK_DIR="${SCRIPT_DIR}/../resources/cdk"
+CDK_DIR="${PROJECT_ROOT}/cdk"
 
 # Load environment variables if .env exists
 if [ -f "${PROJECT_ROOT}/.env" ]; then
