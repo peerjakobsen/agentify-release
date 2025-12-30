@@ -54,11 +54,11 @@ describe('Task Group 1: Step 8 Type Definitions', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 2: STEERING_FILES constant contains expected 7 files
+  // Test 2: STEERING_FILES constant contains expected 8 files
   // ---------------------------------------------------------------------------
   describe('Test 2: STEERING_FILES constant', () => {
-    it('should contain exactly 7 steering files', () => {
-      expect(STEERING_FILES).toHaveLength(7);
+    it('should contain exactly 8 steering files', () => {
+      expect(STEERING_FILES).toHaveLength(8);
     });
 
     it('should contain all expected steering file names', () => {
@@ -70,6 +70,7 @@ describe('Task Group 1: Step 8 Type Definitions', () => {
         'integration-landscape.md',
         'security-policies.md',
         'demo-strategy.md',
+        'agentify-integration.md',
       ];
 
       expect(STEERING_FILES).toEqual(expectedFiles);

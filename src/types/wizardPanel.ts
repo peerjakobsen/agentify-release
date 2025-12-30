@@ -746,6 +746,7 @@ export interface DemoStrategyState {
 /**
  * Steering files to be generated
  * Task 1.4: Constant array of steering file names
+ * Task 4.2: Updated to include all 8 files including agentify-integration.md
  */
 export const STEERING_FILES: string[] = [
   'product.md',
@@ -755,6 +756,7 @@ export const STEERING_FILES: string[] = [
   'integration-landscape.md',
   'security-policies.md',
   'demo-strategy.md',
+  'agentify-integration.md',
 ];
 
 /**

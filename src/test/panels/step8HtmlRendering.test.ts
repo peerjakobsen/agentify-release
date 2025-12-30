@@ -530,8 +530,8 @@ describe('Task Group 5: Generation Progress UI', () => {
 
       const html = renderGenerationProgress(state);
 
-      // Should show progress count like "3/7 files"
-      expect(html).toContain('3/7');
+      // Should show progress count like "3/8 files"
+      expect(html).toContain('3/8');
     });
 
     it('should show completed count when all files done', () => {
@@ -543,7 +543,7 @@ describe('Task Group 5: Generation Progress UI', () => {
       const html = renderGenerationProgress(state);
 
       // Should show complete count
-      expect(html).toContain('7/7');
+      expect(html).toContain('8/8');
     });
 
     it('should show Generating text during active generation', () => {

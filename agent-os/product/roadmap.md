@@ -612,7 +612,7 @@ Prompt should instruct model to:
 - CLI invocation pattern for Demo Viewer (`python main.py --workflow-id {id}`)
 - Required decorators/instrumentation patterns `M`
 
-28.2. [ ] Steering Generation Service — Implement service that generates steering files using prompts from Item 28.1:
+28.2. [x] Steering Generation Service — Implement service that generates steering files using prompts from Item 28.1:
 
 **Service Interface:**
 ```typescript
