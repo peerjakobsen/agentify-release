@@ -42,13 +42,19 @@ import {
 import {
   Step6LogicHandler,
 } from './ideationStep6Logic';
+// Task 4.10: Import Step7LogicHandler
+import {
+  Step7LogicHandler,
+} from './ideationStep7Logic';
 import {
   createDefaultAgentDesignState,
   createDefaultMockDataState,
+  createDefaultDemoStrategyState,
   createDefaultWizardState,
   persistedStateToWizardState,
   AgentDesignState,
   MockDataState,
+  DemoStrategyState,
   OutcomeDefinitionState,
   SuccessMetric,
   RefinedSectionsState,
@@ -120,6 +126,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _step4Handler?: Step4LogicHandler;
   private _step5Handler?: Step5LogicHandler;
   private _step6Handler?: Step6LogicHandler;
+  // Task 4.10: Step 7 handler for demo strategy
+  private _step7Handler?: Step7LogicHandler;
 
   // Task 6.2: Persistence service and resume banner state
   private _persistenceService: WizardStatePersistenceService | null = null;
@@ -196,6 +204,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step6Handler = new Step6LogicHandler(
       this._context,
       this._ideationState.mockData,
+      {
+        updateWebviewContent: callbacks.updateWebviewContent,
+        syncStateToWebview: callbacks.syncStateToWebview,
+      }
+    );
+
+    // Task 4.10: Initialize Step 7 handler
+    this._step7Handler = new Step7LogicHandler(
+      this._context,
+      this._ideationState.demoStrategy,
       {
         updateWebviewContent: callbacks.updateWebviewContent,
         syncStateToWebview: callbacks.syncStateToWebview,
@@ -357,6 +375,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         };
         this._ideationState.agentDesign = wizardState.agentDesign;
         this._ideationState.mockData = wizardState.mockData;
+        // Task 3.2: Restore demo strategy state
+        this._ideationState.demoStrategy = wizardState.demoStrategy;
 
         // Re-initialize step handlers with restored state
         this.initStepHandlers();
@@ -475,6 +495,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       },
       agentDesign: this._ideationState.agentDesign,
       mockData: this._ideationState.mockData,
+      // Task 3.2: Include demo strategy in persisted state
+      demoStrategy: this._ideationState.demoStrategy,
     };
   }
 
@@ -990,6 +1012,103 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         break;
 
       // =========================================================================
+      // Step 7: Demo Strategy commands (Task Group 4)
+      // Task 4.10: Handle Step 7 commands
+      // =========================================================================
+
+      // Aha Moments commands
+      case 'step7AddMoment':
+        this._step7Handler?.handleAddMoment();
+        this.saveState();
+        break;
+
+      case 'step7UpdateMoment':
+        this._step7Handler?.handleUpdateMoment(
+          message.index as number,
+          message.field as 'title' | 'triggerType' | 'triggerName' | 'talkingPoint',
+          message.value as string
+        );
+        this.saveState();
+        break;
+
+      case 'step7RemoveMoment':
+        this._step7Handler?.handleRemoveMoment(message.index as number);
+        this.saveState();
+        break;
+
+      // Demo Persona commands
+      case 'step7UpdatePersonaName':
+        this._step7Handler?.handleUpdatePersonaName(message.value as string);
+        this.saveState();
+        break;
+
+      case 'step7UpdatePersonaRole':
+        this._step7Handler?.handleUpdatePersonaRole(message.value as string);
+        this.saveState();
+        break;
+
+      case 'step7UpdatePersonaPainPoint':
+        this._step7Handler?.handleUpdatePersonaPainPoint(message.value as string);
+        this.saveState();
+        break;
+
+      // Narrative Flow commands
+      case 'step7AddScene':
+        this._step7Handler?.handleAddScene();
+        this.saveState();
+        break;
+
+      case 'step7UpdateScene':
+        this._step7Handler?.handleUpdateScene(
+          message.index as number,
+          message.field as 'title' | 'description' | 'highlightedAgents',
+          message.value as string | string[]
+        );
+        this.saveState();
+        break;
+
+      case 'step7RemoveScene':
+        this._step7Handler?.handleRemoveScene(message.index as number);
+        this.saveState();
+        break;
+
+      case 'step7MoveSceneUp':
+        this._step7Handler?.handleMoveSceneUp(message.index as number);
+        this.saveState();
+        break;
+
+      case 'step7MoveSceneDown':
+        this._step7Handler?.handleMoveSceneDown(message.index as number);
+        this.saveState();
+        break;
+
+      // Highlighted agents toggle for scenes
+      case 'step7ToggleHighlightedAgent':
+        this._step7Handler?.handleToggleHighlightedAgent(
+          message.sceneIndex as number,
+          message.agentId as string
+        );
+        this.saveState();
+        break;
+
+      // AI Generation commands
+      case 'step7GenerateMoments':
+        this._step7Handler?.handleGenerateMoments(this.getStep7Inputs());
+        break;
+
+      case 'step7GeneratePersona':
+        this._step7Handler?.handleGeneratePersona(this.getStep7Inputs());
+        break;
+
+      case 'step7GenerateNarrative':
+        this._step7Handler?.handleGenerateNarrative(this.getStep7Inputs());
+        break;
+
+      case 'step7GenerateAll':
+        this._step7Handler?.handleGenerateAll(this.getStep7Inputs());
+        break;
+
+      // =========================================================================
       // Step 8: Generate Steering Files command (Task Group 8)
       // Task 8.2: Handle steering file generation with auto-clear on success
       // =========================================================================
@@ -1278,6 +1397,22 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Get inputs for Step 7 AI generation
+   * Task 4.10: Get inputs for Step 7 AI calls
+   */
+  private getStep7Inputs() {
+    return {
+      industry: this._ideationState.industry === 'Other'
+        ? (this._ideationState.customIndustry || this._ideationState.industry)
+        : this._ideationState.industry,
+      businessObjective: this._ideationState.businessObjective,
+      confirmedAgents: this._ideationState.agentDesign.confirmedAgents,
+      outcomeDefinition: this._ideationState.outcome.primaryOutcome,
+      confirmedEdges: this._ideationState.agentDesign.confirmedEdges,
+    };
+  }
+
+  /**
    * Validate Ideation Step 1
    */
   private validateIdeationStep1(): void {
@@ -1372,6 +1507,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       if (previousStep === 5 && this._ideationState.currentStep === 6) {
         this._step6Handler?.triggerAutoSend(this.getStep6Inputs());
       }
+
+      // Note: Step 7 does NOT auto-trigger AI on entry (manual Generate buttons only)
     }
   }
 
@@ -1392,6 +1529,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Task 6.5: Handle back navigation from Step 7 to Step 6
       if (this._ideationState.currentStep === 7) {
         this._step6Handler?.handleBackNavigationToStep6();
+      }
+
+      // Task 4.10: Handle back navigation from Step 8 to Step 7
+      if (this._ideationState.currentStep === 8) {
+        this._step7Handler?.handleBackNavigationToStep7();
       }
 
       this._ideationState.currentStep--;
@@ -1418,6 +1560,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       // Task 6.5: Handle back navigation from Step 7 to Step 6
       if (this._ideationState.currentStep === 7 && step === 6) {
         this._step6Handler?.handleBackNavigationToStep6();
+      }
+
+      // Task 4.10: Handle back navigation from Step 8 to Step 7
+      if (this._ideationState.currentStep === 8 && step === 7) {
+        this._step7Handler?.handleBackNavigationToStep7();
       }
 
       this._ideationState.currentStep = step;
@@ -1799,6 +1946,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step3Handler?.dispose();
     this._step5Handler?.dispose();
     this._step6Handler?.dispose();
+    // Task 4.10: Dispose Step 7 handler
+    this._step7Handler?.dispose();
     this._persistenceService?.dispose(); // Task 6.2: Clean up persistence service
   }
 }
@@ -1836,6 +1985,8 @@ interface IdeationState {
   securityGuardrails: SecurityGuardrailsState;
   agentDesign: AgentDesignState;
   mockData: MockDataState;
+  // Task 3.2: Demo strategy state for Step 7
+  demoStrategy: DemoStrategyState;
 }
 
 interface IdeationValidationError {
@@ -1868,6 +2019,8 @@ function createDefaultIdeationState(): IdeationState {
     securityGuardrails: createDefaultSecurityGuardrailsState(),
     agentDesign: createDefaultAgentDesignState(),
     mockData: createDefaultMockDataState(),
+    // Task 3.2: Initialize demo strategy
+    demoStrategy: createDefaultDemoStrategyState(),
   };
 }
 
