@@ -714,6 +714,177 @@ This service replaces the stub service from Item 24. Step 8 calls this service a
 **Demo Script Note:**
 `demo-script.md` (Item 23.5) is a separate presenter-focused export to workspace root. `demo-strategy.md` here is Kiro steering for code generation — different purpose, different audience. `M`
 
+28.4. [ ] Implementation Roadmap Generation (Phase 2) — Generate `roadmap.md` from steering files with Kiro usage guidance:
+
+**Trigger:** "Generate Roadmap" button appears in Step 8 UI after Phase 1 steering files are written successfully
+
+**Prompt File:** `resources/prompts/steering/roadmap-steering.prompt.md` (already created)
+
+**Input Context (loaded from generated steering files):**
+- `.kiro/steering/tech.md` — AgentCore architecture, deployment patterns
+- `.kiro/steering/structure.md` — Code organization, Strands patterns
+- `.kiro/steering/integration-landscape.md` — Tools per agent, mock data schemas
+- `.kiro/steering/agentify-integration.md` — Event contracts, CLI interface
+
+**Roadmap Generation Logic:**
+1. Load all 4 input steering files
+2. Pass file contents as XML blocks to `roadmap-steering.prompt.md`
+3. Generate roadmap via Bedrock
+4. Write output to `.kiro/steering/roadmap.md`
+
+**Roadmap Output Structure:**
+```markdown
+# Implementation Roadmap
+
+## How to Use This Roadmap
+
+This roadmap contains items, each with a prompt for Kiro IDE. Follow this workflow:
+
+1. Open Kiro IDE in this project
+2. Copy **Item 1** prompt text (everything in the code block)
+3. Paste into Kiro chat — Kiro generates spec.md, then requirements, design, tasks, and implements
+4. Verify the acceptance criteria on the implemented code
+5. Move to **Item 2**, repeat until all items complete
+
+Each item builds on previous ones. Complete them in order.
+
+---
+
+## Architecture Context
+
+> **Include this understanding when reviewing generated code:**
+>
+> - Agents deploy to **Amazon Bedrock AgentCore Runtime** via AgentCore CLI
+> - Only `agents/main.py` runs locally — it orchestrates remote agents
+> - Use **Strands SDK**: `from strands import Agent, tool`
+> - All integrations are **mock tools** (this is a demo system)
+> - Emit events to DynamoDB + stdout for Demo Viewer visualization
+>
+> If generated code runs agents locally or uses real integrations, request corrections.
+
+---
+
+## Item 1: Mock Data Infrastructure
+...
+
+## Item 2: {Agent Name} Agent
+...
+```
+
+**Per-Item Format (enforced by prompt):**
+```markdown
+## Item N: {Name}
+
+**Purpose:** {one-line description}
+
+**Depends on:** {Item numbers that must be complete first}
+
+**Files to be created:**
+- `{path}` — {description}
+
+**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
+
+\`\`\`
+{Full prompt text with CRITICAL ARCHITECTURE block embedded}
+\`\`\`
+
+**Acceptance Criteria (verify after Kiro implements):**
+- [ ] {Specific verification step}
+- [ ] {Another verification step}
+```
+
+**Critical: Architecture Context Embedding**
+Every prompt MUST include this block at the top:
+```
+## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
+
+This is an Agentify demo project. Follow these rules strictly:
+
+1. **Agent Deployment**: Agents deploy to Amazon Bedrock AgentCore Runtime
+   via `agentcore deploy`. They run REMOTELY, not locally.
+
+2. **Local Orchestrator Only**: Only `agents/main.py` runs locally.
+   It orchestrates by calling remote agents.
+
+3. **Strands SDK**: Use `from strands import Agent, tool`
+
+4. **Mock Tools**: All integrations are mocks returning realistic fake data.
+
+5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md
+```
+
+**Item Sequence (generated dynamically from steering files):**
+1. **Item 1: Mock Data Infrastructure** — Shared mock data files + utilities
+2. **Items 2-N: One per agent** — Each agent with inline tools, deploys to AgentCore
+3. **Final Item: Main Orchestrator** — Local `main.py` with CLI contract
+
+**Phase 2 UI (Step 8):**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 2: Implementation Roadmap                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  [Generate Roadmap]                                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Status: [⏳] Generating roadmap.md...                      │
+│                                                             │
+│  Once complete, the roadmap will guide you through:        │
+│                                                             │
+│  • Item 1: Mock Data Infrastructure                        │
+│  • Item 2: {Agent A} Agent                                 │
+│  • Item 3: {Agent B} Agent                                 │
+│  • Item N: Main Orchestrator                               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Post-Generation UI (Success State):**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Phase 2: Implementation Roadmap                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ✅ roadmap.md generated successfully                       │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                                                     │   │
+│  │  📋 How to implement with Kiro:                     │   │
+│  │                                                     │   │
+│  │  1. Open roadmap.md                                 │   │
+│  │  2. Copy the prompt from Item 1                     │   │
+│  │  3. Paste into Kiro chat                            │   │
+│  │  4. Kiro creates spec.md → requirements → design    │   │
+│  │     → tasks → implementation                        │   │
+│  │  5. Verify the acceptance criteria                  │   │
+│  │  6. Repeat with Item 2, 3, ... in order            │   │
+│  │                                                     │   │
+│  │  Each item builds on previous ones.                 │   │
+│  │  Complete them sequentially.                        │   │
+│  │                                                     │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  [Open roadmap.md]  [Open Folder in Kiro]  [Start Over]    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Error Handling:**
+- If any required steering file missing, show error with "Regenerate Steering Files" button
+- If roadmap generation fails, show retry button with error details
+- Partial generation not supported — roadmap is all-or-nothing
+
+**Files Written:**
+- `.kiro/steering/roadmap.md`
+
+**Integration with Step 8 Flow:**
+- Phase 1 button: "Generate Steering Files" (existing from 28.3)
+- Phase 1 complete → Phase 2 section appears
+- Phase 2 button: "Generate Roadmap"
+- Phase 2 complete → Usage instructions + action buttons appear
+- "Start Over" clears wizard state and returns to Step 1 `M`
+
 29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
 
 **Power Structure:**
