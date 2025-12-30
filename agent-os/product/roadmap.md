@@ -667,7 +667,7 @@ private async generateDocument(promptName: string, context: object): Promise<str
 **Relationship to Step 8:**
 This service replaces the stub service from Item 24. Step 8 calls this service and handles UI/progress display. Service is responsible only for content generation, not file I/O. `M`
 
-28.3. [ ] Steering File Writer & Step 8 Integration — Write generated steering files to workspace and integrate with Step 8 UI:
+28.3. [x] Steering File Writer & Step 8 Integration — Write generated steering files to workspace and integrate with Step 8 UI:
 
 **File Writing:**
 - Create `.kiro/steering/` directory if not exists

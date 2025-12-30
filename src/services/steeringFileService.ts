@@ -1,48 +1,50 @@
 /**
  * Steering File Service
+ * Orchestrates steering file generation with conflict detection, backup, and file writing
  *
- * Stub service for steering file generation in Step 8 of the Ideation Wizard.
- * Provides progress events during simulated file generation.
+ * Task Group 1: Conflict detection and backup
+ * Task Group 2: File writing operations
+ * Task Group 3: Generation orchestration
  *
- * TODO: Phase 3 Item 28 - Implement actual steering file generation
- * Expected output location: .kiro/steering/
- * Current stub returns simulated success with placeholder content.
- *
- * This service follows the singleton pattern established by MockDataService.
+ * This service coordinates between:
+ * - SteeringGenerationService: AI-powered content generation via Bedrock
+ * - File system operations: Directory creation, file writing, backup
+ * - UI feedback: Progress events for Step 8 visualization
  */
 
 import * as vscode from 'vscode';
+import type { WizardState } from '../types/wizardPanel';
 import { STEERING_FILES } from '../types/wizardPanel';
+import { getSteeringGenerationService } from './steeringGenerationService';
 
 // ============================================================================
 // Event Types
-// Task 2.3: Define service event types
 // ============================================================================
 
 /**
- * Event emitted when file generation starts
+ * Event emitted when a file generation starts
  */
 export interface FileProgressEvent {
-  /** Name of the file being generated */
+  /** Name of the file being generated (e.g., 'product.md') */
   fileName: string;
-  /** Index of the current file (0-based) */
+  /** Zero-based index of the file in the generation sequence */
   index: number;
   /** Total number of files to generate */
   total: number;
 }
 
 /**
- * Event emitted when file generation completes
+ * Event emitted when a file is successfully generated and written
  */
 export interface FileCompleteEvent {
-  /** Name of the completed file */
+  /** Name of the file that was generated */
   fileName: string;
-  /** Full path to the generated file */
+  /** Full absolute path to the written file */
   filePath: string;
 }
 
 /**
- * Event emitted when file generation fails
+ * Event emitted when a file generation fails
  */
 export interface FileErrorEvent {
   /** Name of the file that failed */
@@ -51,217 +53,440 @@ export interface FileErrorEvent {
   error: string;
 }
 
+// ============================================================================
+// Result Types
+// ============================================================================
+
 /**
- * Result of steering file generation
+ * User choice from the conflict dialog
+ */
+export type ConflictDialogChoice = 'overwrite' | 'backup' | 'cancel';
+
+/**
+ * Result of the generateSteeringFiles operation
  */
 export interface GenerationResult {
-  /** Array of generated file paths */
+  /** Whether generation completed successfully */
+  success: boolean;
+  /** Whether user cancelled the operation */
+  cancelled?: boolean;
+  /** Array of full paths to generated files */
   files: string[];
-  /** True if using placeholder/stub implementation */
-  placeholder: boolean;
-  /** Error details if generation failed */
+  /** Path to backup directory (if backup was created) */
+  backupPath?: string;
+  /** Error information if generation failed */
   error?: {
+    /** Name of the file that failed */
     fileName: string;
+    /** Error message */
     message: string;
   };
 }
 
 // ============================================================================
-// Minimal State Interface for Generation
-// Task 2.4: Accept wizard state as input parameter
+// Service Implementation
 // ============================================================================
 
 /**
- * Minimal state interface needed for steering file generation
- * This allows the service to be used with partial state during testing
+ * SteeringFileService orchestrates the full steering file generation flow:
+ * 1. Check for existing files and show conflict dialog if needed
+ * 2. Create backup if user selects that option
+ * 3. Call SteeringGenerationService for AI content generation
+ * 4. Write generated content to .kiro/steering/ directory
+ * 5. Emit progress events for UI visualization
  */
-export interface GenerationState {
-  businessObjective?: string;
-  industry?: string;
-  systems?: string[];
-  // Additional fields used for actual generation (Phase 3)
-  [key: string]: unknown;
-}
+export class SteeringFileService {
+  // Extension context for service initialization
+  private _context: vscode.ExtensionContext;
 
-// ============================================================================
-// SteeringFileService Class
-// Task 2.2: Create service following MockDataService pattern
-// ============================================================================
+  // Event emitters for progress tracking
+  private _onFileStart = new vscode.EventEmitter<FileProgressEvent>();
+  private _onFileComplete = new vscode.EventEmitter<FileCompleteEvent>();
+  private _onFileError = new vscode.EventEmitter<FileErrorEvent>();
 
-/**
- * Service class for steering file generation
- *
- * Provides a stub implementation that simulates file generation with
- * progress events. Actual generation logic will be implemented in Phase 3.
- */
-export class SteeringFileService implements vscode.Disposable {
-  // -------------------------------------------------------------------------
-  // EventEmitters (VS Code pattern)
-  // -------------------------------------------------------------------------
-
-  /** Event emitter for file generation start */
-  private readonly _onFileStart = new vscode.EventEmitter<FileProgressEvent>();
-
-  /** Public event for subscribing to file start events */
+  /** Event fired when file generation starts */
   public readonly onFileStart = this._onFileStart.event;
-
-  /** Event emitter for file generation complete */
-  private readonly _onFileComplete = new vscode.EventEmitter<FileCompleteEvent>();
-
-  /** Public event for subscribing to file complete events */
+  /** Event fired when file is successfully written */
   public readonly onFileComplete = this._onFileComplete.event;
-
-  /** Event emitter for file generation error */
-  private readonly _onFileError = new vscode.EventEmitter<FileErrorEvent>();
-
-  /** Public event for subscribing to file error events */
+  /** Event fired when file generation fails */
   public readonly onFileError = this._onFileError.event;
 
-  // -------------------------------------------------------------------------
-  // Public Methods
-  // -------------------------------------------------------------------------
+  // Directory paths
+  private get _workspaceRoot(): vscode.Uri {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      throw new Error('No workspace folder open');
+    }
+    return folders[0].uri;
+  }
+
+  private get _steeringDir(): vscode.Uri {
+    return vscode.Uri.joinPath(this._workspaceRoot, '.kiro', 'steering');
+  }
+
+  private get _kiroDir(): vscode.Uri {
+    return vscode.Uri.joinPath(this._workspaceRoot, '.kiro');
+  }
 
   /**
-   * Generate steering files with progress events
-   *
-   * Task 2.4: Implement stub generateSteeringFiles() method
-   *
-   * @param state The wizard state used for generation context
-   * @param startIndex Optional index to start from (for retry functionality)
-   * @param delayMs Optional delay between files in ms (default 200ms for progress visibility)
-   * @param simulateErrorAt Optional index to simulate an error (for testing)
-   * @returns Promise resolving to generation result with file paths
+   * Constructor - requires ExtensionContext for SteeringGenerationService
    */
-  public async generateSteeringFiles(
-    _state: GenerationState,
-    startIndex: number = 0,
-    delayMs: number = 200,
-    simulateErrorAt?: number
-  ): Promise<GenerationResult> {
-    // TODO: Phase 3 Item 28 - Implement actual steering file generation
-    // Expected output location: .kiro/steering/
-    // Note that this stub returns simulated success with placeholder content
-    // Stub always returns `placeholder: true` in return object
+  constructor(context: vscode.ExtensionContext) {
+    this._context = context;
+  }
 
-    const generatedFiles: string[] = [];
-    const total = STEERING_FILES.length;
+  // ============================================================================
+  // Task Group 1: Conflict Detection & Backup Methods
+  // ============================================================================
 
-    // Get workspace root for file paths
-    const workspaceRoot = this._getWorkspaceRoot();
+  /**
+   * Check if existing steering files are present in .kiro/steering/
+   * @returns true if directory exists with .md files, false otherwise
+   */
+  async checkForExistingFiles(): Promise<boolean> {
+    try {
+      // Check if directory exists
+      await vscode.workspace.fs.stat(this._steeringDir);
 
-    // Iterate through files (from startIndex if retrying)
-    for (let i = startIndex; i < total; i++) {
-      const fileName = STEERING_FILES[i];
+      // Read directory contents
+      const entries = await vscode.workspace.fs.readDirectory(this._steeringDir);
 
-      // Emit fileStart event
-      this._onFileStart.fire({
-        fileName,
-        index: i,
-        total,
-      });
+      // Check for any .md files
+      const hasMdFiles = entries.some(([name, _type]) => name.endsWith('.md'));
 
-      // Simulate processing delay for progress visibility
-      await this._delay(delayMs);
+      return hasMdFiles;
+    } catch {
+      // Directory doesn't exist or error reading it
+      return false;
+    }
+  }
 
-      // Check for simulated error (testing only)
-      if (simulateErrorAt !== undefined && i === simulateErrorAt) {
-        const errorMessage = `Simulated error generating ${fileName}`;
-        this._onFileError.fire({
-          fileName,
-          error: errorMessage,
-        });
+  /**
+   * Create a timestamped backup of the steering directory
+   * @returns Path to the backup directory
+   */
+  async backupSteeringDirectory(): Promise<string> {
+    // Generate timestamp in format: YYYY-MM-DDTHHMMSS
+    const now = new Date();
+    const timestamp = now.toISOString()
+      .replace(/:/g, '')
+      .replace(/\.\d{3}Z$/, '')
+      .replace(/-/g, '-');
 
+    const backupDirName = `steering.backup-${timestamp}`;
+    const backupDir = vscode.Uri.joinPath(this._kiroDir, backupDirName);
+
+    // Copy entire steering directory to backup location
+    await vscode.workspace.fs.copy(this._steeringDir, backupDir, { overwrite: true });
+
+    return backupDir.fsPath;
+  }
+
+  /**
+   * Show QuickPick dialog for handling existing file conflict
+   * @returns User's choice: 'overwrite', 'backup', or 'cancel'
+   */
+  async showConflictDialog(): Promise<ConflictDialogChoice> {
+    const options: vscode.QuickPickItem[] = [
+      {
+        label: 'Overwrite',
+        description: 'Replace existing steering files',
+        detail: 'Existing files will be permanently deleted',
+      },
+      {
+        label: 'Backup & Overwrite',
+        description: 'Create backup before overwriting',
+        detail: 'Existing files will be moved to .kiro/steering.backup-<timestamp>/',
+      },
+      {
+        label: 'Cancel',
+        description: 'Keep existing files',
+        detail: 'Abort generation and return to wizard',
+      },
+    ];
+
+    const selected = await vscode.window.showQuickPick(options, {
+      placeHolder: 'Existing steering files found. How would you like to proceed?',
+      ignoreFocusOut: true,
+    });
+
+    if (!selected) {
+      return 'cancel';
+    }
+
+    switch (selected.label) {
+      case 'Overwrite':
+        return 'overwrite';
+      case 'Backup & Overwrite':
+        return 'backup';
+      default:
+        return 'cancel';
+    }
+  }
+
+  // ============================================================================
+  // Task Group 2: File Writing Operations
+  // ============================================================================
+
+  /**
+   * Ensure the .kiro/steering/ directory exists
+   * Creates parent directories if needed
+   */
+  private async _ensureSteeringDirectory(): Promise<void> {
+    try {
+      await vscode.workspace.fs.createDirectory(this._steeringDir);
+    } catch {
+      // Directory already exists or parent creation handled by createDirectory
+    }
+  }
+
+  /**
+   * Write a single steering file to the file system
+   * @param fileName Name of the file (e.g., 'product.md')
+   * @param content UTF-8 content to write
+   * @returns Full path to the written file
+   */
+  private async _writeSteeringFile(fileName: string, content: string): Promise<string> {
+    await this._ensureSteeringDirectory();
+
+    const fileUri = vscode.Uri.joinPath(this._steeringDir, fileName);
+    const contentBytes = new TextEncoder().encode(content);
+
+    await vscode.workspace.fs.writeFile(fileUri, contentBytes);
+
+    return fileUri.fsPath;
+  }
+
+  // ============================================================================
+  // Task Group 3: Generation Orchestration
+  // ============================================================================
+
+  /**
+   * Generate all steering files with conflict detection and file writing
+   *
+   * Flow:
+   * 1. Check for existing files
+   * 2. If exists, show conflict dialog
+   * 3. If backup selected, create backup
+   * 4. If cancelled, abort
+   * 5. Call SteeringGenerationService for AI content
+   * 6. Write each file as content is generated
+   * 7. Emit progress events
+   *
+   * @param wizardState Full wizard state for generating content
+   * @returns Generation result with file paths and status
+   */
+  async generateSteeringFiles(wizardState: WizardState): Promise<GenerationResult> {
+    // Check for existing files
+    const hasExisting = await this.checkForExistingFiles();
+
+    let backupPath: string | undefined;
+
+    if (hasExisting) {
+      // Show conflict dialog
+      const choice = await this.showConflictDialog();
+
+      if (choice === 'cancel') {
         return {
-          files: generatedFiles,
-          placeholder: true,
-          error: {
-            fileName,
-            message: errorMessage,
-          },
+          success: false,
+          cancelled: true,
+          files: [],
         };
       }
 
-      // Generate file path
-      const filePath = `${workspaceRoot}/.kiro/steering/${fileName}`;
-      generatedFiles.push(filePath);
+      if (choice === 'backup') {
+        backupPath = await this.backupSteeringDirectory();
+      }
+    }
 
-      // Emit fileComplete event
-      this._onFileComplete.fire({
-        fileName,
-        filePath,
+    // Ensure directory exists before writing
+    await this._ensureSteeringDirectory();
+
+    // Get the generation service
+    const generationService = getSteeringGenerationService(this._context);
+
+    // Call AI service to generate content
+    const generationResult = await generationService.generateSteeringFiles(wizardState);
+
+    // Process results and write files
+    const writtenFiles: string[] = [];
+    let error: GenerationResult['error'];
+
+    for (let i = 0; i < generationResult.files.length; i++) {
+      const fileResult = generationResult.files[i];
+
+      // Emit start event
+      this._onFileStart.fire({
+        fileName: fileResult.fileName,
+        index: i,
+        total: STEERING_FILES.length,
       });
+
+      if (fileResult.status === 'created' && fileResult.content) {
+        try {
+          // Write the file
+          const filePath = await this._writeSteeringFile(fileResult.fileName, fileResult.content);
+          writtenFiles.push(filePath);
+
+          // Emit complete event
+          this._onFileComplete.fire({
+            fileName: fileResult.fileName,
+            filePath,
+          });
+        } catch (writeError) {
+          // File write failed
+          const errorMessage = writeError instanceof Error ? writeError.message : 'Unknown write error';
+          error = {
+            fileName: fileResult.fileName,
+            message: errorMessage,
+          };
+
+          this._onFileError.fire({
+            fileName: fileResult.fileName,
+            error: errorMessage,
+          });
+
+          // Stop processing on first error
+          break;
+        }
+      } else if (fileResult.status === 'failed') {
+        // AI generation failed for this file
+        error = {
+          fileName: fileResult.fileName,
+          message: fileResult.error || 'Generation failed',
+        };
+
+        this._onFileError.fire({
+          fileName: fileResult.fileName,
+          error: fileResult.error || 'Generation failed',
+        });
+
+        // Stop processing on first error
+        break;
+      }
     }
 
     return {
-      files: generatedFiles,
-      placeholder: true, // Always true until Phase 3 Item 28
+      success: !error && writtenFiles.length === STEERING_FILES.length,
+      files: writtenFiles,
+      backupPath,
+      error,
+    };
+  }
+
+  /**
+   * Retry generation for specific failed files
+   * Does not check for conflicts since we're completing a partial generation
+   *
+   * @param wizardState Full wizard state for generating content
+   * @param failedFileNames Array of file names to retry
+   * @returns Generation result for retried files
+   */
+  async retryFailedFiles(wizardState: WizardState, failedFileNames: string[]): Promise<GenerationResult> {
+    // Get the generation service
+    const generationService = getSteeringGenerationService(this._context);
+
+    // Call AI service to retry specific files
+    const generationResult = await generationService.retryFiles(wizardState, failedFileNames);
+
+    // Process results and write files
+    const writtenFiles: string[] = [];
+    let error: GenerationResult['error'];
+
+    for (let i = 0; i < generationResult.files.length; i++) {
+      const fileResult = generationResult.files[i];
+
+      // Emit start event
+      this._onFileStart.fire({
+        fileName: fileResult.fileName,
+        index: i,
+        total: failedFileNames.length,
+      });
+
+      if (fileResult.status === 'created' && fileResult.content) {
+        try {
+          // Write the file
+          const filePath = await this._writeSteeringFile(fileResult.fileName, fileResult.content);
+          writtenFiles.push(filePath);
+
+          // Emit complete event
+          this._onFileComplete.fire({
+            fileName: fileResult.fileName,
+            filePath,
+          });
+        } catch (writeError) {
+          // File write failed
+          const errorMessage = writeError instanceof Error ? writeError.message : 'Unknown write error';
+          error = {
+            fileName: fileResult.fileName,
+            message: errorMessage,
+          };
+
+          this._onFileError.fire({
+            fileName: fileResult.fileName,
+            error: errorMessage,
+          });
+
+          break;
+        }
+      } else if (fileResult.status === 'failed') {
+        error = {
+          fileName: fileResult.fileName,
+          message: fileResult.error || 'Retry failed',
+        };
+
+        this._onFileError.fire({
+          fileName: fileResult.fileName,
+          error: fileResult.error || 'Retry failed',
+        });
+
+        break;
+      }
+    }
+
+    return {
+      success: !error && writtenFiles.length === failedFileNames.length,
+      files: writtenFiles,
+      error,
     };
   }
 
   /**
    * Dispose of all resources
-   * Implements vscode.Disposable
    */
-  public dispose(): void {
+  dispose(): void {
     this._onFileStart.dispose();
     this._onFileComplete.dispose();
     this._onFileError.dispose();
   }
+}
 
-  // -------------------------------------------------------------------------
-  // Private Methods
-  // -------------------------------------------------------------------------
+// ============================================================================
+// Singleton Instance Management
+// ============================================================================
 
-  /**
-   * Get the workspace root path
-   * @returns Workspace root path or default test path
-   */
-  private _getWorkspaceRoot(): string {
-    const folders = vscode.workspace.workspaceFolders;
-    if (folders && folders.length > 0) {
-      return folders[0].uri.fsPath;
+let _instance: SteeringFileService | undefined;
+
+/**
+ * Get the singleton instance of SteeringFileService
+ * @param context ExtensionContext - required on first call to initialize
+ */
+export function getSteeringFileService(context?: vscode.ExtensionContext): SteeringFileService {
+  if (!_instance) {
+    if (!context) {
+      throw new Error('ExtensionContext required for first initialization of SteeringFileService');
     }
-    return '/workspace';
+    _instance = new SteeringFileService(context);
   }
-
-  /**
-   * Promise-based delay helper
-   * @param ms Milliseconds to delay
-   */
-  private _delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
-
-// ============================================================================
-// Singleton Pattern
-// Task 2.2: Follow singleton pattern from getMockDataService()
-// ============================================================================
-
-/**
- * Singleton instance of the service
- */
-let instance: SteeringFileService | null = null;
-
-/**
- * Get the singleton SteeringFileService instance
- *
- * @returns The SteeringFileService singleton
- */
-export function getSteeringFileService(): SteeringFileService {
-  if (!instance) {
-    instance = new SteeringFileService();
-  }
-  return instance;
+  return _instance;
 }
 
 /**
- * Reset the singleton instance
- * Useful for testing or cleanup
+ * Reset the singleton instance (for testing)
  */
 export function resetSteeringFileService(): void {
-  if (instance) {
-    instance.dispose();
-    instance = null;
+  if (_instance) {
+    _instance.dispose();
+    _instance = undefined;
   }
 }

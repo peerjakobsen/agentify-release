@@ -4,13 +4,13 @@
  * and post-generation actions including file reveal and start over functionality.
  *
  * Task Group 3: Step 8 Logic Handler for Wizard Step 8 Generate
+ * Task Group 4: Step 8 Integration with SteeringFileService
  */
 
 import * as vscode from 'vscode';
 import {
   getSteeringFileService,
   SteeringFileService,
-  GenerationState as ServiceGenerationState,
 } from '../services/steeringFileService';
 import type {
   GenerationState,
@@ -22,6 +22,7 @@ import type {
   AgentDesignState,
   MockDataState,
   DemoStrategyState,
+  WizardState,
 } from '../types/wizardPanel';
 import { STEERING_FILES } from '../types/wizardPanel';
 // Task 6.3: Import environment detection utility
@@ -69,6 +70,10 @@ export interface Step8Callbacks {
   openFile: (filePath: string) => Promise<void>;
   /** Callback when user confirms start over */
   onStartOver: () => void;
+  /** Get the full WizardState for generation */
+  getWizardState: () => WizardState;
+  /** Get the extension context for service initialization */
+  getContext: () => vscode.ExtensionContext | undefined;
 }
 
 /**
@@ -87,6 +92,7 @@ const STEP_NAMES: Record<number, string> = {
 /**
  * Step 8 Logic Handler
  * Task 3.2: Manages pre-generation summary, file generation, and post-generation actions
+ * Task 4.2: Updated to pass full WizardState to SteeringFileService
  * Follows pattern from Step6LogicHandler and Step7LogicHandler
  */
 export class Step8LogicHandler {
@@ -122,7 +128,8 @@ export class Step8LogicHandler {
       return this._steeringFileService;
     }
 
-    this._steeringFileService = getSteeringFileService();
+    const context = this._callbacks.getContext();
+    this._steeringFileService = getSteeringFileService(context);
 
     // Subscribe to file progress events
     this._serviceDisposables.push(
@@ -147,16 +154,39 @@ export class Step8LogicHandler {
   }
 
   // ============================================================================
-  // Task 3.5: handleGenerate() Method
+  // Task 4.4: Pre-generation Validation Enforcement
+  // ============================================================================
+
+  /**
+   * Check if generation can proceed based on validation status
+   * Task 4.4: Enforces validation before generation
+   * @returns true if generation can proceed, false otherwise
+   */
+  public canProceedWithGeneration(inputs: Step8ContextInputs): boolean {
+    // Check for any 'error' validation status
+    for (let stepNumber = 1; stepNumber <= 7; stepNumber++) {
+      const result = this.getValidationStatusForStep(stepNumber, inputs);
+      if (result.status === 'error') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // ============================================================================
+  // Task 3.5 & 4.2: handleGenerate() Method - Updated for Full WizardState
   // ============================================================================
 
   /**
    * Start steering file generation
    * Task 3.5: Sets isGenerating, resets state, calls service
+   * Task 4.2: Now passes full WizardState to SteeringFileService
+   * Task 4.3: Removed isPlaceholderMode handling
    */
   public async handleGenerate(inputs: Step8ContextInputs): Promise<void> {
-    // Verify canGenerate is true (no 'error' validation status)
-    if (!this._state.canGenerate) {
+    // Task 4.4: Enforce validation before generation
+    if (!this.canProceedWithGeneration(inputs)) {
+      vscode.window.showErrorMessage('Cannot generate: Please fix all errors in previous steps');
       return;
     }
 
@@ -175,21 +205,35 @@ export class Step8LogicHandler {
     const service = this.initService();
 
     try {
-      // Convert Step8ContextInputs to service-compatible format
-      const serviceInputs: ServiceGenerationState = {
-        businessObjective: inputs.businessObjective,
-        industry: inputs.industry,
-        systems: inputs.systems,
-      };
-      const result = await service.generateSteeringFiles(serviceInputs);
+      // Task 4.2: Get full WizardState from callbacks
+      const wizardState = this._callbacks.getWizardState();
 
-      // Set isPlaceholderMode from service response
-      this._state.isPlaceholderMode = result.placeholder;
+      // Call service with full WizardState
+      const result = await service.generateSteeringFiles(wizardState);
 
-      if (!result.error) {
+      // Handle cancelled result
+      if (result.cancelled) {
+        this._state.isGenerating = false;
+        this._state.accordionExpanded = false;
+        this._callbacks.updateWebviewContent();
+        this._callbacks.syncStateToWebview();
+        return;
+      }
+
+      if (result.success) {
         // Success - all files generated
         this._state.generatedFilePaths = result.files;
         this._state.accordionExpanded = false; // Auto-collapse on success
+
+        // Task 4.5: Show success toast with action
+        this.showSuccessToast(result.files.length, result.backupPath);
+      } else if (result.error) {
+        // Partial failure
+        this._state.failedFile = {
+          name: result.error.fileName,
+          error: result.error.message,
+        };
+        this._state.accordionExpanded = true; // Keep expanded on error
       }
     } catch (error) {
       // Unexpected error
@@ -202,6 +246,48 @@ export class Step8LogicHandler {
     this._state.isGenerating = false;
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
+  }
+
+  // ============================================================================
+  // Task 4.5: Success Handling with Toast and Actions
+  // ============================================================================
+
+  /**
+   * Show success toast with optional actions
+   * Task 4.5: Shows toast with file count and backup path info
+   */
+  private showSuccessToast(fileCount: number, backupPath?: string): void {
+    let message = `Successfully generated ${fileCount} steering file${fileCount !== 1 ? 's' : ''} in .kiro/steering/`;
+
+    if (backupPath) {
+      message += ` (previous files backed up)`;
+    }
+
+    vscode.window.showInformationMessage(message, 'Open Folder').then((selection) => {
+      if (selection === 'Open Folder') {
+        this.revealSteeringFolder();
+      }
+    });
+  }
+
+  /**
+   * Reveal the steering folder in the explorer
+   */
+  private async revealSteeringFolder(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const steeringFolderUri = vscode.Uri.joinPath(
+        workspaceFolder.uri,
+        STEERING_DIR_PATH
+      );
+
+      try {
+        await vscode.commands.executeCommand('revealInExplorer', steeringFolderUri);
+      } catch {
+        // Fallback: just show the folder in explorer view
+        await vscode.commands.executeCommand('workbench.view.explorer');
+      }
+    }
   }
 
   // ============================================================================
@@ -227,21 +313,7 @@ export class Step8LogicHandler {
     // Check environment and show appropriate message
     if (isKiroEnvironment()) {
       // In Kiro: Reveal the steering folder and show info toast
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      if (workspaceFolder) {
-        const steeringFolderUri = vscode.Uri.joinPath(
-          workspaceFolder.uri,
-          STEERING_DIR_PATH
-        );
-
-        // Reveal the steering folder in explorer
-        try {
-          await vscode.commands.executeCommand('revealInExplorer', steeringFolderUri);
-        } catch {
-          // Fallback: just show the folder in explorer view
-          await vscode.commands.executeCommand('workbench.view.explorer');
-        }
-      }
+      await this.revealSteeringFolder();
 
       // Show info toast for Kiro users
       vscode.window.showInformationMessage(
@@ -276,6 +348,7 @@ export class Step8LogicHandler {
    */
   private handleFileComplete(fileName: string, filePath: string): void {
     this._state.completedFiles.push(fileName);
+    this._state.generatedFilePaths.push(filePath);
     this._callbacks.updateWebviewContent();
   }
 
@@ -289,16 +362,22 @@ export class Step8LogicHandler {
   }
 
   // ============================================================================
-  // Task 3.6: handleRetry() Method
+  // Task 3.6 & 4.6: handleRetry() Method - Updated for Selective Retry
   // ============================================================================
 
   /**
-   * Retry generation from failed file index
+   * Retry generation for failed files only
    * Task 3.6: Resume from failedFile index, not from beginning
+   * Task 4.6: Now uses retryFailedFiles for selective retry
    */
   public async handleRetry(inputs: Step8ContextInputs): Promise<void> {
-    // Get the index to resume from (current file that failed)
-    const resumeIndex = this._state.currentFileIndex;
+    // Get the failed file name
+    const failedFileName = this._state.failedFile?.name;
+
+    if (!failedFileName) {
+      // No failed file to retry
+      return;
+    }
 
     // Clear failed file state
     this._state.failedFile = undefined;
@@ -308,33 +387,40 @@ export class Step8LogicHandler {
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
 
-    // Initialize service and resume generation
+    // Initialize service and retry generation
     const service = this.initService();
 
     try {
-      // Convert Step8ContextInputs to service-compatible format
-      const serviceInputs: ServiceGenerationState = {
-        businessObjective: inputs.businessObjective,
-        industry: inputs.industry,
-        systems: inputs.systems,
-      };
-      const result = await service.generateSteeringFiles(serviceInputs, resumeIndex);
+      // Task 4.6: Get full WizardState from callbacks
+      const wizardState = this._callbacks.getWizardState();
 
-      // Set isPlaceholderMode from service response
-      this._state.isPlaceholderMode = result.placeholder;
+      // Retry only the failed file(s) - files from failedFileName to end
+      const failedIndex = STEERING_FILES.indexOf(failedFileName);
+      const filesToRetry = STEERING_FILES.slice(failedIndex);
 
-      if (!result.error) {
+      const result = await service.retryFailedFiles(wizardState, filesToRetry);
+
+      if (result.success) {
         // Success - merge new files with previously completed
         this._state.generatedFilePaths = [
-          ...this._state.generatedFilePaths.slice(0, resumeIndex),
+          ...this._state.generatedFilePaths,
           ...result.files,
         ];
         this._state.accordionExpanded = false; // Auto-collapse on success
+
+        // Show success toast
+        this.showSuccessToast(STEERING_FILES.length);
+      } else if (result.error) {
+        // Retry also failed
+        this._state.failedFile = {
+          name: result.error.fileName,
+          error: result.error.message,
+        };
       }
     } catch (error) {
       // Unexpected error
       this._state.failedFile = {
-        name: STEERING_FILES[this._state.currentFileIndex] || 'unknown',
+        name: failedFileName,
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }

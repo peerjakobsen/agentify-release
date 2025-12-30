@@ -243,6 +243,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           await vscode.commands.executeCommand('vscode.open', fileUri);
         },
         onStartOver: () => this.handleStartFresh(),
+        getWizardState: () => this._ideationState as unknown as WizardState,
+        getContext: () => this._context,
       }
     );
   }

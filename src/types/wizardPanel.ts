@@ -796,6 +796,7 @@ export interface FailedFile {
 /**
  * Generation state for Step 8
  * Task 1.2: Interface following MockDataState pattern
+ * Task 2.6: Removed isPlaceholderMode - now using real generation
  */
 export interface GenerationState {
   /** Whether steering file generation is in progress */
@@ -812,8 +813,6 @@ export interface GenerationState {
   accordionExpanded: boolean;
   /** Whether generation can proceed (no 'error' validation status) */
   canGenerate: boolean;
-  /** Whether using placeholder/stub implementation (true until Phase 3 Item 28) */
-  isPlaceholderMode: boolean;
 }
 
 /**
@@ -1360,6 +1359,7 @@ export function createDefaultDemoStrategyState(): DemoStrategyState {
  * Used to initialize or reset Step 8 state
  *
  * Task 1.6: Factory function following createDefaultMockDataState() pattern
+ * Task 2.6: Removed isPlaceholderMode - now using real generation
  */
 export function createDefaultGenerationState(): GenerationState {
   return {
@@ -1373,8 +1373,6 @@ export function createDefaultGenerationState(): GenerationState {
     accordionExpanded: false,
     // Validation
     canGenerate: true,
-    // Placeholder mode (true until Phase 3 Item 28)
-    isPlaceholderMode: true,
   };
 }
 

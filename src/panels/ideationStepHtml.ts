@@ -497,7 +497,7 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
       generatedFilePaths: [],
       accordionExpanded: false,
       canGenerate: true,
-      isPlaceholderMode: true,
+      
     };
     const summaries = computeStepSummaries(state);
     return generateStep8Html(generationState, summaries);
@@ -2525,10 +2525,6 @@ export function renderGenerationProgress(state: GenerationState): string {
   const accordionClass = state.accordionExpanded ? 'expanded' : '';
   const chevronIcon = state.accordionExpanded ? 'chevron-down' : 'chevron-right';
 
-  // Placeholder mode indicator
-  const placeholderModeHtml = state.isPlaceholderMode
-    ? '<p class="preview-mode-indicator">Preview mode — actual file generation coming in Phase 3</p>'
-    : '';
 
   return `
     <div class="progress-checklist">
@@ -2556,7 +2552,6 @@ export function renderGenerationProgress(state: GenerationState): string {
         <span class="progress-label">Ready for Kiro</span>
       </div>
     </div>
-    ${placeholderModeHtml}
   `;
 }
 

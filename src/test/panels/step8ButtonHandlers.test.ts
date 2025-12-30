@@ -8,13 +8,38 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Mock the steering file service FIRST (before other mocks)
+vi.mock('../../services/steeringFileService', () => {
+  const mockService = {
+    onFileStart: vi.fn().mockReturnValue({ dispose: () => {} }),
+    onFileComplete: vi.fn().mockReturnValue({ dispose: () => {} }),
+    onFileError: vi.fn().mockReturnValue({ dispose: () => {} }),
+    generateSteeringFiles: vi.fn().mockResolvedValue({
+      success: true,
+      files: ['/test/workspace/.kiro/steering/product.md'],
+    }),
+    retryFailedFiles: vi.fn().mockResolvedValue({
+      success: true,
+      files: ['/test/workspace/.kiro/steering/structure.md'],
+    }),
+    dispose: vi.fn(),
+  };
+
+  return {
+    getSteeringFileService: () => mockService,
+    resetSteeringFileService: vi.fn(),
+    SteeringFileService: vi.fn(),
+    __test__: { mockService },
+  };
+});
+
 // Create mock config object
 const mockConfigObject = {
   has: () => false,
   get: () => false,
 };
 
-// Mock vscode module before importing anything
+// Mock vscode module
 vi.mock('vscode', () => ({
   EventEmitter: class {
     private listeners: ((data: unknown) => void)[] = [];
@@ -76,6 +101,8 @@ describe('Task Group 6: Button Handlers', () => {
       showConfirmDialog: vi.fn().mockResolvedValue('Cancel'),
       openFile: vi.fn().mockResolvedValue(undefined),
       onStartOver: vi.fn(),
+      getWizardState: vi.fn().mockReturnValue({}),
+      getContext: vi.fn().mockReturnValue(undefined),
     };
 
     mockInputs = {

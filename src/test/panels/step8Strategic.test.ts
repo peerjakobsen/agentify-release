@@ -11,14 +11,30 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Create mock service before mocking modules
-const mockService = {
-  onFileStart: vi.fn().mockReturnValue({ dispose: () => {} }),
-  onFileComplete: vi.fn().mockReturnValue({ dispose: () => {} }),
-  onFileError: vi.fn().mockReturnValue({ dispose: () => {} }),
-  generateSteeringFiles: vi.fn(),
-  dispose: vi.fn(),
-};
+// Mock the steering file service FIRST
+vi.mock('../../services/steeringFileService', () => {
+  const mockService = {
+    onFileStart: vi.fn().mockReturnValue({ dispose: () => {} }),
+    onFileComplete: vi.fn().mockReturnValue({ dispose: () => {} }),
+    onFileError: vi.fn().mockReturnValue({ dispose: () => {} }),
+    generateSteeringFiles: vi.fn().mockResolvedValue({
+      success: true,
+      files: [],
+    }),
+    retryFailedFiles: vi.fn().mockResolvedValue({
+      success: true,
+      files: [],
+    }),
+    dispose: vi.fn(),
+  };
+
+  return {
+    getSteeringFileService: () => mockService,
+    resetSteeringFileService: vi.fn(),
+    SteeringFileService: vi.fn(),
+    __test__: { mockService },
+  };
+});
 
 // Mock vscode module before importing anything
 vi.mock('vscode', () => ({
@@ -59,13 +75,6 @@ vi.mock('vscode', () => ({
   extensions: {
     getExtension: vi.fn().mockReturnValue(undefined),
   },
-}));
-
-// Mock the steering file service
-vi.mock('../../services/steeringFileService', () => ({
-  getSteeringFileService: () => mockService,
-  resetSteeringFileService: vi.fn(),
-  SteeringFileService: vi.fn(),
 }));
 
 // Import after mocks
@@ -163,15 +172,7 @@ describe('Task Group 8: Strategic Gap Analysis Tests', () => {
   });
 
   beforeEach(() => {
-    vi.clearAllMocks();
-
-    mockService.onFileStart.mockReturnValue({ dispose: () => {} });
-    mockService.onFileComplete.mockReturnValue({ dispose: () => {} });
-    mockService.onFileError.mockReturnValue({ dispose: () => {} });
-    mockService.generateSteeringFiles.mockResolvedValue({
-      files: STEERING_FILES.map((f) => `/test/workspace/.kiro/steering/${f}`),
-      placeholder: true,
-    });
+    // Note: Removed vi.clearAllMocks() to preserve mock implementations
 
     mockState = createDefaultGenerationState();
     mockCallbacks = {
@@ -180,6 +181,8 @@ describe('Task Group 8: Strategic Gap Analysis Tests', () => {
       showConfirmDialog: vi.fn().mockResolvedValue('Start Over'),
       openFile: vi.fn().mockResolvedValue(undefined),
       onStartOver: vi.fn(),
+      getWizardState: vi.fn().mockReturnValue({}),
+      getContext: vi.fn().mockReturnValue(undefined),
     };
     mockIdeationState = createValidIdeationState();
   });

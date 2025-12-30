@@ -1,6 +1,7 @@
 /**
  * Tests for Step 8: Generation Logic Handler
  * Task Group 3: Step 8 Logic Handler
+ * Task Group 4: Step 8 Integration with SteeringFileService
  *
  * Tests the Step8LogicHandler class that orchestrates steering file
  * generation and provides step summaries for the pre-generation UI.
@@ -8,51 +9,87 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Create mock service before mocking modules
-const mockService = {
-  onFileStart: vi.fn().mockReturnValue({ dispose: () => {} }),
-  onFileComplete: vi.fn().mockReturnValue({ dispose: () => {} }),
-  onFileError: vi.fn().mockReturnValue({ dispose: () => {} }),
-  generateSteeringFiles: vi.fn(),
-  dispose: vi.fn(),
-};
-
 // Mock vscode module before importing the logic handler
-vi.mock('vscode', () => ({
-  EventEmitter: class {
-    private listeners: ((data: unknown) => void)[] = [];
-    event = (listener: (data: unknown) => void) => {
-      this.listeners.push(listener);
-      return { dispose: () => {} };
-    };
-    fire = (data: unknown) => {
-      this.listeners.forEach((l) => l(data));
-    };
-    dispose = vi.fn();
-  },
-  Uri: {
-    file: vi.fn().mockReturnValue({ fsPath: '/test/path' }),
-    joinPath: vi.fn().mockReturnValue({ fsPath: '/test/path' }),
-  },
-  workspace: {
-    workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
-  },
-  window: {
-    showWarningMessage: vi.fn().mockResolvedValue('Start Over'),
-  },
-  commands: {
-    executeCommand: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+// Create mocks inside the factory to avoid hoisting issues
+vi.mock('vscode', () => {
+  const showWarningMessage = vi.fn();
+  const showErrorMessage = vi.fn();
+  const showInformationMessage = vi.fn();
 
-// Mock the steering file service - use the pre-defined mockService
-vi.mock('../../services/steeringFileService', () => ({
-  getSteeringFileService: () => mockService,
-  resetSteeringFileService: vi.fn(),
-  SteeringFileService: vi.fn(),
+  return {
+    EventEmitter: class {
+      private listeners: ((data: unknown) => void)[] = [];
+      event = (listener: (data: unknown) => void) => {
+        this.listeners.push(listener);
+        return { dispose: () => {} };
+      };
+      fire = (data: unknown) => {
+        this.listeners.forEach((l) => l(data));
+      };
+      dispose = vi.fn();
+    },
+    Uri: {
+      file: vi.fn().mockReturnValue({ fsPath: '/test/path' }),
+      joinPath: vi.fn().mockReturnValue({ fsPath: '/test/path' }),
+      parse: vi.fn().mockReturnValue({ fsPath: '/test/path' }),
+    },
+    workspace: {
+      workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+    },
+    window: {
+      showWarningMessage,
+      showErrorMessage,
+      showInformationMessage,
+    },
+    commands: {
+      executeCommand: vi.fn().mockResolvedValue(undefined),
+    },
+    env: {
+      openExternal: vi.fn().mockResolvedValue(undefined),
+    },
+    // Export test mocks
+    __test__: {
+      showWarningMessage,
+      showErrorMessage,
+      showInformationMessage,
+    },
+  };
+});
+
+// Mock the steering file service
+vi.mock('../../services/steeringFileService', () => {
+  const onFileStart = vi.fn().mockReturnValue({ dispose: () => {} });
+  const onFileComplete = vi.fn().mockReturnValue({ dispose: () => {} });
+  const onFileError = vi.fn().mockReturnValue({ dispose: () => {} });
+  const generateSteeringFiles = vi.fn();
+  const retryFailedFiles = vi.fn();
+  const dispose = vi.fn();
+
+  const mockService = {
+    onFileStart,
+    onFileComplete,
+    onFileError,
+    generateSteeringFiles,
+    retryFailedFiles,
+    dispose,
+  };
+
+  return {
+    getSteeringFileService: () => mockService,
+    resetSteeringFileService: vi.fn(),
+    SteeringFileService: vi.fn(),
+    __test__: { mockService },
+  };
+});
+
+// Mock environment utilities
+vi.mock('../../utils/environment', () => ({
+  isKiroEnvironment: vi.fn().mockReturnValue(false),
+  getKiroLearnMoreUrl: vi.fn().mockReturnValue('https://kiro.example.com'),
 }));
 
 // Import after mocks
+import * as vscode from 'vscode';
 import {
   Step8LogicHandler,
   type Step8ContextInputs,
@@ -60,18 +97,40 @@ import {
 } from '../../panels/ideationStep8Logic';
 import {
   createDefaultGenerationState,
+  createDefaultWizardState,
   type GenerationState,
+  type WizardState,
 } from '../../types/wizardPanel';
+import * as steeringFileServiceModule from '../../services/steeringFileService';
+
+// Type for accessing test mocks
+const vscodeMocks = (vscode as unknown as { __test__: {
+  showWarningMessage: ReturnType<typeof vi.fn>;
+  showErrorMessage: ReturnType<typeof vi.fn>;
+  showInformationMessage: ReturnType<typeof vi.fn>;
+}}).__test__;
+
+const serviceMocks = (steeringFileServiceModule as unknown as { __test__: {
+  mockService: {
+    onFileStart: ReturnType<typeof vi.fn>;
+    onFileComplete: ReturnType<typeof vi.fn>;
+    onFileError: ReturnType<typeof vi.fn>;
+    generateSteeringFiles: ReturnType<typeof vi.fn>;
+    retryFailedFiles: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  };
+}}).__test__;
 
 // ============================================================================
-// Task 3.1: 6 Focused Tests for Step8LogicHandler
+// Task Groups 3 & 4: Tests for Step8LogicHandler
 // ============================================================================
 
-describe('Task Group 3: Step8LogicHandler', () => {
+describe('Task Groups 3 & 4: Step8LogicHandler', () => {
   // Common test fixtures
   let mockState: GenerationState;
   let mockCallbacks: Step8Callbacks;
   let mockIdeationState: Step8ContextInputs;
+  let mockWizardState: WizardState;
 
   const createValidIdeationState = (): Step8ContextInputs => ({
     businessObjective: 'Automate inventory management',
@@ -96,7 +155,7 @@ describe('Task Group 3: Step8LogicHandler', () => {
       refinedSections: { outcome: false, kpis: false, stakeholders: false },
     },
     security: {
-      dataSensitivity: 'internal',
+      dataSensitivity: 'internal' as const,
       complianceFrameworks: [],
       approvalGates: [],
       guardrailNotes: '',
@@ -106,16 +165,16 @@ describe('Task Group 3: Step8LogicHandler', () => {
       confirmedAgents: [
         { id: 'planner', name: 'Planner', role: 'Plans tasks', tools: ['sap_get_inventory'], nameEdited: false, roleEdited: false, toolsEdited: false },
       ],
-      confirmedOrchestration: 'workflow',
+      confirmedOrchestration: 'workflow' as const,
       confirmedEdges: [],
       proposedAgents: [],
-      proposedOrchestration: 'workflow',
+      proposedOrchestration: 'workflow' as const,
       proposedEdges: [],
       orchestrationReasoning: '',
       proposalAccepted: true,
       isLoading: false,
       aiCalled: true,
-      originalOrchestration: 'workflow',
+      originalOrchestration: 'workflow' as const,
     },
     mockData: {
       mockDefinitions: [
@@ -142,10 +201,13 @@ describe('Task Group 3: Step8LogicHandler', () => {
     vi.clearAllMocks();
 
     // Reset mock service return values after clearAllMocks
-    mockService.onFileStart.mockReturnValue({ dispose: () => {} });
-    mockService.onFileComplete.mockReturnValue({ dispose: () => {} });
-    mockService.onFileError.mockReturnValue({ dispose: () => {} });
-    mockService.generateSteeringFiles.mockResolvedValue({
+    serviceMocks.mockService.onFileStart.mockReturnValue({ dispose: () => {} });
+    serviceMocks.mockService.onFileComplete.mockReturnValue({ dispose: () => {} });
+    serviceMocks.mockService.onFileError.mockReturnValue({ dispose: () => {} });
+
+    // Updated to new GenerationResult interface
+    serviceMocks.mockService.generateSteeringFiles.mockResolvedValue({
+      success: true,
       files: [
         '/test/workspace/.kiro/steering/product.md',
         '/test/workspace/.kiro/steering/tech.md',
@@ -154,17 +216,32 @@ describe('Task Group 3: Step8LogicHandler', () => {
         '/test/workspace/.kiro/steering/integration-landscape.md',
         '/test/workspace/.kiro/steering/security-policies.md',
         '/test/workspace/.kiro/steering/demo-strategy.md',
+        '/test/workspace/.kiro/steering/agentify-integration.md',
       ],
-      placeholder: true,
     });
 
+    serviceMocks.mockService.retryFailedFiles.mockResolvedValue({
+      success: true,
+      files: ['/test/workspace/.kiro/steering/structure.md'],
+    });
+
+    // Reset window mocks after clearAllMocks
+    vscodeMocks.showWarningMessage.mockResolvedValue('Start Over');
+    vscodeMocks.showErrorMessage.mockResolvedValue(undefined);
+    vscodeMocks.showInformationMessage.mockResolvedValue(undefined);
+
     mockState = createDefaultGenerationState();
+    mockWizardState = createDefaultWizardState();
+
+    // Task 4.2: Updated callbacks to include getWizardState
     mockCallbacks = {
       updateWebviewContent: vi.fn(),
       syncStateToWebview: vi.fn(),
       showConfirmDialog: vi.fn().mockResolvedValue('Start Over'),
       openFile: vi.fn().mockResolvedValue(undefined),
       onStartOver: vi.fn(),
+      getWizardState: vi.fn().mockReturnValue(mockWizardState),
+      getContext: vi.fn().mockReturnValue(undefined),
     };
     mockIdeationState = createValidIdeationState();
   });
@@ -228,19 +305,21 @@ describe('Task Group 3: Step8LogicHandler', () => {
     });
 
     it('should not start generation if canGenerate is false', async () => {
-      mockState.canGenerate = false;
+      // Create an invalid state that will fail validation
+      mockIdeationState.businessObjective = '';
       const handler = new Step8LogicHandler(mockState, mockCallbacks);
 
       await handler.handleGenerate(mockIdeationState);
 
-      expect(handler.getState().isGenerating).toBe(false);
+      // Handler should not have started generation due to validation failure
+      expect(serviceMocks.mockService.generateSteeringFiles).not.toHaveBeenCalled();
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Test 3: handleRetry() resumes from failed file index
+  // Test 3: handleRetry() resumes from failed file
   // ---------------------------------------------------------------------------
-  describe('Test 3: handleRetry() resumes from failed file index', () => {
+  describe('Test 3: handleRetry() resumes from failed file', () => {
     it('should clear failedFile when retrying', async () => {
       mockState.failedFile = { name: 'structure.md', error: 'Test error' };
       mockState.currentFileIndex = 2;
@@ -260,6 +339,15 @@ describe('Task Group 3: Step8LogicHandler', () => {
       expect(handler.getState().isGenerating).toBe(true);
 
       await promise;
+    });
+
+    it('should call retryFailedFiles with correct files', async () => {
+      mockState.failedFile = { name: 'structure.md', error: 'Test error' };
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      await handler.handleRetry(mockIdeationState);
+
+      expect(serviceMocks.mockService.retryFailedFiles).toHaveBeenCalled();
     });
   });
 
@@ -396,6 +484,37 @@ describe('Task Group 3: Step8LogicHandler', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Task 4.4: canProceedWithGeneration() validation enforcement
+  // ---------------------------------------------------------------------------
+  describe('Task 4.4: canProceedWithGeneration() validation enforcement', () => {
+    it('should return true when all steps pass validation', () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      const canProceed = handler.canProceedWithGeneration(mockIdeationState);
+
+      expect(canProceed).toBe(true);
+    });
+
+    it('should return false when any step has error status', () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+      mockIdeationState.businessObjective = ''; // This will cause error
+
+      const canProceed = handler.canProceedWithGeneration(mockIdeationState);
+
+      expect(canProceed).toBe(false);
+    });
+
+    it('should return true even with warning statuses', () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+      mockIdeationState.security.skipped = true; // This causes warning, not error
+
+      const canProceed = handler.canProceedWithGeneration(mockIdeationState);
+
+      expect(canProceed).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Additional Tests for Supporting Functionality
   // ---------------------------------------------------------------------------
   describe('handleToggleAccordion()', () => {
@@ -428,6 +547,49 @@ describe('Task Group 3: Step8LogicHandler', () => {
       await handler.handleOpenFile('/test/path/product.md');
 
       expect(mockCallbacks.openFile).toHaveBeenCalledWith('/test/path/product.md');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 4.5: Success handling integration
+  // ---------------------------------------------------------------------------
+  describe('Task 4.5: Success handling with toast', () => {
+    it('should store generated file paths on success', async () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      await handler.handleGenerate(mockIdeationState);
+
+      expect(handler.getState().generatedFilePaths.length).toBe(8);
+    });
+
+    it('should auto-collapse accordion on success', async () => {
+      mockState.accordionExpanded = true;
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      await handler.handleGenerate(mockIdeationState);
+
+      expect(handler.getState().accordionExpanded).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 4.2: WizardState passing
+  // ---------------------------------------------------------------------------
+  describe('Task 4.2: WizardState passing to service', () => {
+    it('should call getWizardState callback when generating', async () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      await handler.handleGenerate(mockIdeationState);
+
+      expect(mockCallbacks.getWizardState).toHaveBeenCalled();
+    });
+
+    it('should pass wizard state to generateSteeringFiles', async () => {
+      const handler = new Step8LogicHandler(mockState, mockCallbacks);
+
+      await handler.handleGenerate(mockIdeationState);
+
+      expect(serviceMocks.mockService.generateSteeringFiles).toHaveBeenCalledWith(mockWizardState);
     });
   });
 });
