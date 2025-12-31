@@ -13,7 +13,8 @@
 
 import * as vscode from 'vscode';
 import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
-import { getBedrockClientAsync } from './bedrockClient';
+import { getBedrockClientAsync, resetBedrockClient } from './bedrockClient';
+import { resetDefaultCredentialProvider } from './credentialProvider';
 import { getConfigService } from './configService';
 import type { WizardState } from '../types/wizardPanel';
 import {
@@ -96,7 +97,49 @@ const RETRYABLE_ERROR_NAMES = [
   'ServiceQuotaExceededException',
   'InternalServerException',
   'ServiceUnavailableException',
+  'ExpiredTokenException',
 ];
+
+/**
+ * Check if an error indicates expired credentials
+ * Detects various forms of token expiration errors from AWS services
+ */
+function isTokenExpiredError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const errorName = (error as { name?: string })?.name || '';
+  const message = error.message.toLowerCase();
+
+  // Check error name
+  if (errorName === 'ExpiredTokenException' || errorName === 'TokenProviderError') {
+    return true;
+  }
+
+  // Check error message patterns
+  if (
+    message.includes('security token') &&
+    (message.includes('expired') || message.includes('invalid'))
+  ) {
+    return true;
+  }
+
+  if (message.includes('token expired') || message.includes('credentials expired')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Reset credential caches to force fresh credential fetch
+ */
+function resetCredentialCaches(): void {
+  console.log('[SteeringGeneration] Resetting credential caches due to token expiration');
+  resetDefaultCredentialProvider();
+  resetBedrockClient();
+}
 
 // ============================================================================
 // Event Interfaces
@@ -586,6 +629,8 @@ export class SteeringGenerationService implements vscode.Disposable {
    * Generate document with retry logic
    * Task 3.3: Implements exponential backoff for transient failures
    *
+   * Handles token expiration by resetting credential caches and retrying.
+   *
    * @param fileKey The file key (e.g., 'product')
    * @param context The context object for the prompt
    * @returns Generated content string
@@ -602,6 +647,17 @@ export class SteeringGenerationService implements vscode.Disposable {
         return await this.generateDocument(fileKey, context);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Check for token expiration - reset caches and retry
+        if (isTokenExpiredError(error)) {
+          resetCredentialCaches();
+
+          if (attempt < MAX_RETRIES) {
+            // Wait briefly then retry with fresh credentials
+            await new Promise((resolve) => setTimeout(resolve, INITIAL_BACKOFF_MS));
+            continue;
+          }
+        }
 
         // Check if error is retryable
         const errorName = (error as { name?: string })?.name || '';
