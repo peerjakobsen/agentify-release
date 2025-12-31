@@ -1013,19 +1013,59 @@ agentify-power/
 └── hooks/
     ├── observability-enforcer.kiro.hook
     ├── cli-contract-validator.kiro.hook
-    └── mock-tool-pattern.kiro.hook
+    ├── tool-pattern.kiro.hook
+    └── gateway-handler.kiro.hook
 ```
 
 **POWER.md Content:**
-- Best practices for Strands agent development
-- Event emission patterns (reference `agentify-integration.md`)
-- CLI contract requirements (Agentify CLI for local testing)
-- AgentCore CLI deployment patterns (deploy to Bedrock AgentCore Runtime)
-- Mock tool implementation guidelines (demo scope)
-- Common pitfalls and solutions
+
+1. **Pre-Bundled Infrastructure (CRITICAL):**
+   - `agents/shared/` is pre-bundled — import from it, NEVER recreate
+   - `from agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context`
+   - `from agents.shared.dynamodb_client import write_tool_event`
+   - CDK stacks in `cdk/stacks/` are pre-existing — DO NOT MODIFY
+
+2. **Decorator Order (CRITICAL):**
+   ```python
+   @tool                    # FIRST (inner wrapper - Strands SDK)
+   @instrument_tool         # ON TOP (outer wrapper - observability)
+   def my_tool():
+       ...
+   ```
+   Wrong order breaks instrumentation silently.
+
+3. **Agent Handler Pattern:**
+   ```python
+   try:
+       set_instrumentation_context(session_id, 'agent_name')
+       # invoke agent
+   finally:
+       clear_instrumentation_context()
+   ```
+
+4. **Gateway Lambda Handler Pattern:**
+   - Location: `cdk/gateway/handlers/{tool_name}/handler.py`
+   - Mock data: `mock_data.json` in same directory (bundled with Lambda)
+   - Load via: `os.path.join(os.path.dirname(__file__), 'mock_data.json')`
+   - Return: `json.dumps(result)` — always return JSON string
+
+5. **Event Emission Patterns:**
+   - Reference `.kiro/steering/agentify-integration.md` for event schemas
+   - stdout: `graph_structure`, `node_start`, `node_stop`, `workflow_complete`
+   - DynamoDB: `tool_call` events via `@instrument_tool` decorator
+
+6. **AgentCore CLI Deployment:**
+   - Agents deploy to Bedrock AgentCore Runtime via `agentcore deploy`
+   - Only `agents/main.py` runs locally — it orchestrates remote agents
+
+7. **Common Pitfalls:**
+   - DON'T recreate `agents/shared/` — it's pre-bundled
+   - DON'T use wrong decorator order — `@tool` must be FIRST
+   - DON'T forget `clear_instrumentation_context()` in finally block
+   - DON'T reference external files in Lambda handlers — mock data must be co-located
 
 **Activation Keywords:**
-- "agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent"
+- "agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent", "tool", "handler"
 
 **Distribution:**
 - Bundled with Agentify extension in `resources/agentify-power/`
@@ -1035,31 +1075,55 @@ agentify-power/
 
 **Trigger:**
 - Event: `fileSaved`
-- Pattern: `agents/*.py`
+- Pattern: `agents/**/*.py` (includes nested directories like `agents/analyzer/tools/`)
 
 **Validation Rules:**
-- Check for `emit_stdout_event()` or equivalent calls in agent functions
-- Verify `workflow_id` and `trace_id` passed to all event emissions
-- Check `graph_structure` emitted before `node_start` events
-- Verify terminal event (`workflow_complete` or `workflow_error`) emitted
+
+1. **Pre-Bundled Import Check (CRITICAL):**
+   - Verify import: `from agents.shared.instrumentation import instrument_tool`
+   - Flag if file contains instrumentation code that duplicates `agents/shared/`
+   - Error if file tries to define `@instrument_tool` decorator locally
+
+2. **Decorator Order Check (CRITICAL):**
+   - For any function with both `@tool` and `@instrument_tool`:
+   - Verify `@tool` appears BEFORE `@instrument_tool` (reading top-to-bottom)
+   - Error message: "Wrong decorator order. @tool must be FIRST, @instrument_tool ON TOP"
+
+3. **Handler Context Management:**
+   - In `*_handler.py` files, verify pattern:
+     - `set_instrumentation_context(session_id, ...)` in try block
+     - `clear_instrumentation_context()` in finally block
+   - Warning if context not cleared in finally
+
+4. **Event Emission (for main.py only):**
+   - Check for `emit_stdout_event()` or equivalent
+   - Verify `workflow_id` and `trace_id` in events
+   - Check `graph_structure` emitted before `node_start`
+   - Verify terminal event (`workflow_complete` or `workflow_error`)
 
 **Hook Prompt:**
 ```
 Review this agent file for Agentify observability compliance.
 Reference: .kiro/steering/agentify-integration.md
 
-Check:
-1. All agent functions emit node_start/node_stop events
-2. Tool calls emit tool_call events to DynamoDB
-3. workflow_id and trace_id included in all events
-4. Terminal event emitted on completion/error
+CRITICAL CHECKS:
+1. Import from agents.shared.instrumentation — NEVER recreate this module
+2. Decorator order: @tool FIRST, then @instrument_tool ON TOP
+3. Handler pattern: set_instrumentation_context in try, clear in finally
 
-Suggest fixes for any missing observability code.
+ADDITIONAL CHECKS:
+4. All agent handlers emit node_start/node_stop events (if main.py)
+5. workflow_id and trace_id included in all events
+6. Terminal event emitted on completion/error
+
+Flag violations with specific line numbers and fix suggestions.
 ```
 
 **Output:**
-- Inline suggestions for missing event emissions
-- Warning if no observability code detected `S`
+- Error for wrong decorator order (blocks save)
+- Error for recreating pre-bundled code (blocks save)
+- Warning for missing context cleanup
+- Inline suggestions for missing event emissions `M`
 
 31. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
 
@@ -1084,32 +1148,108 @@ Flag any missing arguments or environment variable reads.
 Suggest argparse setup if not present.
 `````S`
 
-32. [ ] Mock Tool Pattern Hook — Create mock-tool-pattern.kiro.hook (validates mock integrations for demo purposes, not real integrations):
+32. [ ] Tool Pattern Hook — Create `tool-pattern.kiro.hook` (validates tool implementations):
 
-Trigger:
+**Trigger:**
+- Event: `fileSaved`
+- Pattern: `agents/*/tools/*.py` (tools inside agent directories)
 
-Event: fileCreated
-Pattern: tools/*.py
+**Validation Rules:**
 
-Validation Rules:
+1. **Pre-Bundled Import Check (CRITICAL):**
+   - Verify import: `from agents.shared.instrumentation import instrument_tool`
+   - Error if `@instrument_tool` decorator defined locally
 
-Check for Strands @tool decorator on functions
-Verify function has docstring (used by Strands for tool description)
-Check return type annotation present
-Validate mock data structure if integration-landscape.md exists
+2. **Decorator Order Check (CRITICAL):**
+   - For functions with both decorators:
+   - `@tool` must appear FIRST (closer to function)
+   - `@instrument_tool` must appear ON TOP (outer wrapper)
+   - Example of CORRECT order:
+     ```python
+     @tool                    # FIRST
+     @instrument_tool         # ON TOP
+     def my_tool():
+     ```
 
-Hook Prompt:
-Review this new tool file for Strands SDK compliance.
+3. **Strands SDK Compliance:**
+   - Check for `@tool` decorator from `strands` package
+   - Verify function has docstring (used by Strands for tool description)
+   - Check return type annotation present
+
+4. **Mock Data Validation:**
+   - If `integration-landscape.md` exists, validate mock response matches schema
+
+**Hook Prompt:**
+```
+Review this tool file for Agentify compliance.
 Reference: .kiro/steering/integration-landscape.md for expected mock data shapes
 
-Check:
-1. @tool decorator present on tool functions
-2. Docstring describes what the tool does
-3. Type hints on parameters and return value
-4. Mock response matches schema in integration-landscape.md
+CRITICAL CHECKS:
+1. Import @instrument_tool from agents.shared.instrumentation — NEVER define locally
+2. Decorator order: @tool FIRST (inner), @instrument_tool ON TOP (outer)
 
-Suggest improvements for realistic mock behavior.
-`````S`
+STRANDS CHECKS:
+3. @tool decorator present on tool functions
+4. Docstring describes what the tool does (Strands uses this)
+5. Type hints on parameters and return value
+6. Mock response matches schema in integration-landscape.md
+
+Flag decorator order violations as errors. Suggest fixes for other issues.
+```
+
+**Output:**
+- Error for wrong decorator order (with correct example)
+- Error for locally-defined instrumentation
+- Warning for missing docstring or type hints
+- Suggestions for mock data improvements `S`
+
+32.5. [ ] Gateway Lambda Handler Hook — Create `gateway-handler.kiro.hook` (validates shared Lambda tools):
+
+**Trigger:**
+- Event: `fileSaved`
+- Pattern: `cdk/gateway/handlers/*/handler.py`
+
+**Validation Rules:**
+
+1. **Tool Name Parsing:**
+   - Check for `context.client_context.custom.get('bedrockAgentCoreToolName', '')`
+   - Verify delimiter parsing: `tool_name.split('___')[-1]` or equivalent
+
+2. **Mock Data Loading (CRITICAL):**
+   - Verify mock data loaded from same directory: `os.path.dirname(__file__)`
+   - Error if referencing external paths like `../../mocks/`
+   - Check for `mock_data.json` file existence check
+
+3. **Return Format:**
+   - Verify return value is `json.dumps(result)` — must be JSON string
+   - Error if returning dict directly (Gateway expects string)
+
+4. **No External Dependencies:**
+   - Warning if importing from paths outside handler directory
+   - Lambda deployment packages are isolated
+
+**Hook Prompt:**
+```
+Review this Gateway Lambda handler for Agentify compliance.
+Reference: .kiro/steering/tech.md for Gateway patterns
+
+CRITICAL CHECKS:
+1. Tool name parsed from context.client_context.custom['bedrockAgentCoreToolName']
+2. Mock data loaded from os.path.dirname(__file__) — NEVER external paths
+3. Return value is json.dumps(result) — Gateway expects JSON string
+
+ISOLATION CHECKS:
+4. No imports from outside handler directory
+5. mock_data.json exists in same directory
+
+Flag external file references as errors. Suggest fixes for return format issues.
+```
+
+**Output:**
+- Error for external file references
+- Error for non-string return values
+- Warning for missing mock_data.json
+- Suggestions for proper tool name parsing `S`
 
 33. [ ] Power Installation Integration — **Extend Project Initialization (Item 4)** to install Agentify Power during "Agentify: Initialize Project" command:
 
