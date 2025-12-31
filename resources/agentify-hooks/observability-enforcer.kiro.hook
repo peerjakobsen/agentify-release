@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Observability Enforcer",
+  "description": "Ensures agents use shared instrumentation modules from agents/shared/",
+  "version": "1",
+  "when": {
+    "type": "fileSaved",
+    "pattern": "agents/**/*.py"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "BLOCKING: Check this file for observability violations.\n\n1. LOCAL DEFINITIONS - If this file defines any of these functions locally, REMOVE them and import from agents.shared instead:\n   - instrument_tool\n   - set_instrumentation_context\n   - clear_instrumentation_context\n   - write_tool_event\n\nCORRECT imports:\n```python\nfrom agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context\nfrom agents.shared.dynamodb_client import write_tool_event\n```\n\n2. DECORATOR ORDER - If both @instrument_tool and @tool are present:\n   - @instrument_tool must be ON TOP (outer wrapper)\n   - @tool must be BOTTOM (closest to function)\n\nFix any violations found."
+  },
+  "shortName": "observability-enforcer"
+}

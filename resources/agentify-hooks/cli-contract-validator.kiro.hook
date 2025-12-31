@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "CLI Contract Validator",
+  "description": "Validates main.py CLI interface follows Agentify contract",
+  "version": "1",
+  "when": {
+    "type": "fileSaved",
+    "pattern": "agents/main.py"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check agents/main.py for CLI contract compliance.\n\nREQUIRED CLI ARGUMENTS (via argparse):\n- --prompt (required): User input prompt\n- --workflow-id (required): Short workflow ID like wf-abc123\n- --trace-id (required): 32-char hex OTEL trace ID\n\nREQUIRED ENVIRONMENT VARIABLES:\n- AGENTIFY_TABLE_NAME: DynamoDB table for tool events\n- AWS_REGION: AWS region\n\nREQUIRED STDOUT EVENTS (JSON lines with flush=True):\n- graph_structure: Emitted first with agent topology\n- node_start: When each agent begins\n- node_stop: When each agent completes\n- workflow_complete or workflow_error: Emitted last\n\nAll timestamps must be epoch milliseconds: int(time.time() * 1000)\n\nIf any requirements are missing, add them."
+  },
+  "shortName": "cli-contract"
+}

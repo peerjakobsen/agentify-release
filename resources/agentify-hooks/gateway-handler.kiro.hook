@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Gateway Handler Validator",
+  "description": "Validates Lambda handlers in cdk/gateway/handlers/ follow Gateway patterns",
+  "version": "1",
+  "when": {
+    "type": "fileSaved",
+    "pattern": "cdk/gateway/handlers/*/handler.py"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this Gateway Lambda handler for compliance.\n\nREQUIRED PATTERNS:\n\n1. TOOL NAME PARSING - Must parse tool name from Gateway context:\n```python\ndelimiter = '___'\ntool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')\nif delimiter in tool_name:\n    tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]\n```\n\n2. MOCK DATA LOADING - Must load from same directory (bundled with Lambda):\n```python\nimport os\nmock_file = os.path.join(os.path.dirname(__file__), 'mock_data.json')\nwith open(mock_file) as f:\n    mock_data = json.load(f)\n```\n\n3. RETURN FORMAT - Must return JSON string, not dict:\n```python\nreturn json.dumps(result)  # CORRECT\n# NOT: return result  # WRONG - API Gateway expects string\n```\n\n4. MOCK DATA FILE - Verify mock_data.json exists in same directory.\n\nFix any violations found."
+  },
+  "shortName": "gateway-handler"
+}
