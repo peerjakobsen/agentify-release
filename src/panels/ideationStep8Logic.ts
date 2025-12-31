@@ -536,13 +536,13 @@ export class Step8LogicHandler {
   // ============================================================================
 
   /**
-   * Generate roadmap.md from steering files
+   * Generate ROADMAP.md at project root
    * Phase 2: Task 3.4 - Implement handleGenerateRoadmap() method
    *
    * Flow:
    * 1. Initialize roadmap service
    * 2. Call generateRoadmap() to get content
-   * 3. Write content to .kiro/steering/roadmap.md
+   * 3. Write content to project root as ROADMAP.md
    * 4. State updates handled via event subscriptions
    */
   public async handleGenerateRoadmap(): Promise<void> {
@@ -553,7 +553,7 @@ export class Step8LogicHandler {
       // Generate roadmap content (events will update state)
       const content = await service.generateRoadmap();
 
-      // Write to file
+      // Write to project root (human-facing documentation)
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       if (!workspaceFolder) {
         throw new Error('No workspace folder open');
@@ -561,8 +561,6 @@ export class Step8LogicHandler {
 
       const roadmapUri = vscode.Uri.joinPath(
         workspaceFolder.uri,
-        '.kiro',
-        'steering',
         ROADMAP_OUTPUT_FILE
       );
 
@@ -598,7 +596,7 @@ export class Step8LogicHandler {
   }
 
   /**
-   * Open the generated roadmap.md file in the editor
+   * Open the generated ROADMAP.md file in the editor
    * Phase 2: Task 3.5 - Implement handleOpenRoadmap() method
    */
   public async handleOpenRoadmap(): Promise<void> {
@@ -610,8 +608,6 @@ export class Step8LogicHandler {
 
     const roadmapUri = vscode.Uri.joinPath(
       workspaceFolder.uri,
-      '.kiro',
-      'steering',
       ROADMAP_OUTPUT_FILE
     );
 
@@ -626,7 +622,7 @@ export class Step8LogicHandler {
       });
     } catch {
       vscode.window.showErrorMessage(
-        'roadmap.md not found. Generate it first using the "Generate Roadmap" button.'
+        `${ROADMAP_OUTPUT_FILE} not found. Generate it first using the "Generate Roadmap" button.`
       );
     }
   }

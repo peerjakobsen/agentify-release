@@ -748,6 +748,10 @@ export interface DemoStrategyState {
  * Task 1.4: Constant array of steering file names
  * Task 4.2: Updated to include all 8 files including agentify-integration.md
  */
+/**
+ * Steering files written to .kiro/steering/ directory
+ * These files provide technical steering context for Kiro IDE
+ */
 export const STEERING_FILES: string[] = [
   'product.md',
   'tech.md',
@@ -755,9 +759,16 @@ export const STEERING_FILES: string[] = [
   'customer-context.md',
   'integration-landscape.md',
   'security-policies.md',
-  'demo-strategy.md',
   'agentify-integration.md',
 ];
+
+/**
+ * Files written to project root (human-facing documentation)
+ * These are generated alongside steering files but placed at root level
+ */
+export const ROOT_DOC_FILES: Record<string, string> = {
+  'demo-strategy.md': 'DEMO.md',
+};
 
 /**
  * Validation status for a step summary

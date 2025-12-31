@@ -44,8 +44,9 @@ export const REQUIRED_STEERING_FILES = [
 
 /**
  * Output file name for the generated roadmap
+ * Written to project root as human-facing documentation
  */
-export const ROADMAP_OUTPUT_FILE = 'roadmap.md';
+export const ROADMAP_OUTPUT_FILE = 'ROADMAP.md';
 
 // ============================================================================
 // Type Definitions
@@ -385,10 +386,9 @@ export class RoadmapGenerationService implements vscode.Disposable {
       if (!workspaceFolder) {
         throw new Error('No workspace folder open');
       }
+      // Write to project root (human-facing documentation)
       const outputPath = vscode.Uri.joinPath(
         workspaceFolder.uri,
-        '.kiro',
-        'steering',
         ROADMAP_OUTPUT_FILE
       ).fsPath;
 

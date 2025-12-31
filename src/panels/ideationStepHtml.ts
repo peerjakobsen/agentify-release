@@ -2617,7 +2617,7 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
             <span class="dot"></span>
             <span class="dot"></span>
           </div>
-          <span class="loading-text">Generating roadmap.md...</span>
+          <span class="loading-text">Generating ROADMAP.md...</span>
         </div>
       </div>
     `;
@@ -2631,12 +2631,12 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
         <div class="roadmap-success">
           <div class="success-message">
             ${getStatusIconSvg('complete')}
-            <span>roadmap.md generated successfully!</span>
+            <span>ROADMAP.md generated successfully!</span>
           </div>
           <div class="roadmap-instructions">
             <p><strong>How to implement with Kiro:</strong></p>
             <ol>
-              <li>Open roadmap.md</li>
+              <li>Open ROADMAP.md</li>
               <li>Copy the prompt from Item 1</li>
               <li>Paste into Kiro chat</li>
               <li>Kiro creates spec.md → requirements → design → tasks → implementation</li>
@@ -2650,7 +2650,7 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
               class="open-roadmap-btn nav-btn primary"
               onclick="handleStep8Command('step8OpenRoadmap', {})"
             >
-              Open roadmap.md
+              Open ROADMAP.md
             </button>
             <button
               class="open-kiro-btn nav-btn secondary"

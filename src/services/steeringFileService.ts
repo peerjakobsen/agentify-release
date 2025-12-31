@@ -14,8 +14,13 @@
 
 import * as vscode from 'vscode';
 import type { WizardState } from '../types/wizardPanel';
-import { STEERING_FILES } from '../types/wizardPanel';
+import { STEERING_FILES, ROOT_DOC_FILES } from '../types/wizardPanel';
 import { getSteeringGenerationService } from './steeringGenerationService';
+
+/**
+ * Total files generated (steering + root docs)
+ */
+const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES).length;
 
 // ============================================================================
 // Event Types
@@ -257,6 +262,31 @@ export class SteeringFileService {
     return fileUri.fsPath;
   }
 
+  /**
+   * Write a file to the project root directory
+   * Used for human-facing documentation files like DEMO.md
+   * @param fileName Name of the file (e.g., 'DEMO.md')
+   * @param content UTF-8 content to write
+   * @returns Full path to the written file
+   */
+  private async _writeRootFile(fileName: string, content: string): Promise<string> {
+    const fileUri = vscode.Uri.joinPath(this._workspaceRoot, fileName);
+    const contentBytes = new TextEncoder().encode(content);
+
+    await vscode.workspace.fs.writeFile(fileUri, contentBytes);
+
+    return fileUri.fsPath;
+  }
+
+  /**
+   * Check if a generated file should be written to project root instead of steering
+   * @param fileName The generated file name (e.g., 'demo-strategy.md')
+   * @returns The root file name if it should go to root, undefined otherwise
+   */
+  private _getRootFileName(fileName: string): string | undefined {
+    return ROOT_DOC_FILES[fileName];
+  }
+
   // ============================================================================
   // Task Group 3: Generation Orchestration
   // ============================================================================
@@ -315,34 +345,43 @@ export class SteeringFileService {
     for (let i = 0; i < generationResult.files.length; i++) {
       const fileResult = generationResult.files[i];
 
+      // Check if this file should go to project root instead of steering
+      const rootFileName = this._getRootFileName(fileResult.fileName);
+      const displayFileName = rootFileName || fileResult.fileName;
+
       // Emit start event
       this._onFileStart.fire({
-        fileName: fileResult.fileName,
+        fileName: displayFileName,
         index: i,
-        total: STEERING_FILES.length,
+        total: TOTAL_GENERATED_FILES,
       });
 
       if (fileResult.status === 'created' && fileResult.content) {
         try {
-          // Write the file
-          const filePath = await this._writeSteeringFile(fileResult.fileName, fileResult.content);
+          // Write to root or steering directory based on file type
+          let filePath: string;
+          if (rootFileName) {
+            filePath = await this._writeRootFile(rootFileName, fileResult.content);
+          } else {
+            filePath = await this._writeSteeringFile(fileResult.fileName, fileResult.content);
+          }
           writtenFiles.push(filePath);
 
           // Emit complete event
           this._onFileComplete.fire({
-            fileName: fileResult.fileName,
+            fileName: displayFileName,
             filePath,
           });
         } catch (writeError) {
           // File write failed
           const errorMessage = writeError instanceof Error ? writeError.message : 'Unknown write error';
           error = {
-            fileName: fileResult.fileName,
+            fileName: displayFileName,
             message: errorMessage,
           };
 
           this._onFileError.fire({
-            fileName: fileResult.fileName,
+            fileName: displayFileName,
             error: errorMessage,
           });
 
@@ -352,12 +391,12 @@ export class SteeringFileService {
       } else if (fileResult.status === 'failed') {
         // AI generation failed for this file
         error = {
-          fileName: fileResult.fileName,
+          fileName: displayFileName,
           message: fileResult.error || 'Generation failed',
         };
 
         this._onFileError.fire({
-          fileName: fileResult.fileName,
+          fileName: displayFileName,
           error: fileResult.error || 'Generation failed',
         });
 
@@ -367,7 +406,7 @@ export class SteeringFileService {
     }
 
     return {
-      success: !error && writtenFiles.length === STEERING_FILES.length,
+      success: !error && writtenFiles.length === TOTAL_GENERATED_FILES,
       files: writtenFiles,
       backupPath,
       error,
