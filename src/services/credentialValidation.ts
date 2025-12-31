@@ -65,11 +65,12 @@ function updateStatusFromError(error: unknown): void {
  * Validates credentials on extension activation and returns the appropriate status
  * Does not throw - returns the status state instead
  *
+ * @param forceRefresh Force refresh credentials from source (bypass cache)
  * @returns Promise resolving to the status state based on credential health
  */
-export async function validateCredentialsOnActivation(): Promise<StatusState> {
+export async function validateCredentialsOnActivation(forceRefresh: boolean = false): Promise<StatusState> {
   try {
-    await validateCredentials();
+    await validateCredentials(getDefaultCredentialProvider(), forceRefresh);
     console.log('[Agentify] Credential validation successful');
     return 'ready';
   } catch (error) {

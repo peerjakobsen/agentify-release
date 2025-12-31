@@ -201,15 +201,18 @@ export function resetDefaultCredentialProvider(): void {
 /**
  * Validates that AWS credentials are available
  * @param provider The credential provider to validate
+ * @param forceRefresh Force refresh credentials from source (bypass cache)
  * @returns Promise resolving to true if credentials are valid
  * @throws AgentifyError if credentials are not configured
  */
 export async function validateCredentials(
-  provider: ICredentialProvider = getDefaultCredentialProvider()
+  provider: ICredentialProvider = getDefaultCredentialProvider(),
+  forceRefresh: boolean = false
 ): Promise<boolean> {
   try {
     const credentialFn = provider.getCredentials();
-    await credentialFn();
+    // Pass forceRefresh to bypass SDK credential caching
+    await credentialFn({ forceRefresh });
     return true;
   } catch (error) {
     if (error instanceof AgentifyError) {

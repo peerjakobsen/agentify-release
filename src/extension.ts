@@ -271,8 +271,10 @@ async function initializeAwsServices(): Promise<void> {
     return;
   }
 
-  // Validate DynamoDB table exists and is accessible
-  await validateAndUpdateStatus();
+  // Credentials are valid - update status to ready
+  // Note: Table validation is no longer done at startup since infrastructure
+  // is deployed separately via CDK setup.sh
+  statusBarManager?.updateStatus('ready');
 }
 
 /**
@@ -384,9 +386,10 @@ async function handleVsCodeConfigChange(newConfig: DynamoDbConfiguration): Promi
   resetClients();
   resetBedrockClient();
 
-  // Re-validate with new configuration if we have a project
+  // Re-validate credentials with new configuration if we have a project
   if (awsServicesInitialized) {
-    await validateAndUpdateStatus();
+    const credentialStatus = await validateCredentialsOnActivation(true);
+    statusBarManager?.updateStatus(credentialStatus);
   }
 }
 
@@ -415,8 +418,9 @@ async function handleAgentifyConfigChange(config: AgentifyConfig | null): Promis
     if (!awsServicesInitialized) {
       await initializeAwsServices();
     } else {
-      // Re-validate connection
-      await validateAndUpdateStatus();
+      // Re-validate credentials (not table - only needed for Demo Tab)
+      const credentialStatus = await validateCredentialsOnActivation(true);
+      statusBarManager?.updateStatus(credentialStatus);
     }
   } else {
     // Config was deleted - update status
@@ -547,25 +551,22 @@ async function handleRefreshCredentials(): Promise<void> {
       // Re-initialize profile from config (crucial - new provider needs profile set)
       await initializeProfileFromConfig();
 
-      // Re-validate credentials and update status
-      const credentialStatus = await validateCredentialsOnActivation();
+      // Re-validate credentials and update status (force refresh to bypass SDK cache)
+      const credentialStatus = await validateCredentialsOnActivation(true);
+
+      // Update status based on credential validation only (not table)
+      statusBarManager?.updateStatus(credentialStatus);
 
       if (credentialStatus === 'ready') {
-        // Credentials are now valid - also validate table access
-        await validateAndUpdateStatus();
+        vscode.window.showInformationMessage('Agentify: AWS credentials validated successfully.');
+      } else if (credentialStatus === 'sso-expired') {
+        vscode.window.showWarningMessage(
+          'AWS SSO token still expired. Please complete the SSO login in the terminal.'
+        );
       } else {
-        // Still have credential issues
-        statusBarManager?.updateStatus(credentialStatus);
-
-        if (credentialStatus === 'sso-expired') {
-          vscode.window.showWarningMessage(
-            'AWS SSO token still expired. Please complete the SSO login in the terminal.'
-          );
-        } else {
-          vscode.window.showWarningMessage(
-            'AWS credentials still invalid. Please check your configuration.'
-          );
-        }
+        vscode.window.showWarningMessage(
+          'AWS credentials still invalid. Please check your configuration.'
+        );
       }
     }
   );
