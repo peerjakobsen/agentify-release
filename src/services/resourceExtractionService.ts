@@ -15,14 +15,14 @@ import * as fs from 'fs';
  */
 export const CDK_SOURCE_PATH = 'resources/cdk';
 export const SCRIPTS_SOURCE_PATH = 'resources/scripts';
-export const GATEWAY_SOURCE_PATH = 'resources/gateway';
 
 /**
  * Destination paths in the workspace
+ * Note: Gateway is inside CDK, not a separate resource
  */
 export const CDK_DEST_PATH = 'cdk';
 export const SCRIPTS_DEST_PATH = 'scripts';
-export const GATEWAY_DEST_PATH = 'gateway';
+export const GATEWAY_DEST_PATH = 'cdk/gateway';
 
 /**
  * QuickPick options for overwrite prompt
@@ -293,6 +293,7 @@ export async function extractBundledResources(
   }
 
   // If overwriting, delete existing folders first
+  // Note: Gateway is inside CDK, so deleting CDK also deletes gateway
   if (cdkExists && overwrite) {
     console.log('[ResourceExtraction] Deleting existing CDK folder for overwrite');
     await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, CDK_DEST_PATH)));
@@ -301,12 +302,6 @@ export async function extractBundledResources(
     if (scriptsExists) {
       console.log('[ResourceExtraction] Deleting existing scripts folder for overwrite');
       await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, SCRIPTS_DEST_PATH)));
-    }
-
-    const gatewayExists = await checkFolderExists(workspaceRoot, GATEWAY_DEST_PATH);
-    if (gatewayExists) {
-      console.log('[ResourceExtraction] Deleting existing gateway folder for overwrite');
-      await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, GATEWAY_DEST_PATH)));
     }
   }
 
@@ -331,13 +326,8 @@ export async function extractBundledResources(
     await makeScriptsExecutable(scriptsPath);
   }
 
-  // Extract gateway resources
-  const gatewayPath = await extractResourceDirectory(
-    extensionPath,
-    workspaceRoot,
-    GATEWAY_SOURCE_PATH,
-    GATEWAY_DEST_PATH
-  );
+  // Gateway is inside CDK, derive its path from cdkPath
+  const gatewayPath = cdkPath ? path.join(cdkPath, 'gateway') : null;
 
   // Make gateway Python scripts executable (Unix/macOS)
   if (gatewayPath) {
@@ -347,7 +337,7 @@ export async function extractBundledResources(
   const cdkExtracted = cdkPath !== null;
   const scriptsExtracted = scriptsPath !== null;
   const gatewayExtracted = gatewayPath !== null;
-  const success = cdkExtracted && scriptsExtracted && gatewayExtracted;
+  const success = cdkExtracted && scriptsExtracted;
 
   let message: string;
   if (success) {
