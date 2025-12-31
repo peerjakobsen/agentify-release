@@ -16,6 +16,7 @@ import * as fs from 'fs';
 export const CDK_SOURCE_PATH = 'resources/cdk';
 export const SCRIPTS_SOURCE_PATH = 'resources/scripts';
 export const POWER_SOURCE_PATH = 'resources/agentify-power';
+export const HOOKS_SOURCE_PATH = 'resources/agentify-hooks';
 
 /**
  * Destination paths in the workspace
@@ -26,7 +27,7 @@ export const SCRIPTS_DEST_PATH = 'scripts';
 export const GATEWAY_DEST_PATH = 'cdk/gateway';
 export const POWER_DEST_PATH = '.kiro/powers/agentify';
 export const POWERS_DIR_PATH = '.kiro/powers';
-export const POWERS_MANIFEST_PATH = '.kiro/powers/manifest.json';
+export const HOOKS_DEST_PATH = '.kiro/hooks';
 
 /**
  * QuickPick options for overwrite prompt
@@ -56,7 +57,7 @@ export interface ExtractionResult {
 export interface PowerInstallResult {
   success: boolean;
   powerPath: string | null;
-  manifestUpdated: boolean;
+  hooksPath: string | null;
   message: string;
 }
 
@@ -379,62 +380,12 @@ export async function extractBundledResources(
 }
 
 /**
- * Powers manifest structure for .kiro/powers/manifest.json
- */
-interface PowersManifest {
-  powers: string[];
-}
-
-/**
- * Update the powers manifest to include the agentify power
- * Creates the manifest if it doesn't exist
+ * Extract the Agentify power and hooks to the workspace
+ * - Power: .kiro/powers/agentify/ (POWER.md with YAML frontmatter)
+ * - Hooks: .kiro/hooks/ (enforcement hook files)
  *
- * @param workspaceRoot Absolute path to workspace root
- * @returns true if manifest was updated successfully
- */
-async function updatePowersManifest(workspaceRoot: string): Promise<boolean> {
-  const manifestPath = path.join(workspaceRoot, POWERS_MANIFEST_PATH);
-  const manifestUri = vscode.Uri.file(manifestPath);
-
-  try {
-    let manifest: PowersManifest = { powers: [] };
-
-    // Try to read existing manifest
-    try {
-      const content = await vscode.workspace.fs.readFile(manifestUri);
-      const existing = JSON.parse(content.toString());
-      if (existing && Array.isArray(existing.powers)) {
-        manifest = existing;
-      }
-    } catch {
-      // Manifest doesn't exist, use default
-    }
-
-    // Add agentify power if not already present
-    const powerRef = './agentify';
-    if (!manifest.powers.includes(powerRef)) {
-      manifest.powers.push(powerRef);
-    }
-
-    // Write manifest
-    const manifestContent = JSON.stringify(manifest, null, 2) + '\n';
-    await vscode.workspace.fs.writeFile(
-      manifestUri,
-      Buffer.from(manifestContent, 'utf-8')
-    );
-
-    console.log('[ResourceExtraction] Updated powers manifest');
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[ResourceExtraction] Failed to update powers manifest: ${message}`);
-    return false;
-  }
-}
-
-/**
- * Extract the Agentify power to the workspace
- * Installs to .kiro/powers/agentify/ and updates the powers manifest
+ * Kiro discovers powers automatically via YAML frontmatter in POWER.md.
+ * No manifest.json needed - Kiro powers only allow: POWER.md, mcp.json, steering/*.md
  *
  * @param extensionPath Absolute path to extension root (context.extensionPath)
  * @param workspaceRoot Absolute path to workspace root
@@ -444,7 +395,7 @@ export async function extractPowerResources(
   extensionPath: string,
   workspaceRoot: string
 ): Promise<PowerInstallResult> {
-  console.log(`[ResourceExtraction] Installing Agentify power to ${workspaceRoot}`);
+  console.log(`[ResourceExtraction] Installing Agentify power and hooks to ${workspaceRoot}`);
 
   // Create .kiro/powers directory if needed
   const powersDirPath = path.join(workspaceRoot, POWERS_DIR_PATH);
@@ -456,6 +407,16 @@ export async function extractPowerResources(
     // Directory might already exist, that's fine
   }
 
+  // Create .kiro/hooks directory if needed
+  const hooksDirPath = path.join(workspaceRoot, HOOKS_DEST_PATH);
+  const hooksDirUri = vscode.Uri.file(hooksDirPath);
+
+  try {
+    await vscode.workspace.fs.createDirectory(hooksDirUri);
+  } catch {
+    // Directory might already exist, that's fine
+  }
+
   // Check if power already exists - delete for fresh install (always overwrite)
   const powerExists = await checkFolderExists(workspaceRoot, POWER_DEST_PATH);
   if (powerExists) {
@@ -463,7 +424,7 @@ export async function extractPowerResources(
     await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, POWER_DEST_PATH)));
   }
 
-  // Extract power resources
+  // Extract power resources (POWER.md only)
   const powerPath = await extractResourceDirectory(
     extensionPath,
     workspaceRoot,
@@ -475,24 +436,55 @@ export async function extractPowerResources(
     return {
       success: false,
       powerPath: null,
-      manifestUpdated: false,
+      hooksPath: null,
       message: 'Failed to extract power resources',
     };
   }
 
-  // Update powers manifest
-  const manifestUpdated = await updatePowersManifest(workspaceRoot);
+  // Extract hooks to .kiro/hooks/ (separate from power)
+  // Copy individual hook files, not the directory structure
+  let hooksPath: string | null = null;
+  try {
+    const hooksSourcePath = path.join(extensionPath, HOOKS_SOURCE_PATH);
 
-  const message = manifestUpdated
-    ? 'Agentify power installed successfully'
-    : 'Agentify power installed but manifest update failed';
+    // Check if hooks source exists
+    if (fs.existsSync(hooksSourcePath)) {
+      const hookFiles = fs.readdirSync(hooksSourcePath);
 
-  console.log(`[ResourceExtraction] Power installation: ${message}`);
+      for (const hookFile of hookFiles) {
+        if (hookFile.endsWith('.kiro.hook')) {
+          const sourcePath = path.join(hooksSourcePath, hookFile);
+          const destPath = path.join(workspaceRoot, HOOKS_DEST_PATH, hookFile);
+
+          const sourceUri = vscode.Uri.file(sourcePath);
+          const destUri = vscode.Uri.file(destPath);
+
+          await vscode.workspace.fs.copy(sourceUri, destUri, { overwrite: true });
+          console.log(`[ResourceExtraction] Copied hook: ${hookFile}`);
+        }
+      }
+
+      hooksPath = hooksDirPath;
+      console.log('[ResourceExtraction] Hooks installed successfully');
+    } else {
+      console.warn('[ResourceExtraction] Hooks source not found, skipping hooks installation');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[ResourceExtraction] Failed to install hooks: ${message}`);
+    // Non-blocking - power still works without hooks
+  }
+
+  const message = hooksPath
+    ? 'Agentify power and hooks installed successfully'
+    : 'Agentify power installed (hooks skipped)';
+
+  console.log(`[ResourceExtraction] ${message}`);
 
   return {
     success: true,
     powerPath,
-    manifestUpdated,
+    hooksPath,
     message,
   };
 }

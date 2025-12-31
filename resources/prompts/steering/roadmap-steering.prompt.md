@@ -99,7 +99,7 @@ Generate items in this order:
 For each agent in the design:
 - Prompt for Kiro to create agent module: `agents/{agent_id}/` with agent.py, prompts.py, tools/
 - Prompt for Kiro to create handler: `agents/{agent_id}_handler.py` (AgentCore entry point)
-- LOCAL tools defined with BOTH decorators: `@tool` first, then `@instrument_tool` on top
+- LOCAL tools defined with BOTH decorators: `@instrument_tool` ON TOP, `@tool` BOTTOM (closest to function)
 - SHARED tools accessed via Gateway MCP client (not imported locally)
 - MUST mention AgentCore deployment in the prompt
 - MUST require importing @instrument_tool from `agents.shared.instrumentation`
@@ -160,13 +160,14 @@ This is an Agentify demo project. Follow these rules strictly:
    - DynamoDB writes for tool_call events via @instrument_tool decorator
    - Tools are instrumented with @instrument_tool for observability
 
-6. **Decorator Order for Tools**: Always apply `@tool` first, then `@instrument_tool` on top:
+6. **Decorator Order for Tools**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` ON TOP:
    ```python
-   @tool                    # FIRST (inner wrapper)
-   @instrument_tool         # ON TOP (outer wrapper)
+   @instrument_tool         # ON TOP = outer wrapper (captures events)
+   @tool                    # BOTTOM = inner wrapper (Strands SDK)
    def my_tool():
        ...
    ```
+   Python applies decorators bottom-up, so `@tool` registers first, then `@instrument_tool` wraps.
 
 7. **Pre-existing CDK Structure**: The project has a pre-built CDK folder. Do NOT create or modify:
    - `cdk/stacks/*.py` — infrastructure stacks (already exist)
@@ -553,7 +554,7 @@ Before outputting the roadmap, verify:
 ### Instrumentation & Observability
 6. [ ] Item 1 creates shared utilities (`agents/shared/`) before any agents
 7. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation
-8. [ ] Every agent item shows correct decorator order: @tool first, @instrument_tool on top
+8. [ ] Every agent item shows correct decorator order: @instrument_tool ON TOP, @tool BOTTOM (closest to function)
 9. [ ] Agent handlers (agents/{agent_id}_handler.py) set/clear instrumentation context
 
 ### CDK Structure & Injection

@@ -248,8 +248,8 @@ You are the {Agent Name}.
 from strands import tool
 from agents.shared.instrumentation import instrument_tool
 
-@tool                    # Strands decorator FIRST (makes it available to agent)
-@instrument_tool         # Observability decorator ON TOP (wraps for monitoring)
+@instrument_tool         # ON TOP = outer wrapper (captures observability events)
+@tool                    # BOTTOM = inner wrapper (registers with Strands SDK)
 def {tool_name}(param: str) -> dict:
     """Tool description from mockDefinitions.
 
@@ -260,7 +260,7 @@ def {tool_name}(param: str) -> dict:
     pass
 ```
 
-**CRITICAL Decorator Order**: Always apply `@tool` first, then `@instrument_tool` on top. Reversing the order breaks instrumentation because the agent sees the wrapper instead of the tool definition.
+**CRITICAL Decorator Order**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` must be ON TOP. Python applies decorators bottom-up, so `@tool` registers the function first, then `@instrument_tool` wraps it for observability. Reversing this breaks instrumentation.
 
 ## CDK Infrastructure
 

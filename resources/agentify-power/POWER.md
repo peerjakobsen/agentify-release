@@ -1,3 +1,10 @@
+---
+name: "agentify"
+displayName: "Agentify Observability"
+description: "Observability patterns for Agentify multi-agent workflows with Demo Viewer integration"
+keywords: ["agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent", "tool", "handler", "instrumentation"]
+---
+
 # Agentify Power
 
 Quick reference for Agentify multi-agent workflow observability patterns. These 7 critical patterns ensure your agents work correctly with the Demo Viewer.
