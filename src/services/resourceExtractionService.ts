@@ -452,7 +452,7 @@ export async function extractPowerResources(
       const hookFiles = fs.readdirSync(hooksSourcePath);
 
       for (const hookFile of hookFiles) {
-        if (hookFile.endsWith('.kiro.hook')) {
+        if (hookFile.endsWith('.hook')) {
           const sourcePath = path.join(hooksSourcePath, hookFile);
           const destPath = path.join(workspaceRoot, HOOKS_DEST_PATH, hookFile);
 
