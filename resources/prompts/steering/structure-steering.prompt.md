@@ -110,18 +110,19 @@ Use this template for the project structure, customizing agent folders based on 
 ```
 project-root/
 ├── agents/
-│   ├── main.py                    # Workflow entry point
-│   ├── {agent_id}/                # One folder per agent
+│   ├── main.py                    # Workflow entry point (runs LOCALLY)
+│   ├── {agent_id}_handler.py      # AgentCore Runtime entry point per agent
+│   ├── {agent_id}/                # Agent module folder
 │   │   ├── __init__.py
-│   │   ├── agent.py               # Agent definition
+│   │   ├── agent.py               # Agent definition and creation
 │   │   ├── prompts.py             # System prompts
-│   │   └── tools/                 # Agent-specific local tools (@tool decorated)
+│   │   └── tools/                 # Agent-specific local tools (@tool + @instrument_tool)
 │   │       ├── __init__.py
 │   │       └── {tool_name}.py     # Local tool implementations
 │   └── shared/                    # Shared utilities (NOT Gateway tools)
 │       ├── __init__.py
-│       ├── instrumentation.py     # @instrument_tool decorator
-│       ├── dynamodb_client.py     # Tool event persistence
+│       ├── instrumentation.py     # @instrument_tool decorator for observability
+│       ├── dynamodb_client.py     # Tool event persistence (fire-and-forget)
 │       └── utils/                 # Common utilities
 │           └── __init__.py
 ├── cdk/                           # AWS CDK infrastructure (Python)
@@ -187,14 +188,18 @@ When placing tools, use this decision tree:
 For each agent in `confirmedAgents`, generate this structure:
 
 ```
-agents/{agent_id}/
-├── __init__.py
-├── agent.py           # Agent creation with tools and system prompt
-├── prompts.py         # System prompt text and prompt templates
-└── tools/
-    ├── __init__.py    # Tool exports
-    └── {tool}.py      # One file per LOCAL tool assigned to this agent
+agents/
+├── {agent_id}_handler.py    # AgentCore Runtime entry point (deployed to AgentCore)
+└── {agent_id}/              # Agent module folder
+    ├── __init__.py
+    ├── agent.py             # Agent creation with tools and system prompt
+    ├── prompts.py           # System prompt text and prompt templates
+    └── tools/
+        ├── __init__.py      # Tool exports
+        └── {tool}.py        # One file per LOCAL tool assigned to this agent
 ```
+
+**Handler File**: The `{agent_id}_handler.py` file is the AgentCore Runtime entry point. It uses `BedrockAgentCoreApp` and invokes the agent module. This file deploys to AgentCore via `agentcore deploy agents/{agent_id}_handler.py`.
 
 **Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `cdk/gateway/handlers/`.
 
@@ -241,17 +246,21 @@ You are the {Agent Name}.
 **tools/{tool_name}.py** - Individual LOCAL tool (agent-specific):
 ```python
 from strands import tool
+from agents.shared.instrumentation import instrument_tool
 
-@tool
+@tool                    # Strands decorator FIRST (makes it available to agent)
+@instrument_tool         # Observability decorator ON TOP (wraps for monitoring)
 def {tool_name}(param: str) -> dict:
     """Tool description from mockDefinitions.
-    
+
     This is a LOCAL tool - only this agent uses it.
     For shared tools, see cdk/gateway/handlers/.
     """
     # Implementation runs in same process as agent
     pass
 ```
+
+**CRITICAL Decorator Order**: Always apply `@tool` first, then `@instrument_tool` on top. Reversing the order breaks instrumentation because the agent sees the wrapper instead of the tool definition.
 
 ## CDK Infrastructure
 

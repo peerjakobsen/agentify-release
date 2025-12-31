@@ -110,14 +110,31 @@ For each agent, deploy using the AgentCore runtime:
 
 AgentCore supports two distinct patterns for tool deployment. Choose based on whether tools are agent-specific or shared across agents.
 
+### Prerequisite: Shared Utilities
+
+All agents depend on the `agents/shared/` module for observability:
+
+```
+agents/shared/
+├── __init__.py
+├── instrumentation.py     # @instrument_tool decorator, context management
+├── dynamodb_client.py     # Fire-and-forget event persistence
+└── utils/
+    └── __init__.py
+```
+
+The `@instrument_tool` decorator emits tool events to DynamoDB for Demo Viewer visualization. This module MUST be created before any agents.
+
 ### Pattern 1: Local Tools (Agent-Specific)
 
-For tools used by only one agent, define them locally using the Strands `@tool` decorator:
+For tools used by only one agent, define them locally using the Strands `@tool` decorator with `@instrument_tool` for observability:
 
 ```python
 from strands import Agent, tool
+from agents.shared.instrumentation import instrument_tool
 
-@tool
+@tool                    # Strands decorator FIRST (makes tool available to agent)
+@instrument_tool         # Observability decorator ON TOP (wraps for monitoring)
 def analyze_inventory_trends(sku: str, days: int = 30) -> dict:
     """Analyze inventory trends for a specific SKU.
     Only the Inventory Agent uses this specialized analysis.
@@ -127,6 +144,8 @@ def analyze_inventory_trends(sku: str, days: int = 30) -> dict:
 
 agent = Agent(tools=[analyze_inventory_trends])
 ```
+
+**CRITICAL Decorator Order**: Always apply `@tool` first, then `@instrument_tool` on top. This ensures the agent sees the tool definition while the outer wrapper captures observability events.
 
 **When to use local tools:**
 - Tool is specific to one agent's responsibilities
@@ -264,7 +283,7 @@ Use these placeholder patterns for CLI commands. Placeholders use the format `{p
 agentcore agent deploy \
   --name {agent_name} \
   --runtime python3.12 \
-  --entry-point agents/{agent_id}/handler.py \
+  --entry-point agents/{agent_id}_handler.py \
   --region {region} \
   --memory 512 \
   --timeout 300

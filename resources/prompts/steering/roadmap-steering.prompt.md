@@ -80,7 +80,13 @@ The `gateway_tools.py` stack automatically discovers any handlers in `cdk/gatewa
 
 Generate items in this order:
 
-#### Item 1: Gateway Lambda Handlers (Shared Tools)
+#### Item 1: Shared Utilities and Instrumentation
+- Prompt for Kiro to create `agents/shared/` module with observability infrastructure
+- Creates: `instrumentation.py` (@instrument_tool decorator), `dynamodb_client.py` (fire-and-forget writes)
+- This MUST be created first as all agents depend on it for tool instrumentation
+- Acceptance: Module exists, @instrument_tool decorator defined, DynamoDB client with fire-and-forget pattern
+
+#### Item 2: Gateway Lambda Handlers (Shared Tools) — if any shared tools exist
 - Prompt for Kiro to create Python Lambda handlers by **injecting them into the existing CDK structure**
 - Path: `cdk/gateway/handlers/{tool_name}/handler.py` (MUST be inside `cdk/` folder)
 - Each handler directory contains its own `mock_data.json` (bundled with Lambda at deploy time)
@@ -89,13 +95,15 @@ Generate items in this order:
 - NOTE: Gateway setup scripts already exist — Kiro does NOT create them
 - Acceptance: Handler files exist in correct path, `cdk deploy` succeeds (auto-discovers handlers)
 
-#### Items 2-N: One Item Per Agent
+#### Items 3-N: One Item Per Agent
 For each agent in the design:
-- Prompt for Kiro to create `agents/{agent_name}.py` with Agent class and inline tools
-- LOCAL tools defined inline using @tool decorator (mock data embedded or loaded from `agents/mock_data/`)
+- Prompt for Kiro to create agent module: `agents/{agent_id}/` with agent.py, prompts.py, tools/
+- Prompt for Kiro to create handler: `agents/{agent_id}_handler.py` (AgentCore entry point)
+- LOCAL tools defined with BOTH decorators: `@tool` first, then `@instrument_tool` on top
 - SHARED tools accessed via Gateway MCP client (not imported locally)
 - MUST mention AgentCore deployment in the prompt
-- Each agent can have its own mock data in `agents/mock_data/{agent_name}/` for local tools
+- MUST require importing @instrument_tool from `agents.shared.instrumentation`
+- Each agent depends on Item 1 (shared utilities)
 
 #### Final Item: Main Orchestrator
 - Prompt for Kiro to create `agents/main.py` — the LOCAL entry point
@@ -149,17 +157,27 @@ This is an Agentify demo project. Follow these rules strictly:
 4. **Mock Tools**: All integrations are mocks returning realistic fake data. This is a demo system.
 
 5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md:
-   - stdout JSON lines for graph visualization (node_start, node_stop, etc.)
-   - DynamoDB writes for tool_call events
+   - DynamoDB writes for tool_call events via @instrument_tool decorator
+   - Tools are instrumented with @instrument_tool for observability
 
-6. **Pre-existing CDK Structure**: The project has a pre-built CDK folder. Do NOT create or modify:
+6. **Decorator Order for Tools**: Always apply `@tool` first, then `@instrument_tool` on top:
+   ```python
+   @tool                    # FIRST (inner wrapper)
+   @instrument_tool         # ON TOP (outer wrapper)
+   def my_tool():
+       ...
+   ```
+
+7. **Pre-existing CDK Structure**: The project has a pre-built CDK folder. Do NOT create or modify:
    - `cdk/stacks/*.py` — infrastructure stacks (already exist)
    - `cdk/app.py`, `cdk/config.py` — CDK configuration (already exist)
    - Gateway setup scripts (already exist)
 
-7. **Where to Create Files**:
+8. **Where to Create Files**:
+   - Shared utilities: `agents/shared/` directory (instrumentation, DynamoDB client)
    - Gateway Lambda handlers: `cdk/gateway/handlers/{tool_name}/` (inject into existing CDK structure)
-   - Agent files: `agents/{agent_name}.py`
+   - Agent modules: `agents/{agent_id}/` (agent.py, prompts.py, tools/)
+   - Agent handlers: `agents/{agent_id}_handler.py` (AgentCore entry points)
    - Local orchestrator: `agents/main.py`
 
 Reference these steering files:
@@ -532,26 +550,33 @@ Before outputting the roadmap, verify:
 4. [ ] The main.py item's prompt explicitly states it runs LOCALLY
 5. [ ] The main.py item's prompt specifies CLI contract (--prompt, --workflow-id, --trace-id)
 
+### Instrumentation & Observability
+6. [ ] Item 1 creates shared utilities (`agents/shared/`) before any agents
+7. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation
+8. [ ] Every agent item shows correct decorator order: @tool first, @instrument_tool on top
+9. [ ] Agent handlers (agents/{agent_id}_handler.py) set/clear instrumentation context
+
 ### CDK Structure & Injection
-6. [ ] Gateway Lambda handlers use path `cdk/gateway/handlers/{tool_name}/` (with `cdk/` prefix)
-7. [ ] Each Lambda handler directory contains `mock_data.json` (bundled, not external reference)
-8. [ ] Lambda handler example loads mock data from same directory: `os.path.dirname(__file__)`
-9. [ ] Pre-existing CDK structure is clearly documented (stacks/, app.py, config.py)
-10. [ ] "What NOT to Create" section explicitly lists `cdk/stacks/*.py` as off-limits
-11. [ ] No references to `gateway/handlers/` without the `cdk/` prefix
-12. [ ] No references to external `mocks/` directory for Lambda handlers
+10. [ ] Gateway Lambda handlers use path `cdk/gateway/handlers/{tool_name}/` (with `cdk/` prefix)
+11. [ ] Each Lambda handler directory contains `mock_data.json` (bundled, not external reference)
+12. [ ] Lambda handler example loads mock data from same directory: `os.path.dirname(__file__)`
+13. [ ] Pre-existing CDK structure is clearly documented (stacks/, app.py, config.py)
+14. [ ] "What NOT to Create" section explicitly lists `cdk/stacks/*.py` as off-limits
+15. [ ] No references to `gateway/handlers/` without the `cdk/` prefix
+16. [ ] No references to external `mocks/` directory for Lambda handlers
 
 ### Dependencies & Order
-13. [ ] Items are ordered by dependencies (Gateway handlers first, then agents, then orchestrator)
-14. [ ] No item assumes local-only execution for agents
-15. [ ] All tools are mocks (demo system)
-16. [ ] Event emission patterns are referenced in each prompt
+17. [ ] Items are ordered: shared utilities → Gateway handlers → agents → orchestrator
+18. [ ] No item assumes local-only execution for agents
+19. [ ] All tools are mocks (demo system)
+20. [ ] Event emission patterns are referenced in each prompt
 
 ### Path Consistency
-17. [ ] All paths use forward slashes (not backslashes)
-18. [ ] Agent files go in `agents/` directory
-19. [ ] Lambda handlers go in `cdk/gateway/handlers/` directory
-20. [ ] No TypeScript references (CDK is Python: `cdk/stacks/gateway_tools.py`)
+21. [ ] All paths use forward slashes (not backslashes)
+22. [ ] Agent modules go in `agents/{agent_id}/` directory
+23. [ ] Agent handlers go in `agents/{agent_id}_handler.py`
+24. [ ] Lambda handlers go in `cdk/gateway/handlers/` directory
+25. [ ] No TypeScript references (CDK is Python: `cdk/stacks/gateway_tools.py`)
 
 ## Output
 

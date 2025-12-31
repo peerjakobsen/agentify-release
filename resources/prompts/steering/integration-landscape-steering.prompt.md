@@ -35,9 +35,10 @@ You will receive a JSON object with the following structure:
     "mockDefinitions": [
       {
         "tool": "string - Tool name in snake_case",
-        "system": "string - Source system (e.g., 'SAP S/4HANA')",
+        "system": "string - Source system (e.g., 'SAP S/4HANA') or 'INLINE' for local tools",
         "operation": "string - Operation type (e.g., 'getInventory')",
-        "description": "string - Tool description"
+        "description": "string - Tool description",
+        "isShared": "boolean - true if tool is deployed via Gateway Lambda, false if local @tool decorator"
       }
     ]
   },
@@ -71,6 +72,13 @@ You will receive a JSON object with the following structure:
 - **perAgentTools**: Pre-computed array grouping tools exclusive to each agent. This is the complement of sharedTools - tools used by only one agent.
 
 **Important**: The `sharedTools` and `perAgentTools` arrays are pre-analyzed by the TypeScript `analyzeSharedTools()` function in `SteeringGenerationService`. Your responsibility is to format this data into clear markdown, not to perform the analysis.
+
+**Tool Categorization Rules**:
+- If `mockDefinitions[].isShared` is `true` → Tool is a **Gateway Lambda** (shared tool)
+- If `mockDefinitions[].isShared` is `false` AND `system` is `"INLINE"` → Tool is a **local @tool** (per-agent)
+- If `mockDefinitions[].isShared` is `false` AND `system` is NOT `"INLINE"` → Tool is a **local @tool** that interfaces with an external system but runs in-process
+
+When `sharedTools` array is empty, fall back to checking the `isShared` field in `mockDefinitions` to determine tool deployment strategy.
 
 ## Output Format
 
@@ -254,15 +262,38 @@ Detailed tool descriptions should be defined during implementation.
 
 If `sharedTools` array is empty:
 
+**First, check `mockDefinitions` for tools with `isShared: true`:**
+
+If any tool in `mockDefinitions` has `isShared: true`, treat it as a shared Gateway Lambda tool:
+
+1. List tools with `isShared: true` in the "Shared Tools" section
+2. Note their deployment location as `cdk/gateway/handlers/{tool_name}/`
+3. Explain they are accessed via AgentCore Gateway MCP endpoint
+
+Example when `isShared: true` tools exist:
+```
+## Shared Tools
+
+The following tools are deployed as Lambda functions behind AgentCore Gateway, accessible by multiple agents via the MCP endpoint:
+
+| Tool Name | System | Deployment Location |
+|-----------|--------|---------------------|
+| `lookup_user` | UserDatabase | `cdk/gateway/handlers/lookup_user/` |
+
+These shared tools provide centralized access to enterprise systems with unified credential management and observability.
+```
+
+**Only if NO tools have `isShared: true`:**
+
 1. Note that no tools are shared between agents.
 2. This may indicate a workflow where agents have distinct responsibilities with no overlapping system access.
 3. Include a brief note about the implications for the architecture.
 
-Example text:
+Example text when truly no shared tools:
 ```
 ## Shared Tools
 
-No tools are shared between multiple agents in this workflow. Each agent has exclusive access to its assigned tools, indicating clear separation of responsibilities.
+No tools are shared between multiple agents in this workflow. Each agent has exclusive access to its assigned tools, indicating clear separation of responsibilities. All tools are deployed locally using the `@tool` decorator pattern.
 ```
 
 ## Important Notes
