@@ -197,7 +197,7 @@ agents/{agent_id}/
     └── {tool}.py      # One file per LOCAL tool assigned to this agent
 ```
 
-**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `gateway/targets/`.
+**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `gateway/handlers/`.
 
 ### Agent File Contents
 
@@ -256,7 +256,7 @@ def {tool_name}(param: str) -> dict:
 
 ## CDK Infrastructure
 
-The `cdk/` folder contains AWS CDK stacks for deploying infrastructure. This is managed separately from the Python agent code.
+The `cdk/` folder contains AWS CDK stacks for deploying infrastructure. **These are pre-built templates** copied from Agentify - Kiro does NOT generate these files.
 
 ```
 cdk/
@@ -264,11 +264,22 @@ cdk/
 │   └── app.ts                     # CDK app - instantiates all stacks
 ├── lib/
 │   ├── dynamodb-stack.ts          # Observability events table
-│   └── gateway-tools-stack.ts     # Lambda functions for shared tools
+│   └── gateway-tools-stack.ts     # Lambda functions for shared tools (auto-discovers handlers)
 ├── package.json
 ├── cdk.json
 └── tsconfig.json
 ```
+
+### Pre-built vs Kiro-generated
+
+| File | Source | Description |
+|------|--------|-------------|
+| `cdk/lib/gateway-tools-stack.ts` | Pre-built template | Auto-discovers handlers in `gateway/handlers/` |
+| `cdk/lib/dynamodb-stack.ts` | Pre-built template | Observability events table |
+| `gateway/setup_gateway.py` | Pre-built template | Creates Gateway, registers Lambda targets |
+| `gateway/cleanup_gateway.py` | Pre-built template | Tears down Gateway resources |
+| `gateway/handlers/{tool}/handler.py` | **Kiro generates** | Lambda handler code (Python 3.11) |
+| `gateway/schemas/{tool}.json` | **Kiro generates** | Tool schemas for Gateway registration |
 
 ### DynamoDB Stack
 
@@ -294,15 +305,15 @@ Deploys Lambda functions for shared tools:
 
 ## Gateway Lambda Template
 
-For shared tools used by multiple agents, create Lambda handlers in `gateway/handlers/`. The CDK stack (`cdk/lib/gateway-tools-stack.ts`) deploys these as Lambda functions.
+For shared tools used by multiple agents, **Kiro creates Lambda handlers** in `gateway/handlers/`. The pre-built CDK stack (`cdk/lib/gateway-tools-stack.ts`) automatically discovers and deploys these as Lambda functions.
 
 ```
 gateway/handlers/{tool_name}/
-├── handler.py         # Lambda function handler
+├── handler.py         # Lambda function handler (Python 3.11) - KIRO GENERATES THIS
 └── requirements.txt   # Dependencies (if any beyond boto3)
 ```
 
-**handler.py** - Gateway Lambda handler:
+**handler.py** - Gateway Lambda handler (Python 3.11):
 ```python
 import json
 
