@@ -4,8 +4,8 @@
   "description": "Validates Lambda handlers in cdk/gateway/handlers/ follow Gateway patterns",
   "version": "1",
   "when": {
-    "type": "fileSaved",
-    "pattern": "cdk/gateway/handlers/*/handler.py"
+    "type": "fileEdited",
+    "patterns": ["cdk/gateway/handlers/*/handler.py"]
   },
   "then": {
     "type": "askAgent",

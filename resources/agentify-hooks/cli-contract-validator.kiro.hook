@@ -4,8 +4,8 @@
   "description": "Validates main.py CLI interface follows Agentify contract",
   "version": "1",
   "when": {
-    "type": "fileSaved",
-    "pattern": "agents/main.py"
+    "type": "fileEdited",
+    "patterns": ["agents/main.py"]
   },
   "then": {
     "type": "askAgent",

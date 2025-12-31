@@ -4,8 +4,8 @@
   "description": "Enforces correct decorator order for Agentify tools: @instrument_tool ON TOP, @tool BOTTOM",
   "version": "1",
   "when": {
-    "type": "fileSaved",
-    "pattern": "agents/*/tools/*.py"
+    "type": "fileEdited",
+    "patterns": ["agents/*/tools/*.py"]
   },
   "then": {
     "type": "askAgent",

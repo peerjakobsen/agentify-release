@@ -4,8 +4,8 @@
   "description": "Ensures agents use shared instrumentation modules from agents/shared/",
   "version": "1",
   "when": {
-    "type": "fileSaved",
-    "pattern": "agents/**/*.py"
+    "type": "fileEdited",
+    "patterns": ["agents/**/*.py"]
   },
   "then": {
     "type": "askAgent",
