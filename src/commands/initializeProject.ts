@@ -8,6 +8,7 @@
  * 3. Prompts for AWS region selection
  * 4. Checks for existing CDK folder
  * 5. Extracts bundled CDK and scripts resources
+ * 5b. Ensures .gitignore has entries for sensitive files
  * 6. Generates .agentify/config.json
  * 7. Creates .kiro/steering/agentify-integration.md
  * 8. Auto-opens cdk/README.md for deployment instructions
@@ -15,6 +16,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { getProfileDiscoveryService } from '../services/profileDiscoveryService';
 import { getConfigService } from '../services/configService';
 import {
@@ -251,6 +253,55 @@ function getWorkspaceRoot(): string | null {
 }
 
 /**
+ * Entries to add to .gitignore for sensitive files
+ */
+const GITIGNORE_ENTRIES = [
+  '# Agentify - sensitive files (do not commit)',
+  'gateway_config.json',
+  'cdk-outputs.json',
+  '.env',
+  '.env.*',
+  '',
+  '# Python',
+  '__pycache__/',
+  '*.pyc',
+  '.venv/',
+  'venv/',
+  '',
+  '# CDK',
+  'cdk.out/',
+  '.cdk.staging/',
+];
+
+/**
+ * Ensure .gitignore contains entries for sensitive files
+ * Creates .gitignore if it doesn't exist, or appends missing entries
+ * @param workspacePath Workspace root path
+ */
+async function ensureGitignoreEntries(workspacePath: string): Promise<void> {
+  const gitignorePath = path.join(workspacePath, '.gitignore');
+
+  let existing = '';
+  try {
+    existing = await fs.promises.readFile(gitignorePath, 'utf8');
+  } catch {
+    // File doesn't exist, will create new
+  }
+
+  // Filter to entries not already present
+  const newEntries = GITIGNORE_ENTRIES.filter(entry => {
+    const trimmed = entry.trim();
+    return trimmed && !existing.includes(trimmed);
+  });
+
+  if (newEntries.length > 0) {
+    const content = (existing ? '\n' : '') + newEntries.join('\n') + '\n';
+    await fs.promises.appendFile(gitignorePath, content);
+    console.log('[Agentify] Updated .gitignore with sensitive file entries');
+  }
+}
+
+/**
  * Open the CDK README file in the editor
  * @param workspaceRoot Workspace root path
  */
@@ -378,6 +429,14 @@ export async function handleInitializeProject(
   if (!extractionResult.success) {
     vscode.window.showErrorMessage(`Failed to extract infrastructure files: ${extractionResult.message}`);
     return { success: false };
+  }
+
+  // Step 5b: Ensure .gitignore has entries for sensitive files
+  try {
+    await ensureGitignoreEntries(workspaceRoot);
+  } catch (error) {
+    // Non-blocking - log but continue
+    console.warn('[Agentify] Failed to update .gitignore:', error);
   }
 
   // Step 6: Generate config.json (without infrastructure.dynamodb)

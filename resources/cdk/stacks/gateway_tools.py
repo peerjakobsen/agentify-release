@@ -18,7 +18,7 @@ from typing import Any
 from aws_cdk import CfnOutput, Duration, Stack
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
-from config import PROJECT_NAME
+import config
 from constructs import Construct
 
 
@@ -116,7 +116,7 @@ class GatewayToolsStack(Stack):
             fn = lambda_.Function(
                 self,
                 f"{pascal_name}Lambda",
-                function_name=f"{PROJECT_NAME}-gateway-{tool_name}",
+                function_name=f"{config.PROJECT_NAME}-gateway-{tool_name}",
                 runtime=lambda_.Runtime.PYTHON_3_11,
                 handler="handler.lambda_handler",
                 code=lambda_.Code.from_asset(str(handler_path)),
@@ -144,7 +144,7 @@ class GatewayToolsStack(Stack):
                 self,
                 f"{pascal_name}LambdaArn",
                 value=fn.function_arn,
-                export_name=f"{PROJECT_NAME}-Gateway-{pascal_name}LambdaArn",
+                export_name=f"{config.PROJECT_NAME}-Gateway-{pascal_name}LambdaArn",
                 description=f"Lambda ARN for {tool_name} gateway tool",
             )
 
@@ -152,6 +152,6 @@ class GatewayToolsStack(Stack):
                 self,
                 f"{pascal_name}LambdaName",
                 value=fn.function_name,
-                export_name=f"{PROJECT_NAME}-Gateway-{pascal_name}LambdaName",
+                export_name=f"{config.PROJECT_NAME}-Gateway-{pascal_name}LambdaName",
                 description=f"Lambda name for {tool_name} gateway tool",
             )

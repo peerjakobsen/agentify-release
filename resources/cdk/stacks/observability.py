@@ -13,7 +13,8 @@ from typing import Any
 from aws_cdk import CfnOutput, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ssm as ssm
-from config import DEFAULT_ENVIRONMENT, PROJECT_NAME
+import config
+from config import DEFAULT_ENVIRONMENT
 from constructs import Construct
 from stacks.networking import NetworkingStack
 
@@ -89,7 +90,7 @@ class ObservabilityStack(Stack):
         self.workflow_events_table = dynamodb.Table(
             self,
             "WorkflowEventsTable",
-            table_name=f"{PROJECT_NAME}-workflow-events",
+            table_name=f"{config.PROJECT_NAME}-workflow-events",
             partition_key=dynamodb.Attribute(
                 name="workflow_id",
                 type=dynamodb.AttributeType.STRING,
@@ -118,7 +119,7 @@ class ObservabilityStack(Stack):
         ssm.StringParameter(
             self,
             "WorkflowEventsTableNameParam",
-            parameter_name=f"/{PROJECT_NAME}/services/dynamodb/workflow-events-table",
+            parameter_name=f"/{config.PROJECT_NAME}/services/dynamodb/workflow-events-table",
             string_value=self.workflow_events_table.table_name,
             description="DynamoDB table name for workflow events",
             tier=ssm.ParameterTier.STANDARD,
@@ -128,7 +129,7 @@ class ObservabilityStack(Stack):
         ssm.StringParameter(
             self,
             "WorkflowEventsTableArnParam",
-            parameter_name=f"/{PROJECT_NAME}/services/dynamodb/workflow-events-table-arn",
+            parameter_name=f"/{config.PROJECT_NAME}/services/dynamodb/workflow-events-table-arn",
             string_value=self.workflow_events_table.table_arn,
             description="DynamoDB table ARN for workflow events",
             tier=ssm.ParameterTier.STANDARD,
@@ -141,7 +142,7 @@ class ObservabilityStack(Stack):
             self,
             "WorkflowEventsTableName",
             value=self.workflow_events_table.table_name,
-            export_name=f"{PROJECT_NAME}-WorkflowEventsTableName",
+            export_name=f"{config.PROJECT_NAME}-WorkflowEventsTableName",
             description="DynamoDB table name for Agentify workflow events",
         )
 
@@ -150,6 +151,6 @@ class ObservabilityStack(Stack):
             self,
             "WorkflowEventsTableArn",
             value=self.workflow_events_table.table_arn,
-            export_name=f"{PROJECT_NAME}-WorkflowEventsTableArn",
+            export_name=f"{config.PROJECT_NAME}-WorkflowEventsTableArn",
             description="DynamoDB table ARN for Agentify workflow events",
         )

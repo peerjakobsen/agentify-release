@@ -5,14 +5,16 @@
 # This script deploys the shared infrastructure for Agentify demos:
 #   - VPC with private subnets (for AgentCore Runtime)
 #   - DynamoDB table (for Demo Viewer event streaming)
+#   - Lambda functions for Gateway tools (auto-discovered)
+#   - AgentCore MCP Gateway (if schemas exist)
 #
 # Run this ONCE before deploying any agents. The infrastructure is shared
 # across all Agentify projects in your AWS account.
 #
 # Usage:
-#   ./scripts/setup.sh                    # Deploy infrastructure
-#   ./scripts/setup.sh --skip-cdk         # Skip CDK, deploy agent only
-#   ./scripts/setup.sh --agent my_agent   # Deploy a specific agent
+#   ./scripts/setup.sh                    # Deploy infrastructure + Gateway
+#   ./scripts/setup.sh --skip-cdk         # Skip CDK/Gateway, deploy agent only
+#   ./scripts/setup.sh --agent my_agent   # Deploy infrastructure + Gateway + agent
 # =============================================================================
 
 set -e
@@ -188,34 +190,47 @@ if [ "$SKIP_CDK" = false ]; then
     uv run cdk synth -c project="${PROJECT_NAME}" -c region="${REGION}" --quiet
     print_success "CDK synthesis complete"
 
-    # Deploy all stacks
+    # Deploy all stacks (save outputs for Gateway setup)
     print_step "Deploying CDK stacks (this may take 5-10 minutes)..."
-    uv run cdk deploy -c project="${PROJECT_NAME}" -c region="${REGION}" --all --require-approval never
+    uv run cdk deploy -c project="${PROJECT_NAME}" -c region="${REGION}" --all --require-approval never --outputs-file cdk-outputs.json
     print_success "CDK deployment complete"
+
+    # Fetch and display infrastructure outputs from cdk-outputs.json
+    print_step "Fetching infrastructure outputs..."
+
+    CDK_OUTPUTS_FILE="${CDK_DIR}/cdk-outputs.json"
+
+    if [ -f "${CDK_OUTPUTS_FILE}" ] && command -v jq &> /dev/null; then
+        # Parse outputs from CDK outputs file
+        NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
+        OBSERVABILITY_STACK="Agentify-${PROJECT_NAME}-Observability-${REGION}"
+
+        SUBNET_IDS=$(jq -r ".\"${NETWORKING_STACK}\".PrivateSubnetIds // empty" "${CDK_OUTPUTS_FILE}" 2>/dev/null)
+        SG_ID=$(jq -r ".\"${NETWORKING_STACK}\".AgentSecurityGroupId // empty" "${CDK_OUTPUTS_FILE}" 2>/dev/null)
+        TABLE_NAME=$(jq -r ".\"${OBSERVABILITY_STACK}\".WorkflowEventsTableName // empty" "${CDK_OUTPUTS_FILE}" 2>/dev/null)
+    else
+        # Fallback to CloudFormation query
+        NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
+        OBSERVABILITY_STACK="Agentify-${PROJECT_NAME}-Observability-${REGION}"
+
+        SUBNET_IDS=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORKING_STACK}" \
+            --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-PrivateSubnetIds'].OutputValue" \
+            --output text --region "${REGION}" 2>/dev/null)
+
+        SG_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORKING_STACK}" \
+            --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-AgentSecurityGroupId'].OutputValue" \
+            --output text --region "${REGION}" 2>/dev/null)
+
+        TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "${OBSERVABILITY_STACK}" \
+            --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-WorkflowEventsTableName'].OutputValue" \
+            --output text --region "${REGION}" 2>/dev/null)
+    fi
 
     # Return to project root
     cd "${PROJECT_ROOT}"
-
-    # Fetch and display infrastructure outputs
-    print_step "Fetching infrastructure outputs..."
-
-    NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
-    OBSERVABILITY_STACK="Agentify-${PROJECT_NAME}-Observability-${REGION}"
-
-    SUBNET_IDS=$(aws cloudformation describe-stacks \
-        --stack-name "${NETWORKING_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-PrivateSubnetIds'].OutputValue" \
-        --output text --region "${REGION}" 2>/dev/null)
-
-    SG_ID=$(aws cloudformation describe-stacks \
-        --stack-name "${NETWORKING_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-AgentSecurityGroupId'].OutputValue" \
-        --output text --region "${REGION}" 2>/dev/null)
-
-    TABLE_NAME=$(aws cloudformation describe-stacks \
-        --stack-name "${OBSERVABILITY_STACK}" \
-        --query "Stacks[0].Outputs[?ExportName=='${PROJECT_NAME}-WorkflowEventsTableName'].OutputValue" \
-        --output text --region "${REGION}" 2>/dev/null)
 
     echo ""
     echo "Infrastructure Outputs:"
@@ -269,9 +284,66 @@ else
     fi
 fi
 
-# Step 2: Deploy Agent (if specified)
+# Step 2: Setup MCP Gateway (if schemas exist)
+print_step "Step 2: Setting up AgentCore MCP Gateway..."
+
+# Check if schemas exist (ignore .gitkeep)
+SCHEMAS_DIR="${CDK_DIR}/gateway/schemas"
+SCHEMA_FILES=$(find "$SCHEMAS_DIR" -name "*.json" 2>/dev/null | head -1)
+
+if [ -n "$SCHEMA_FILES" ]; then
+    cd "${CDK_DIR}"
+
+    # Check if agentcore toolkit is installed (must be in CDK dir for uv)
+    if ! uv run agentcore --version &> /dev/null 2>&1; then
+        print_step "Installing AgentCore Starter Toolkit..."
+        uv add bedrock-agentcore-starter-toolkit
+    fi
+
+    print_step "Running Gateway setup..."
+    if uv run python gateway/setup_gateway.py --region "${REGION}" --name "${PROJECT_NAME}-gateway"; then
+        print_success "Gateway setup complete"
+
+        # Load gateway config to get gateway ID
+        GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
+        if [ -f "$GATEWAY_CONFIG" ] && command -v jq &> /dev/null; then
+            GATEWAY_ID=$(jq -r '.gateway_id // empty' "$GATEWAY_CONFIG")
+            GATEWAY_URL=$(jq -r '.gateway_url // empty' "$GATEWAY_CONFIG")
+
+            if [ -n "$GATEWAY_ID" ]; then
+                echo ""
+                print_step "Listing registered Gateway targets..."
+                uv run agentcore gateway list-mcp-gateway-targets --id "$GATEWAY_ID" --region "${REGION}" 2>/dev/null || true
+
+                echo ""
+                echo "============================================="
+                echo "  MCP Gateway Testing Commands"
+                echo "============================================="
+                echo ""
+                echo "List targets:"
+                echo "  uv run agentcore gateway list-mcp-gateway-targets --id ${GATEWAY_ID} --region ${REGION}"
+                echo ""
+                echo "Test a tool (replace TOOL_NAME and INPUT):"
+                echo "  # First get OAuth token from gateway_config.json"
+                echo "  # Then call: POST ${GATEWAY_URL}"
+                echo "  # With JSON-RPC body: {\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"TARGET___TOOL\",\"arguments\":{}}}"
+                echo ""
+                echo "See cdk/gateway_config.json for OAuth credentials"
+                echo ""
+            fi
+        fi
+    else
+        print_warning "Gateway setup failed. You can run it manually: python cdk/gateway/setup_gateway.py"
+    fi
+    cd "${PROJECT_ROOT}"
+else
+    print_warning "No gateway schemas found in ${SCHEMAS_DIR}"
+    print_warning "Skipping Gateway setup. Add schemas and run: python cdk/gateway/setup_gateway.py"
+fi
+
+# Step 3: Deploy Agent (if specified)
 if [ -n "$AGENT_NAME" ]; then
-    print_step "Step 2: Deploying agent '${AGENT_NAME}'..."
+    print_step "Step 3: Deploying agent '${AGENT_NAME}'..."
 
     # Check if agentcore toolkit is installed
     if ! uv run agentcore --version &> /dev/null 2>&1; then
@@ -410,7 +482,7 @@ if [ -n "$AGENT_NAME" ]; then
     fi
 
 else
-    print_step "Step 2: No agent specified (use --agent NAME to deploy an agent)"
+    print_step "Step 3: No agent specified (use --agent NAME to deploy an agent)"
 fi
 
 echo ""

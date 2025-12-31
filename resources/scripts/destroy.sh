@@ -4,12 +4,13 @@
 # =============================================================================
 # This script tears down Agentify infrastructure:
 #   - AgentCore agents (if deployed)
-#   - CDK stacks (VPC, DynamoDB)
+#   - AgentCore MCP Gateway (if configured)
+#   - CDK stacks (VPC, DynamoDB, Lambda functions)
 #
 # Usage:
 #   ./scripts/destroy.sh                # Destroy everything
 #   ./scripts/destroy.sh --force        # Skip confirmation
-#   ./scripts/destroy.sh --skip-agents  # Keep agents, destroy infra only
+#   ./scripts/destroy.sh --skip-agents  # Keep agents, destroy Gateway + infra
 # =============================================================================
 
 set -e
@@ -156,6 +157,7 @@ if [ "$FORCE" = false ]; then
     echo ""
     echo "The following will be deleted:"
     echo "  - AgentCore agents (if any deployed)"
+    echo "  - AgentCore MCP Gateway (if configured)"
     echo "  - DynamoDB workflow events table"
     echo "  - VPC and networking resources"
     echo "  - ECR repositories (if created)"
@@ -170,7 +172,7 @@ fi
 
 # Step 1: Delete AgentCore Agents
 if [ "$SKIP_AGENTS" = false ]; then
-    print_step "Step 1/2: Deleting AgentCore agents..."
+    print_step "Step 1/3: Deleting AgentCore agents..."
 
     # Check if agentcore toolkit is installed and config exists
     if [ -f "${PROJECT_ROOT}/.bedrock_agentcore.yaml" ]; then
@@ -194,11 +196,28 @@ if [ "$SKIP_AGENTS" = false ]; then
         print_warning "No AgentCore config found. Skipping agent deletion."
     fi
 else
-    print_warning "Step 1/2: Skipping agent deletion (--skip-agents)"
+    print_warning "Step 1/3: Skipping agent deletion (--skip-agents)"
 fi
 
-# Step 2: CDK Destroy
-print_step "Step 2/2: Destroying CDK stacks..."
+# Step 2: Cleanup MCP Gateway
+print_step "Step 2/3: Cleaning up AgentCore MCP Gateway..."
+
+GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
+if [ -f "${GATEWAY_CONFIG}" ]; then
+    cd "${CDK_DIR}"
+    # Sync dependencies to ensure toolkit is available
+    uv sync --quiet 2>/dev/null || true
+    print_step "Running Gateway cleanup (includes Cognito resources)..."
+    uv run python gateway/cleanup_gateway.py --force && \
+        print_success "Gateway cleanup complete" || \
+        print_warning "Gateway cleanup failed. You may need to delete it manually."
+    cd "${PROJECT_ROOT}"
+else
+    print_warning "No gateway_config.json found. Skipping Gateway cleanup."
+fi
+
+# Step 3: CDK Destroy
+print_step "Step 3/3: Destroying CDK stacks..."
 
 # Change to CDK directory
 cd "${CDK_DIR}"
@@ -239,6 +258,7 @@ echo "============================================="
 echo ""
 echo "Notes:"
 echo "  - AgentCore agents have been deleted"
+echo "  - AgentCore MCP Gateway has been deleted"
 echo "  - AWS CDK resources have been deleted"
 echo "  - CloudWatch logs may be retained based on retention policy"
 echo "  - ECR repositories may need manual cleanup if not empty"

@@ -20,8 +20,10 @@ Usage:
 """
 
 import argparse
+import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,13 +61,13 @@ def extract_lambda_arns(cdk_outputs: dict) -> dict[str, str]:
                 if key.endswith("LambdaArn"):
                     # Extract tool name from key (e.g., "GetInventoryLambdaArn" -> "get_inventory")
                     tool_name = key.replace("LambdaArn", "")
-                    # Convert PascalCase to snake_case
-                    snake_name = ""
+                    # Convert PascalCase to kebab-case (Gateway API requirement)
+                    kebab_name = ""
                     for i, char in enumerate(tool_name):
                         if char.isupper() and i > 0:
-                            snake_name += "_"
-                        snake_name += char.lower()
-                    lambda_arns[snake_name] = value
+                            kebab_name += "-"
+                        kebab_name += char.lower()
+                    lambda_arns[kebab_name] = value
 
     return lambda_arns
 
@@ -84,7 +86,8 @@ def get_gateway_schemas(project_root: Path) -> dict[str, dict]:
         return schemas
 
     for schema_file in schemas_dir.glob("*.json"):
-        tool_name = schema_file.stem
+        # Convert snake_case filename to kebab-case (to match Lambda ARN keys)
+        tool_name = schema_file.stem.replace("_", "-")
         with open(schema_file) as f:
             schemas[tool_name] = json.load(f)
 
@@ -111,89 +114,257 @@ def run_agentcore_command(args: list[str]) -> tuple[bool, str]:
         return False, "agentcore CLI not found. Install with: pip install bedrock-agentcore-starter-toolkit"
 
 
+def find_existing_gateway(name: str, region: str) -> dict | None:
+    """Check if a gateway with the given name already exists.
+
+    Returns:
+        Gateway info dict if found, None otherwise
+    """
+    try:
+        from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+
+        client = GatewayClient(region_name=region)
+
+        # List all gateways and find by name
+        response = client.list_gateways()
+        gateways = response.get("items", [])
+
+        for gw in gateways:
+            if gw.get("name") == name:
+                gateway_id = gw.get("gatewayId", "")
+                # Get full gateway details
+                details = client.get_gateway(gateway_identifier=gateway_id)
+                gateway = details.get("gateway", {})
+                return {
+                    "gatewayArn": gateway.get("gatewayArn", ""),
+                    "gatewayId": gateway.get("gatewayId", ""),
+                    "gatewayUrl": gateway.get("gatewayUrl", ""),
+                    "roleArn": gateway.get("roleArn", ""),
+                    "name": gateway.get("name", name),
+                    "status": gateway.get("status", ""),
+                }
+        return None
+    except Exception:
+        return None
+
+
 def create_gateway(name: str, region: str) -> dict | None:
-    """Create an MCP Gateway.
+    """Create an MCP Gateway using the Python SDK, or return existing one.
 
     Returns:
         Gateway info dict or None on failure
     """
-    print(f"Creating MCP Gateway '{name}' in {region}...")
-
-    success, output = run_agentcore_command([
-        "gateway", "create-mcp-gateway",
-        "--name", name,
-        "--region", region,
-    ])
-
-    if not success:
-        print(f"Error creating gateway: {output}")
-        return None
-
-    # Parse the output to get gateway details
-    # The CLI outputs JSON-like info, we need to extract it
-    print(f"Gateway created successfully")
-    print(output)
-
-    # Get gateway details
-    success, output = run_agentcore_command([
-        "gateway", "get-mcp-gateway",
-        "--name", name,
-        "--region", region,
-    ])
-
-    if not success:
-        print(f"Error getting gateway details: {output}")
-        return None
-
-    # Parse gateway info from output
     try:
-        # Try to extract JSON from output
-        lines = output.strip().split("\n")
-        for line in lines:
-            if line.strip().startswith("{"):
-                return json.loads(line)
-    except json.JSONDecodeError:
-        pass
+        import os
 
-    # If we can't parse JSON, return basic info
-    return {"name": name, "region": region}
+        # Set region BEFORE importing SDK (boto3 caches region at import time)
+        os.environ["AWS_REGION"] = region
+        os.environ["AWS_DEFAULT_REGION"] = region
+
+        from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+
+        # Check if gateway already exists
+        print(f"Checking for existing gateway '{name}'...")
+        existing = find_existing_gateway(name, region)
+        if existing:
+            print(f"Gateway '{name}' already exists, reusing it")
+            print(f"  Gateway ARN: {existing['gatewayArn']}")
+            print(f"  Gateway URL: {existing['gatewayUrl']}")
+            print(f"  Role ARN:    {existing['roleArn']}")
+            print(f"  Status:      {existing['status']}")
+            return existing
+
+        print(f"Creating MCP Gateway '{name}' in {region}...")
+        client = GatewayClient(region_name=region)
+
+        # Create the gateway
+        response = client.create_mcp_gateway(name=name)
+        print("Gateway created successfully")
+
+        # Extract the relevant fields from response
+        gateway_info = {
+            "gatewayArn": response.get("gatewayArn", ""),
+            "gatewayId": response.get("gatewayId", ""),
+            "gatewayUrl": response.get("gatewayUrl", ""),
+            "roleArn": response.get("roleArn", ""),
+            "name": response.get("name", name),
+            "status": response.get("status", ""),
+        }
+
+        print(f"  Gateway ARN: {gateway_info['gatewayArn']}")
+        print(f"  Gateway URL: {gateway_info['gatewayUrl']}")
+        print(f"  Role ARN:    {gateway_info['roleArn']}")
+        print(f"  Status:      {gateway_info['status']}")
+
+        return gateway_info
+
+    except ImportError:
+        print("Error: bedrock-agentcore-starter-toolkit not installed")
+        return None
+    except Exception as e:
+        print(f"Error creating gateway: {e}")
+        return None
+
+
+def find_existing_target(gateway_id: str, target_name: str, region: str) -> dict | None:
+    """Check if a target with the given name already exists.
+
+    Returns:
+        Target info dict if found, None otherwise
+    """
+    try:
+        from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+
+        client = GatewayClient(region_name=region)
+        response = client.list_gateway_targets(gateway_identifier=gateway_id)
+        targets = response.get("items", [])
+
+        for target in targets:
+            if target.get("name") == target_name:
+                return target
+        return None
+    except Exception:
+        return None
 
 
 def create_lambda_target(
     gateway_arn: str,
     gateway_url: str,
+    gateway_id: str,
     role_arn: str,
     target_name: str,
     lambda_arn: str,
+    tool_schema: dict,
     region: str,
 ) -> bool:
-    """Create a Lambda target for the gateway."""
-    print(f"Creating Lambda target '{target_name}'...")
+    """Create or update a Lambda target for the gateway."""
+    try:
+        import os
+        import boto3
 
-    # Build target payload with Lambda ARN
-    target_payload = json.dumps({
-        "lambdaTarget": {
-            "lambdaArn": lambda_arn
+        # Set region BEFORE importing SDK (boto3 caches region at import time)
+        os.environ["AWS_REGION"] = region
+        os.environ["AWS_DEFAULT_REGION"] = region
+
+        from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+
+        # Check if target already exists
+        existing = find_existing_target(gateway_id, target_name, region)
+        if existing:
+            # UPDATE existing target (handles bug fixes and schema changes)
+            print(f"Updating Lambda target '{target_name}'...")
+            boto_client = boto3.client("bedrock-agentcore-control", region_name=region)
+            boto_client.update_gateway_target(
+                gatewayIdentifier=gateway_id,
+                targetId=existing["targetId"],
+                name=target_name,
+                targetConfiguration={
+                    "mcp": {
+                        "lambda": {
+                            "lambdaArn": lambda_arn,
+                            "toolSchema": {"inlinePayload": [tool_schema]}
+                        }
+                    }
+                },
+                credentialProviderConfigurations=[
+                    {"credentialProviderType": "GATEWAY_IAM_ROLE"}
+                ]
+            )
+            print(f"  Target '{target_name}' updated (ID: {existing['targetId']})")
+            return True
+
+        # CREATE new target
+        print(f"Creating Lambda target '{target_name}'...")
+        client = GatewayClient(region_name=region)
+
+        gateway = {
+            "gatewayArn": gateway_arn,
+            "gatewayUrl": gateway_url,
+            "gatewayId": gateway_id,
+            "roleArn": role_arn,
         }
-    })
 
-    success, output = run_agentcore_command([
-        "gateway", "create-mcp-gateway-target",
-        "--gateway-arn", gateway_arn,
-        "--gateway-url", gateway_url,
-        "--role-arn", role_arn,
-        "--name", target_name,
-        "--target-type", "lambda",
-        "--target-payload", target_payload,
-        "--region", region,
-    ])
+        target_payload = {
+            "lambdaArn": lambda_arn,
+            "toolSchema": {
+                "inlinePayload": [tool_schema]
+            },
+        }
 
-    if not success:
-        print(f"Error creating target {target_name}: {output}")
+        response = client.create_mcp_gateway_target(
+            gateway=gateway,
+            name=target_name,
+            target_type="lambda",
+            target_payload=target_payload,
+        )
+
+        print(f"  Target '{target_name}' created successfully")
+        print(f"  Target ID: {response.get('targetId', 'N/A')}")
+        return True
+
+    except ImportError:
+        print("Error: bedrock-agentcore-starter-toolkit not installed")
+        return False
+    except Exception as e:
+        print(f"Error creating/updating target {target_name}: {e}")
         return False
 
-    print(f"Target '{target_name}' created successfully")
-    return True
+
+def get_oauth_credentials(gateway_id: str, region: str) -> dict:
+    """Extract OAuth credentials from gateway for agent authentication.
+
+    Returns:
+        Dict with client_id, client_secret, token_endpoint, scope
+    """
+    try:
+        import boto3
+        from bedrock_agentcore_starter_toolkit.operations.gateway.client import GatewayClient
+
+        client = GatewayClient(region_name=region)
+        gateway_info = client.get_gateway(gateway_identifier=gateway_id)
+        gateway = gateway_info.get("gateway", {})
+
+        auth_config = gateway.get("authorizerConfiguration", {}).get("customJWTAuthorizer", {})
+        discovery_url = auth_config.get("discoveryUrl", "")
+        allowed_clients = auth_config.get("allowedClients", [])
+
+        if not discovery_url or not allowed_clients:
+            print("Warning: Could not extract OAuth config from gateway")
+            return {}
+
+        # Parse user pool ID from discovery URL
+        user_pool_id = discovery_url.split("/")[3]
+        client_id = allowed_clients[0]
+
+        # Get client secret from Cognito
+        cognito = boto3.client("cognito-idp", region_name=region)
+        client_info = cognito.describe_user_pool_client(
+            UserPoolId=user_pool_id, ClientId=client_id
+        )
+        client_secret = client_info["UserPoolClient"].get("ClientSecret", "")
+
+        # Get Cognito domain for token endpoint
+        domain_response = cognito.describe_user_pool(UserPoolId=user_pool_id)
+        domain = domain_response["UserPool"].get("Domain", "")
+        token_endpoint = f"https://{domain}.auth.{region}.amazoncognito.com/oauth2/token"
+
+        # Get scope from resource server
+        rs_response = cognito.list_resource_servers(UserPoolId=user_pool_id, MaxResults=10)
+        scope = ""
+        for rs in rs_response.get("ResourceServers", []):
+            for s in rs.get("Scopes", []):
+                scope = f"{rs['Identifier']}/{s['ScopeName']}"
+                break
+
+        return {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "token_endpoint": token_endpoint,
+            "scope": scope,
+        }
+    except Exception as e:
+        print(f"Warning: Could not extract OAuth credentials: {e}")
+        return {}
 
 
 def save_gateway_config(project_root: Path, config: dict) -> None:
@@ -218,6 +389,10 @@ def main():
         help="Gateway name (default: {project_name}-gateway)",
     )
     args = parser.parse_args()
+
+    # Set region env vars immediately after parsing args (before any SDK imports)
+    os.environ["AWS_REGION"] = args.region
+    os.environ["AWS_DEFAULT_REGION"] = args.region
 
     project_root = get_project_root()
 
@@ -262,6 +437,7 @@ def main():
     # Get gateway details for target creation
     gateway_arn = gateway_info.get("gatewayArn", "")
     gateway_url = gateway_info.get("gatewayUrl", "")
+    gateway_id = gateway_info.get("gatewayId", "")
     role_arn = gateway_info.get("roleArn", "")
 
     if not all([gateway_arn, gateway_url, role_arn]):
@@ -280,9 +456,11 @@ def main():
             success = create_lambda_target(
                 gateway_arn=gateway_arn,
                 gateway_url=gateway_url,
+                gateway_id=gateway_id,
                 role_arn=role_arn,
                 target_name=tool_name,
                 lambda_arn=lambda_arn,
+                tool_schema=schemas[tool_name],
                 region=args.region,
             )
             if success:
@@ -290,14 +468,20 @@ def main():
         else:
             print(f"Skipping {tool_name}: no schema found")
 
+    # Extract OAuth credentials for agent authentication
+    print("\nExtracting OAuth credentials...")
+    oauth_creds = get_oauth_credentials(gateway_id, args.region)
+
     # Save configuration
     config = {
         "gateway_name": gateway_name,
         "gateway_arn": gateway_arn,
         "gateway_url": gateway_url,
+        "gateway_id": gateway_id,
         "role_arn": role_arn,
         "region": args.region,
         "targets": targets_created,
+        "oauth": oauth_creds,
     }
     save_gateway_config(project_root, config)
 

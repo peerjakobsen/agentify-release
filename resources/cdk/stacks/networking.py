@@ -13,7 +13,8 @@ from typing import Any
 
 from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_ec2 as ec2
-from config import DEFAULT_ENVIRONMENT, PROJECT_NAME, get_agentcore_supported_azs
+import config
+from config import DEFAULT_ENVIRONMENT, get_agentcore_supported_azs
 from constructs import Construct
 
 
@@ -83,7 +84,7 @@ class NetworkingStack(Stack):
         self.vpc = ec2.Vpc(
             self,
             "Vpc",
-            vpc_name=f"{PROJECT_NAME}-vpc-{self.environment_name}",
+            vpc_name=f"{config.PROJECT_NAME}-vpc-{self.environment_name}",
             ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
             # Single AZ supported by AgentCore Runtime
             availability_zones=selected_az,
@@ -209,7 +210,7 @@ class NetworkingStack(Stack):
             self,
             "VpcId",
             value=self.vpc.vpc_id,
-            export_name=f"{PROJECT_NAME}-VpcId",
+            export_name=f"{config.PROJECT_NAME}-VpcId",
             description="VPC ID for Agentify",
         )
 
@@ -222,7 +223,7 @@ class NetworkingStack(Stack):
             self,
             "PrivateSubnetIds",
             value=private_subnet_ids,
-            export_name=f"{PROJECT_NAME}-PrivateSubnetIds",
+            export_name=f"{config.PROJECT_NAME}-PrivateSubnetIds",
             description="Private subnet IDs for AgentCore agents (comma-separated)",
         )
 
@@ -231,6 +232,6 @@ class NetworkingStack(Stack):
             self,
             "AgentSecurityGroupId",
             value=self.agent_security_group.security_group_id,
-            export_name=f"{PROJECT_NAME}-AgentSecurityGroupId",
+            export_name=f"{config.PROJECT_NAME}-AgentSecurityGroupId",
             description="Security group ID for AgentCore agents",
         )
