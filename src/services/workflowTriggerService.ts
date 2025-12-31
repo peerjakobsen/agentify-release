@@ -185,7 +185,7 @@ export class WorkflowTriggerService implements vscode.Disposable {
       env.AGENTIFY_TABLE_NAME = tableName;
     }
     if (region) {
-      env.AGENTIFY_TABLE_REGION = region;
+      env.AWS_REGION = region;
     }
 
     // Clear stdout buffer for new process

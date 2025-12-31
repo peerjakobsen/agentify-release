@@ -500,7 +500,7 @@ describe('Task Group 4: Subprocess Spawning', () => {
       );
     });
 
-    it('should include AGENTIFY_TABLE_NAME and AGENTIFY_TABLE_REGION in env', async () => {
+    it('should include AGENTIFY_TABLE_NAME and AWS_REGION in env', async () => {
       const service = getWorkflowTriggerService();
 
       await service.start('test prompt');
@@ -511,7 +511,7 @@ describe('Task Group 4: Subprocess Spawning', () => {
         expect.objectContaining({
           env: expect.objectContaining({
             AGENTIFY_TABLE_NAME: 'test-workflow-events',
-            AGENTIFY_TABLE_REGION: 'us-east-1',
+            AWS_REGION: 'us-east-1',
           }),
         })
       );

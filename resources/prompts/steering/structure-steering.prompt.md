@@ -120,26 +120,28 @@ project-root/
 │   │       └── {tool_name}.py     # Local tool implementations
 │   └── shared/                    # Shared utilities (NOT Gateway tools)
 │       ├── __init__.py
+│       ├── instrumentation.py     # @instrument_tool decorator
+│       ├── dynamodb_client.py     # Tool event persistence
 │       └── utils/                 # Common utilities
 │           └── __init__.py
-├── cdk/                           # AWS CDK infrastructure
-│   ├── bin/
-│   │   └── app.ts                 # CDK app entry point
-│   ├── lib/
-│   │   ├── dynamodb-stack.ts      # Observability events table
-│   │   └── gateway-tools-stack.ts # Lambda functions for Gateway
-│   ├── package.json
-│   └── cdk.json
-├── gateway/                       # AgentCore Gateway configuration
-│   ├── handlers/                  # Lambda handler source code
-│   │   ├── {tool_name}/           # One folder per shared tool
-│   │   │   ├── handler.py         # Lambda handler
-│   │   │   └── requirements.txt   # Lambda dependencies
-│   │   └── ...
-│   ├── schemas/                   # Tool schemas for Gateway registration
-│   │   └── {tool_name}.json       # JSON schema per tool
-│   ├── setup_gateway.py           # Creates Gateway + registers targets
-│   └── cleanup_gateway.py         # Tears down Gateway resources
+├── cdk/                           # AWS CDK infrastructure (Python)
+│   ├── app.py                     # CDK app entry point
+│   ├── config.py                  # Environment configuration
+│   ├── stacks/                    # Infrastructure stacks
+│   │   ├── networking.py          # VPC, endpoints, security groups
+│   │   ├── observability.py       # DynamoDB events table
+│   │   └── gateway_tools.py       # Lambda functions (auto-discovers handlers)
+│   └── gateway/                   # AgentCore Gateway configuration
+│       ├── handlers/              # Lambda handler source code
+│       │   ├── {tool_name}/       # One folder per shared tool
+│       │   │   ├── handler.py     # Lambda handler
+│       │   │   ├── mock_data.json # Mock data bundled with Lambda
+│       │   │   └── requirements.txt
+│       │   └── ...
+│       ├── schemas/               # Tool schemas for Gateway registration
+│       │   └── {tool_name}.json
+│       ├── setup_gateway.py       # Creates Gateway + registers targets
+│       └── cleanup_gateway.py     # Tears down Gateway resources
 ├── tests/
 │   ├── agents/                    # Agent tests
 │   │   └── {agent_id}/
@@ -148,9 +150,6 @@ project-root/
 │   │   └── test_{tool_name}.py
 │   └── handlers/                  # Gateway Lambda handler tests
 │       └── test_{tool_name}.py
-├── mocks/
-│   └── {system}/                  # Mock data organized by system
-│       └── {operation}.json
 ├── .agentify/
 │   └── config.json                # Agentify configuration
 ├── .kiro/
@@ -176,9 +175,9 @@ When placing tools, use this decision tree:
 
 2. **Is this tool used by MULTIPLE agents?**
    - YES → Create as Gateway Lambda:
-     - Handler: `gateway/handlers/{tool_name}/handler.py`
-     - Schema: `gateway/schemas/{tool_name}.json`
-     - CDK deploys Lambda, Gateway registration happens in `setup_gateway.py`
+     - Handler: `cdk/gateway/handlers/{tool_name}/handler.py`
+     - Schema: `cdk/gateway/schemas/{tool_name}.json`
+     - CDK deploys Lambda, Gateway registration happens in `cdk/gateway/setup_gateway.py`
 
 3. **Is this a utility function (not an agent tool)?**
    - YES → Place in `agents/shared/utils/`
@@ -197,7 +196,7 @@ agents/{agent_id}/
     └── {tool}.py      # One file per LOCAL tool assigned to this agent
 ```
 
-**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `gateway/handlers/`.
+**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `cdk/gateway/handlers/`.
 
 ### Agent File Contents
 
@@ -248,7 +247,7 @@ def {tool_name}(param: str) -> dict:
     """Tool description from mockDefinitions.
     
     This is a LOCAL tool - only this agent uses it.
-    For shared tools, see gateway/targets/.
+    For shared tools, see cdk/gateway/handlers/.
     """
     # Implementation runs in same process as agent
     pass
@@ -260,26 +259,30 @@ The `cdk/` folder contains AWS CDK stacks for deploying infrastructure. **These 
 
 ```
 cdk/
-├── bin/
-│   └── app.ts                     # CDK app - instantiates all stacks
-├── lib/
-│   ├── dynamodb-stack.ts          # Observability events table
-│   └── gateway-tools-stack.ts     # Lambda functions for shared tools (auto-discovers handlers)
-├── package.json
-├── cdk.json
-└── tsconfig.json
+├── app.py                         # CDK app - instantiates all stacks
+├── config.py                      # Environment configuration
+├── stacks/                        # Infrastructure stacks
+│   ├── networking.py              # VPC, endpoints, security groups
+│   ├── observability.py           # DynamoDB events table
+│   └── gateway_tools.py           # Lambda functions (auto-discovers handlers)
+└── gateway/                       # Kiro injects handlers here
+    ├── handlers/                  # Lambda handler source code
+    ├── schemas/                   # Tool schemas
+    ├── setup_gateway.py           # Creates Gateway, registers Lambda targets
+    └── cleanup_gateway.py         # Tears down Gateway resources
 ```
 
 ### Pre-built vs Kiro-generated
 
 | File | Source | Description |
 |------|--------|-------------|
-| `cdk/lib/gateway-tools-stack.ts` | Pre-built template | Auto-discovers handlers in `gateway/handlers/` |
-| `cdk/lib/dynamodb-stack.ts` | Pre-built template | Observability events table |
-| `gateway/setup_gateway.py` | Pre-built template | Creates Gateway, registers Lambda targets |
-| `gateway/cleanup_gateway.py` | Pre-built template | Tears down Gateway resources |
-| `gateway/handlers/{tool}/handler.py` | **Kiro generates** | Lambda handler code (Python 3.11) |
-| `gateway/schemas/{tool}.json` | **Kiro generates** | Tool schemas for Gateway registration |
+| `cdk/stacks/gateway_tools.py` | Pre-built template | Auto-discovers handlers in `cdk/gateway/handlers/` |
+| `cdk/stacks/observability.py` | Pre-built template | DynamoDB events table |
+| `cdk/gateway/setup_gateway.py` | Pre-built template | Creates Gateway, registers Lambda targets |
+| `cdk/gateway/cleanup_gateway.py` | Pre-built template | Tears down Gateway resources |
+| `cdk/gateway/handlers/{tool}/handler.py` | **Kiro generates** | Lambda handler code (Python 3.11) |
+| `cdk/gateway/handlers/{tool}/mock_data.json` | **Kiro generates** | Mock data bundled with Lambda |
+| `cdk/gateway/schemas/{tool}.json` | **Kiro generates** | Tool schemas for Gateway registration |
 
 ### DynamoDB Stack
 
@@ -292,24 +295,25 @@ Creates the observability events table for workflow tracing:
 ### Gateway Tools Stack
 
 Deploys Lambda functions for shared tools:
-- Reads handler code from `gateway/handlers/{tool_name}/`
-- Bundles mock data from `mocks/` into Lambda package
+- Reads handler code from `cdk/gateway/handlers/{tool_name}/`
+- Bundles mock data from each handler's `mock_data.json` into Lambda package
 - Exports Lambda ARNs as CloudFormation outputs
 - ARNs written to `cdk-outputs.json` for Gateway registration
 
 ### Deployment Sequence
 
-1. `cd cdk && npm install` - Install CDK dependencies
-2. `cdk deploy --all --outputs-file ../cdk-outputs.json` - Deploy both stacks
-3. `python gateway/setup_gateway.py` - Create Gateway and register Lambda targets
+1. `cd cdk && pip install -r requirements.txt` - Install CDK dependencies
+2. `cdk deploy --all --outputs-file cdk-outputs.json` - Deploy all stacks
+3. `python cdk/gateway/setup_gateway.py` - Create Gateway and register Lambda targets
 
 ## Gateway Lambda Template
 
-For shared tools used by multiple agents, **Kiro creates Lambda handlers** in `gateway/handlers/`. The pre-built CDK stack (`cdk/lib/gateway-tools-stack.ts`) automatically discovers and deploys these as Lambda functions.
+For shared tools used by multiple agents, **Kiro creates Lambda handlers** in `cdk/gateway/handlers/`. The pre-built CDK stack (`cdk/stacks/gateway_tools.py`) automatically discovers and deploys these as Lambda functions.
 
 ```
-gateway/handlers/{tool_name}/
+cdk/gateway/handlers/{tool_name}/
 ├── handler.py         # Lambda function handler (Python 3.11) - KIRO GENERATES THIS
+├── mock_data.json     # Mock data bundled with Lambda - KIRO GENERATES THIS
 └── requirements.txt   # Dependencies (if any beyond boto3)
 ```
 
@@ -337,7 +341,7 @@ def lambda_handler(event, context):
     return json.dumps(result)
 ```
 
-**gateway/schemas/{tool_name}.json** - Tool schema for Gateway registration:
+**cdk/gateway/schemas/{tool_name}.json** - Tool schema for Gateway registration:
 ```json
 {
     "name": "{tool_name}",
@@ -380,13 +384,13 @@ Tools follow the snake_case pattern: `{system}_{operation}`
 
 1. **Map Agent IDs to Folders**: Each `confirmedAgents[].id` becomes a folder under `agents/`. Use the ID directly without modification.
 
-2. **Organize Tools by Assignment**: Place tools in the agent folder that uses them. If a tool is used by multiple agents, place it in `agents/shared/tools/`.
+2. **Organize Tools by Assignment**: Place tools in the agent folder that uses them. If a tool is used by multiple agents, create it as a Gateway Lambda in `cdk/gateway/handlers/{tool_name}/`.
 
 3. **Use Consistent Naming**: All file names use snake_case. Agent folders match agent IDs exactly.
 
 4. **Include Entry Point**: Always include `agents/main.py` as the workflow entry point that orchestrates all agents.
 
-5. **Mock Data Structure**: Organize mock data by system name, with one JSON file per operation.
+5. **Mock Data Bundling**: For Gateway Lambda handlers, include `mock_data.json` in the same directory as `handler.py`. Mock data is bundled with each Lambda at deploy time.
 
 ## Fallback Instructions
 

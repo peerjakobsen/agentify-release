@@ -53,7 +53,7 @@ The Demo Viewer spawns \`agents/main.py\` with specific CLI arguments and enviro
 | Variable | Description |
 |----------|-------------|
 | \`AGENTIFY_TABLE_NAME\` | DynamoDB table name for persistent events |
-| \`AGENTIFY_TABLE_REGION\` | AWS region for DynamoDB table |
+| \`AWS_REGION\` | AWS region for DynamoDB table |
 
 ### Example: main.py Entry Point
 
@@ -95,13 +95,13 @@ def parse_args():
 
 def validate_environment():
     """Validate required environment variables are set."""
-    required_vars = ['AGENTIFY_TABLE_NAME', 'AGENTIFY_TABLE_REGION']
+    required_vars = ['AGENTIFY_TABLE_NAME', 'AWS_REGION']
     missing = [var for var in required_vars if not os.environ.get(var)]
     if missing:
         raise EnvironmentError(f"Missing required environment variables: {', '.join(missing)}")
     return {
         'table_name': os.environ['AGENTIFY_TABLE_NAME'],
-        'table_region': os.environ['AGENTIFY_TABLE_REGION']
+        'table_region': os.environ['AWS_REGION']
     }
 
 
@@ -481,7 +481,7 @@ class DynamoDBEventWriter:
 
     def __init__(self):
         self.table_name = os.environ['AGENTIFY_TABLE_NAME']
-        self.table_region = os.environ['AGENTIFY_TABLE_REGION']
+        self.table_region = os.environ['AWS_REGION']
         self.dynamodb = boto3.resource('dynamodb', region_name=self.table_region)
         self.table = self.dynamodb.Table(self.table_name)
         self._workflow_id: Optional[str] = None
@@ -848,14 +848,14 @@ aws dynamodb query \\
   --table-name $AGENTIFY_TABLE_NAME \\
   --key-condition-expression "workflow_id = :wf" \\
   --expression-attribute-values '{":wf":{"S":"wf-a1b2c3d4"}}' \\
-  --region $AGENTIFY_TABLE_REGION
+  --region $AWS_REGION
 \`\`\`
 
 ### Test stdout Events Locally
 
 \`\`\`bash
 AGENTIFY_TABLE_NAME=test-table \\
-AGENTIFY_TABLE_REGION=us-east-1 \\
+AWS_REGION=us-east-1 \\
 python agents/main.py \\
   --prompt "Test prompt" \\
   --workflow-id "wf-test1234" \\

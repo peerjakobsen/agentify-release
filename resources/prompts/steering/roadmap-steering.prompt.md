@@ -100,7 +100,7 @@ For each agent in the design:
 #### Final Item: Main Orchestrator
 - Prompt for Kiro to create `agents/main.py` — the LOCAL entry point
 - Prompt must specify CLI contract: `--prompt`, `--workflow-id`, `--trace-id`
-- Prompt must specify env vars: `AGENTIFY_TABLE_NAME`, `AGENTIFY_TABLE_REGION`
+- Prompt must specify env vars: `AGENTIFY_TABLE_NAME`, `AWS_REGION`
 - Prompt must specify stdout event emission for Demo Viewer
 - Acceptance: Running main.py produces stdout events
 
@@ -498,7 +498,7 @@ Create `agents/main.py` as the LOCAL entry point:
 
 2. **Environment Variables**:
    - Read `AGENTIFY_TABLE_NAME` for DynamoDB table
-   - Read `AGENTIFY_TABLE_REGION` for AWS region
+   - Read `AWS_REGION` for AWS region
 
 3. **stdout Event Emission** (JSON lines format):
    - `graph_structure` on startup with agent topology

@@ -162,16 +162,17 @@ For tools used by multiple agents, deploy as Lambda functions behind AgentCore G
 - You want unified observability via CloudWatch
 
 **Folder structure:**
-- Handler code: `gateway/handlers/{tool_name}/handler.py` (Python 3.11)
-- Tool schema: `gateway/schemas/{tool_name}.json`
-- CDK stack: `cdk/lib/gateway-tools-stack.ts` (auto-deploys all handlers)
+- Handler code: `cdk/gateway/handlers/{tool_name}/handler.py` (Python 3.11)
+- Mock data: `cdk/gateway/handlers/{tool_name}/mock_data.json` (bundled with Lambda)
+- Tool schema: `cdk/gateway/schemas/{tool_name}.json`
+- CDK stack: `cdk/stacks/gateway_tools.py` (auto-deploys all handlers)
 
 ### Gateway Lambda Function Structure
 
-Lambda handlers live in `gateway/handlers/{tool_name}/handler.py` and are deployed by the CDK stack (`cdk/lib/gateway-tools-stack.ts`):
+Lambda handlers live in `cdk/gateway/handlers/{tool_name}/handler.py` and are deployed by the CDK stack (`cdk/stacks/gateway_tools.py`):
 
 ```python
-# gateway/handlers/sap_get_inventory/handler.py
+# cdk/gateway/handlers/sap_get_inventory/handler.py
 
 import json
 
@@ -325,8 +326,8 @@ aws lambda add-permission \
 
 ```bash
 # Required environment variables for agent runtime
-AGENTIFY_DYNAMODB_TABLE={table_name}
-AGENTIFY_AWS_REGION={region}
+AGENTIFY_TABLE_NAME={table_name}
+AWS_REGION={region}
 AGENTIFY_WORKFLOW_ID={workflow_id}
 OTEL_EXPORTER_OTLP_ENDPOINT=https://xray.{region}.amazonaws.com
 ```

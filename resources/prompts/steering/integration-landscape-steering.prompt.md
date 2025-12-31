@@ -198,7 +198,7 @@ Tools are deployed differently based on their usage pattern:
 | Tool Type | Deployment | Location | Connection Method |
 |-----------|------------|----------|-------------------|
 | Per-Agent | Local @tool | `agents/{id}/tools/` | Direct function call |
-| Shared | Gateway Lambda | `gateway/handlers/` | MCP client to Gateway endpoint |
+| Shared | Gateway Lambda | `cdk/gateway/handlers/` | MCP client to Gateway endpoint |
 
 **Shared tools** (used by 2+ agents) should be deployed as Lambda functions behind AgentCore Gateway. This provides:
 - Single deployment, multiple consumers
@@ -206,9 +206,9 @@ Tools are deployed differently based on their usage pattern:
 - Unified observability via CloudWatch
 - Consistent tool behavior across all agents
 
-**Lambda Handler Location:** `gateway/handlers/{tool_name}/handler.py` (Python 3.11)
+**Lambda Handler Location:** `cdk/gateway/handlers/{tool_name}/handler.py` (Python 3.11)
 
-**CDK Deployment:** The `cdk/lib/gateway-tools-stack.ts` stack automatically discovers and deploys all handlers in `gateway/handlers/`. Tool schemas go in `gateway/schemas/{tool_name}.json`.
+**CDK Deployment:** The `cdk/stacks/gateway_tools.py` stack automatically discovers and deploys all handlers in `cdk/gateway/handlers/`. Tool schemas go in `cdk/gateway/schemas/{tool_name}.json`.
 
 **Per-agent tools** (used by 1 agent) should be deployed locally using the `@tool` decorator. This provides:
 - Simpler deployment (deploys with agent code)

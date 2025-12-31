@@ -2,7 +2,7 @@
 Gateway Tools stack for Agentify Infrastructure.
 
 This module defines Lambda functions for AgentCore Gateway tools.
-It dynamically discovers handlers from the gateway/handlers/ directory
+It dynamically discovers handlers from the cdk/gateway/handlers/ directory
 and creates Lambda functions for each one.
 
 Each Lambda function:
@@ -31,7 +31,7 @@ class GatewayToolsStack(Stack):
     """
     Gateway Tools infrastructure stack for Agentify.
 
-    Dynamically discovers Lambda handlers from gateway/handlers/ and deploys
+    Dynamically discovers Lambda handlers from cdk/gateway/handlers/ and deploys
     each as a Lambda function with AgentCore invoke permissions.
 
     Key features:
@@ -69,13 +69,12 @@ class GatewayToolsStack(Stack):
     def _get_handlers_directory(self) -> Path:
         """Get the gateway/handlers directory path.
 
-        The handlers directory is located at {project_root}/gateway/handlers/
-        relative to where the CDK app runs from.
+        The handlers directory is located at cdk/gateway/handlers/
+        relative to the CDK stacks directory.
         """
-        # CDK runs from the cdk/ directory, so go up two levels to project root
+        # gateway/ is inside cdk/, so go up one level from stacks/ to cdk/
         cdk_dir = Path(__file__).parent.parent
-        project_root = cdk_dir.parent
-        return project_root / "gateway" / "handlers"
+        return cdk_dir / "gateway" / "handlers"
 
     def _discover_handlers(self) -> list[str]:
         """Discover handler directories in gateway/handlers/.

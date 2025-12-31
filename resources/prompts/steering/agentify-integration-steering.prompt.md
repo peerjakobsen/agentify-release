@@ -107,7 +107,7 @@ The Demo Viewer polls DynamoDB for tool call events to visualize workflow execut
 
 The instrumentation context correlates events across tool invocations within a single workflow execution.
 
-### Module: `shared/instrumentation.py`
+### Module: `agents/shared/instrumentation.py`
 
 ```python
 """
@@ -124,7 +124,7 @@ import time
 import uuid
 from typing import Any, Callable, ParamSpec, TypeVar
 
-from .dynamodb_client import write_tool_event
+from agents.shared.dynamodb_client import write_tool_event
 
 logger = logging.getLogger(__name__)
 
@@ -289,7 +289,7 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
 
 ## DynamoDB Client Pattern
 
-### Module: `shared/dynamodb_client.py`
+### Module: `agents/shared/dynamodb_client.py`
 
 ```python
 """
@@ -510,7 +510,7 @@ def invoke(event: dict[str, Any]) -> dict[str, Any]:
     try:
         # Set instrumentation context if session_id provided
         if session_id:
-            from shared.instrumentation import set_instrumentation_context
+            from agents.shared.instrumentation import set_instrumentation_context
             set_instrumentation_context(session_id, '{agent_id}')
             logger.info(f'Set instrumentation context: session={session_id[:8]}...')
 
@@ -542,7 +542,7 @@ def invoke(event: dict[str, Any]) -> dict[str, Any]:
     finally:
         # Clear instrumentation context
         if session_id:
-            from shared.instrumentation import clear_instrumentation_context
+            from agents.shared.instrumentation import clear_instrumentation_context
             clear_instrumentation_context()
 
 
@@ -565,7 +565,7 @@ All tools use @instrument_tool for observability.
 """
 
 from strands import tool
-from shared.instrumentation import instrument_tool
+from agents.shared.instrumentation import instrument_tool
 
 
 @tool                    # Strands decorator FIRST (makes it available to agent)
