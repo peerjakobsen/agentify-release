@@ -11,7 +11,9 @@
  * 5b. Ensures .gitignore has entries for sensitive files
  * 6. Generates .agentify/config.json
  * 7. Creates .kiro/steering/agentify-integration.md
- * 8. Auto-opens cdk/README.md for deployment instructions
+ * 8. Installs Agentify Power to .kiro/powers/agentify/
+ * 9. Auto-opens cdk/README.md for deployment instructions
+ * 10. Shows success notification with summary
  */
 
 import * as vscode from 'vscode';
@@ -21,6 +23,7 @@ import { getProfileDiscoveryService } from '../services/profileDiscoveryService'
 import { getConfigService } from '../services/configService';
 import {
   extractBundledResources,
+  extractPowerResources,
   checkExistingCdkFolder,
   showOverwritePrompt,
   CDK_DEST_PATH,
@@ -69,6 +72,7 @@ export interface InitializationResult {
   cdkExtracted?: boolean;
   scriptsExtracted?: boolean;
   steeringFileCreated?: boolean;
+  powerInstalled?: boolean;
 }
 
 /**
@@ -459,12 +463,28 @@ export async function handleInitializeProject(
     console.warn('[Agentify] Steering file creation error:', message);
   }
 
-  // Step 8: Auto-open README.md if CDK was extracted
+  // Step 8: Install Agentify Power (non-blocking - errors don't fail initialization)
+  let powerInstalled = false;
+  try {
+    const powerResult = await extractPowerResources(context.extensionPath, workspaceRoot);
+    if (powerResult.success) {
+      powerInstalled = true;
+      console.log('[Agentify] Power installed:', powerResult.message);
+    } else {
+      console.warn('[Agentify] Power installation failed:', powerResult.message);
+    }
+  } catch (error) {
+    // Log error but don't fail initialization
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.warn('[Agentify] Power installation error:', message);
+  }
+
+  // Step 9: Auto-open README.md if CDK was extracted
   if (extractionResult.cdkExtracted) {
     await openReadme(workspaceRoot);
   }
 
-  // Step 9: Show success notification with summary
+  // Step 10: Show success notification with summary
   await showSuccessNotification(
     region,
     extractionResult.cdkExtracted,
@@ -479,5 +499,6 @@ export async function handleInitializeProject(
     cdkExtracted: extractionResult.cdkExtracted,
     scriptsExtracted: extractionResult.scriptsExtracted,
     steeringFileCreated,
+    powerInstalled,
   };
 }

@@ -1,6 +1,6 @@
 /**
  * Resource Extraction Service
- * Handles extraction of bundled CDK and script resources from the extension
+ * Handles extraction of bundled CDK, scripts, and power resources from the extension
  * to the user's workspace during project initialization.
  *
  * Uses VS Code's workspace.fs API for cross-platform file operations.
@@ -15,6 +15,7 @@ import * as fs from 'fs';
  */
 export const CDK_SOURCE_PATH = 'resources/cdk';
 export const SCRIPTS_SOURCE_PATH = 'resources/scripts';
+export const POWER_SOURCE_PATH = 'resources/agentify-power';
 
 /**
  * Destination paths in the workspace
@@ -23,6 +24,9 @@ export const SCRIPTS_SOURCE_PATH = 'resources/scripts';
 export const CDK_DEST_PATH = 'cdk';
 export const SCRIPTS_DEST_PATH = 'scripts';
 export const GATEWAY_DEST_PATH = 'cdk/gateway';
+export const POWER_DEST_PATH = '.kiro/powers/agentify';
+export const POWERS_DIR_PATH = '.kiro/powers';
+export const POWERS_MANIFEST_PATH = '.kiro/powers/manifest.json';
 
 /**
  * QuickPick options for overwrite prompt
@@ -43,6 +47,16 @@ export interface ExtractionResult {
   cdkPath: string | null;
   scriptsPath: string | null;
   gatewayPath: string | null;
+  message: string;
+}
+
+/**
+ * Result of power installation operation
+ */
+export interface PowerInstallResult {
+  success: boolean;
+  powerPath: string | null;
+  manifestUpdated: boolean;
   message: string;
 }
 
@@ -160,7 +174,7 @@ async function copyDirectoryRecursive(
  * @param destPath Relative path within workspace
  * @returns Full destination path on success, null on failure
  */
-async function extractResourceDirectory(
+export async function extractResourceDirectory(
   extensionPath: string,
   workspaceRoot: string,
   sourcePath: string,
@@ -360,6 +374,125 @@ export async function extractBundledResources(
     cdkPath,
     scriptsPath,
     gatewayPath,
+    message,
+  };
+}
+
+/**
+ * Powers manifest structure for .kiro/powers/manifest.json
+ */
+interface PowersManifest {
+  powers: string[];
+}
+
+/**
+ * Update the powers manifest to include the agentify power
+ * Creates the manifest if it doesn't exist
+ *
+ * @param workspaceRoot Absolute path to workspace root
+ * @returns true if manifest was updated successfully
+ */
+async function updatePowersManifest(workspaceRoot: string): Promise<boolean> {
+  const manifestPath = path.join(workspaceRoot, POWERS_MANIFEST_PATH);
+  const manifestUri = vscode.Uri.file(manifestPath);
+
+  try {
+    let manifest: PowersManifest = { powers: [] };
+
+    // Try to read existing manifest
+    try {
+      const content = await vscode.workspace.fs.readFile(manifestUri);
+      const existing = JSON.parse(content.toString());
+      if (existing && Array.isArray(existing.powers)) {
+        manifest = existing;
+      }
+    } catch {
+      // Manifest doesn't exist, use default
+    }
+
+    // Add agentify power if not already present
+    const powerRef = './agentify';
+    if (!manifest.powers.includes(powerRef)) {
+      manifest.powers.push(powerRef);
+    }
+
+    // Write manifest
+    const manifestContent = JSON.stringify(manifest, null, 2) + '\n';
+    await vscode.workspace.fs.writeFile(
+      manifestUri,
+      Buffer.from(manifestContent, 'utf-8')
+    );
+
+    console.log('[ResourceExtraction] Updated powers manifest');
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[ResourceExtraction] Failed to update powers manifest: ${message}`);
+    return false;
+  }
+}
+
+/**
+ * Extract the Agentify power to the workspace
+ * Installs to .kiro/powers/agentify/ and updates the powers manifest
+ *
+ * @param extensionPath Absolute path to extension root (context.extensionPath)
+ * @param workspaceRoot Absolute path to workspace root
+ * @returns Power installation result
+ */
+export async function extractPowerResources(
+  extensionPath: string,
+  workspaceRoot: string
+): Promise<PowerInstallResult> {
+  console.log(`[ResourceExtraction] Installing Agentify power to ${workspaceRoot}`);
+
+  // Create .kiro/powers directory if needed
+  const powersDirPath = path.join(workspaceRoot, POWERS_DIR_PATH);
+  const powersDirUri = vscode.Uri.file(powersDirPath);
+
+  try {
+    await vscode.workspace.fs.createDirectory(powersDirUri);
+  } catch {
+    // Directory might already exist, that's fine
+  }
+
+  // Check if power already exists - delete for fresh install (always overwrite)
+  const powerExists = await checkFolderExists(workspaceRoot, POWER_DEST_PATH);
+  if (powerExists) {
+    console.log('[ResourceExtraction] Removing existing power for refresh');
+    await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, POWER_DEST_PATH)));
+  }
+
+  // Extract power resources
+  const powerPath = await extractResourceDirectory(
+    extensionPath,
+    workspaceRoot,
+    POWER_SOURCE_PATH,
+    POWER_DEST_PATH
+  );
+
+  if (!powerPath) {
+    return {
+      success: false,
+      powerPath: null,
+      manifestUpdated: false,
+      message: 'Failed to extract power resources',
+    };
+  }
+
+  // Update powers manifest
+  const manifestUpdated = await updatePowersManifest(workspaceRoot);
+
+  const message = manifestUpdated
+    ? 'Agentify power installed successfully'
+    : 'Agentify power installed but manifest update failed';
+
+  console.log(`[ResourceExtraction] Power installation: ${message}`);
+
+  return {
+    success: true,
+    powerPath,
+    manifestUpdated,
     message,
   };
 }

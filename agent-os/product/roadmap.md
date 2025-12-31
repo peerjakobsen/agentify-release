@@ -1004,7 +1004,7 @@ project/
 6. Test: Initialize new project, verify `agents/shared/` extracted correctly
 7. Test: Run Kiro roadmap on new project, verify agents import from pre-bundled shared `M`
 
-29. [ ] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
+29. [x] Agentify Power Package — Create Kiro Power that bundles steering guidance and enforcement hooks. **This is a generic package installed during project initialization (extends Item 4), not per-ideation.** Ensures all agent code follows Agentify patterns from day one:
 
 **Power Structure:**
 ```
@@ -1071,7 +1071,7 @@ agentify-power/
 - Bundled with Agentify extension in `resources/agentify-power/`
 - Can be published to Kiro community powers for standalone use `M`
 
-30. [ ] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook`:
+30. [x] Observability Enforcement Hook — Create `observability-enforcer.kiro.hook`:
 
 **Trigger:**
 - Event: `fileSaved`
@@ -1125,7 +1125,7 @@ Flag violations with specific line numbers and fix suggestions.
 - Warning for missing context cleanup
 - Inline suggestions for missing event emissions `M`
 
-31. [ ] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
+31. [x] CLI Contract Validation Hook — Create `cli-contract-validator.kiro.hook`:
 
 **Trigger:**
 - Event: `fileSaved`
@@ -1148,7 +1148,7 @@ Flag any missing arguments or environment variable reads.
 Suggest argparse setup if not present.
 `````S`
 
-32. [ ] Tool Pattern Hook — Create `tool-pattern.kiro.hook` (validates tool implementations):
+32. [x] Tool Pattern Hook — Create `tool-pattern.kiro.hook` (validates tool implementations):
 
 **Trigger:**
 - Event: `fileSaved`
@@ -1203,7 +1203,7 @@ Flag decorator order violations as errors. Suggest fixes for other issues.
 - Warning for missing docstring or type hints
 - Suggestions for mock data improvements `S`
 
-32.5. [ ] Gateway Lambda Handler Hook — Create `gateway-handler.kiro.hook` (validates shared Lambda tools):
+32.5. [x] Gateway Lambda Handler Hook — Create `gateway-handler.kiro.hook` (validates shared Lambda tools):
 
 **Trigger:**
 - Event: `fileSaved`
@@ -1251,7 +1251,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - Warning for missing mock_data.json
 - Suggestions for proper tool name parsing `S`
 
-33. [ ] Power Installation Integration — **Extend Project Initialization (Item 4)** to install Agentify Power during "Agentify: Initialize Project" command:
+33. [x] Power Installation Integration — **Extend Project Initialization (Item 4)** to install Agentify Power during "Agentify: Initialize Project" command:
 
 **Installation Flow:**
 1. After writing steering files, check if Agentify Power installed

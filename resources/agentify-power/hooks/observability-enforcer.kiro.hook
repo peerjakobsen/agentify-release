@@ -1,0 +1,131 @@
+---
+pattern: "agents/**/*.py"
+trigger: fileSaved
+description: Enforces Agentify observability patterns for all agent Python files
+---
+
+# Observability Enforcer Hook
+
+This hook enforces critical observability patterns for Agentify multi-agent workflows.
+
+## BLOCKING Violations
+
+These violations MUST be fixed before the file can be saved. They cause silent failures that break Demo Viewer integration.
+
+### 1. Recreation of agents/shared/ Modules
+
+**Check:** Detect local definitions of instrumentation functions that should be imported from `agents/shared/`.
+
+**Violation patterns to detect:**
+- `def instrument_tool(` - Local decorator definition
+- `def set_instrumentation_context(` - Local context setter
+- `def clear_instrumentation_context(` - Local context clearer
+- `def write_tool_event(` - Local DynamoDB writer
+- `def get_instrumentation_context(` - Local context getter
+- `class DynamoDBEventWriter` - Local event writer class
+
+**Required pattern:**
+```python
+from agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context
+from agents.shared.dynamodb_client import write_tool_event
+```
+
+**Error message:**
+```
+BLOCKING: Local definition of '{function_name}' detected.
+
+This function must be imported from agents/shared/, not defined locally.
+The shared modules integrate with the Demo Viewer's DynamoDB polling.
+
+Fix: Replace local definition with:
+  from agents.shared.instrumentation import {function_name}
+
+See POWER.md Pattern 1 for details.
+```
+
+### 2. Wrong Decorator Order
+
+**Check:** When both `@instrument_tool` and `@tool` decorators are present, verify correct stacking order.
+
+**Correct order (decorators read bottom-up):**
+```python
+@instrument_tool         # Line N (applied second, wraps the tool)
+@tool                    # Line N+1 (applied first, makes it a tool)
+def my_function():
+```
+
+**Wrong order to detect:**
+```python
+@tool                    # WRONG - tool is on top
+@instrument_tool         # WRONG - instrument_tool is below
+def my_function():
+```
+
+**Detection logic:**
+1. Find all function definitions with both decorators
+2. For each function, check decorator line positions
+3. `@instrument_tool` must appear on a line ABOVE `@tool`
+4. They should be on adjacent lines (no gap)
+
+**Error message:**
+```
+BLOCKING: Wrong decorator order on function '{function_name}'.
+
+Decorators are applied bottom-up. @instrument_tool must be ABOVE @tool:
+
+  @instrument_tool   # Wraps the tool for monitoring
+  @tool              # Makes it available to the agent
+  def {function_name}(...):
+
+Current order prevents instrumentation from capturing tool events.
+
+See POWER.md Pattern 2 for details.
+```
+
+## WARNING Violations
+
+These violations show in the problems panel but do not block file save.
+
+### 3. Missing clear_instrumentation_context() in Finally
+
+**Check:** When `set_instrumentation_context()` is called in a try block, verify `clear_instrumentation_context()` exists in the corresponding finally block.
+
+**Detection logic:**
+1. Find all `try:` blocks containing `set_instrumentation_context(`
+2. Check if there's a corresponding `finally:` block
+3. Verify `clear_instrumentation_context()` is called in the finally block
+
+**Correct pattern:**
+```python
+try:
+    set_instrumentation_context(session_id, agent_name)
+    # ... agent logic
+finally:
+    clear_instrumentation_context()
+```
+
+**Warning message:**
+```
+WARNING: Missing clear_instrumentation_context() in finally block.
+
+Found set_instrumentation_context() at line {line_num} but no corresponding
+clear_instrumentation_context() in finally block.
+
+This can cause context leakage between requests. Add a finally block:
+
+  try:
+      set_instrumentation_context(session_id, agent_name)
+      # ... your code
+  finally:
+      clear_instrumentation_context()
+
+See POWER.md Pattern 3 for details.
+```
+
+## Validation Rules Summary
+
+| Rule | Severity | Pattern to Detect | Required Fix |
+|------|----------|-------------------|--------------|
+| Local instrumentation defs | BLOCKING | `def instrument_tool(`, etc. | Import from agents.shared |
+| Wrong decorator order | BLOCKING | `@tool` above `@instrument_tool` | Swap decorator positions |
+| Missing context cleanup | WARNING | `set_instrumentation_context` without `finally` | Add finally block |

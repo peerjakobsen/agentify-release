@@ -1,0 +1,237 @@
+---
+pattern: "agents/*/tools/*.py"
+trigger: fileSaved
+description: Enforces tool function patterns for Agentify observability
+---
+
+# Tool Pattern Hook
+
+This hook enforces correct patterns for tool functions in Agentify multi-agent workflows. Tool files are located in `agents/{agent_name}/tools/` directories.
+
+## BLOCKING Violations
+
+These violations MUST be fixed before the file can be saved.
+
+### 1. Wrong Decorator Order on Tool Functions
+
+**Check:** When both `@instrument_tool` and `@tool` decorators are present on a function, verify correct stacking order.
+
+**Correct order (decorators read bottom-up):**
+```python
+@instrument_tool         # Line N (applied second, wraps the tool)
+@tool                    # Line N+1 (applied first, registers as tool)
+def my_tool(param: str) -> dict:
+    """Tool description."""
+    return {'result': param}
+```
+
+**Wrong order to detect:**
+```python
+@tool                    # WRONG - tool is on top
+@instrument_tool         # WRONG - instrument_tool is below
+def my_tool(param: str) -> dict:
+```
+
+**Detection logic:**
+1. Find all `def` statements with both `@instrument_tool` and `@tool` decorators
+2. For each decorated function, determine decorator positions
+3. `@instrument_tool` line number must be LESS than `@tool` line number
+4. Decorators should be adjacent (no blank lines between)
+
+**Error message:**
+```
+BLOCKING: Wrong decorator order on tool function '{function_name}' at line {line_num}.
+
+Decorators are applied bottom-up. For tool observability to work:
+
+  @instrument_tool   # ON TOP (wraps for monitoring)
+  @tool              # FIRST (registers as Strands tool)
+  def {function_name}(...):
+
+Your current order prevents @instrument_tool from capturing tool events.
+The Demo Viewer will not show this tool's execution.
+
+See POWER.md Pattern 2 for details.
+```
+
+### 2. Locally-Defined @instrument_tool Decorator
+
+**Check:** Ensure `@instrument_tool` is imported from `agents.shared.instrumentation`, not defined locally.
+
+**Patterns to detect:**
+- `def instrument_tool(` - Local decorator function definition
+- `instrument_tool = ` - Local assignment/alias
+- `class InstrumentTool` - Local class-based decorator
+
+**Required import:**
+```python
+from agents.shared.instrumentation import instrument_tool
+```
+
+**Detection logic:**
+1. If file uses `@instrument_tool` decorator, check for local definition
+2. Flag if `def instrument_tool(` or `instrument_tool =` appears in file
+3. Verify import from `agents.shared.instrumentation` exists
+
+**Error message:**
+```
+BLOCKING: Local definition of @instrument_tool decorator detected at line {line_num}.
+
+The @instrument_tool decorator MUST be imported from the shared module:
+
+  from agents.shared.instrumentation import instrument_tool
+
+Local definitions will not integrate with the Demo Viewer's DynamoDB polling.
+Tool events will not appear in the observability panel.
+
+See POWER.md Pattern 1 for details.
+```
+
+## WARNING Violations
+
+These violations show in the problems panel but do not block file save.
+
+### 3. Missing @tool Decorator
+
+**Check:** Functions that look like tools (have docstrings describing actions) but lack the `@tool` decorator.
+
+**Heuristic detection:**
+1. Find functions with docstrings containing action verbs (get, fetch, create, update, delete, search, query, etc.)
+2. Check if function has return type annotation
+3. If function appears to be a tool but lacks `@tool` decorator, warn
+
+**Warning message:**
+```
+WARNING: Function '{function_name}' may be missing @tool decorator.
+
+This function appears to be a tool based on its docstring, but lacks the
+@tool decorator. If this is an agent tool, add decorators:
+
+  from strands import tool
+  from agents.shared.instrumentation import instrument_tool
+
+  @instrument_tool
+  @tool
+  def {function_name}(...):
+      \"\"\"{docstring_preview}...\"\"\"
+
+If this is a helper function (not a tool), you can ignore this warning.
+```
+
+### 4. Missing Docstring on Tool Function
+
+**Check:** Tool functions (decorated with `@tool`) should have docstrings for agent understanding.
+
+**Detection logic:**
+1. Find all functions with `@tool` decorator
+2. Check if function has a docstring (triple-quoted string after def)
+3. Warn if docstring is missing or empty
+
+**Warning message:**
+```
+WARNING: Tool function '{function_name}' at line {line_num} is missing a docstring.
+
+Agent models use docstrings to understand when and how to use tools.
+Add a descriptive docstring:
+
+  @instrument_tool
+  @tool
+  def {function_name}(param: str) -> dict:
+      \"\"\"
+      Description of what this tool does.
+
+      Args:
+          param: Description of parameter
+
+      Returns:
+          Description of return value
+      \"\"\"
+      ...
+
+Well-documented tools improve agent decision-making.
+```
+
+### 5. Missing Type Hints on Tool Parameters
+
+**Check:** Tool function parameters should have type hints for agent understanding.
+
+**Detection logic:**
+1. Find all functions with `@tool` decorator
+2. Check each parameter (excluding self, *args, **kwargs)
+3. Warn if parameter lacks type annotation
+
+**Warning message:**
+```
+WARNING: Tool function '{function_name}' has parameters without type hints.
+
+Parameters missing hints: {param_list}
+
+Type hints help the agent understand expected input types:
+
+  @instrument_tool
+  @tool
+  def {function_name}(
+      query: str,           # Add type hint
+      limit: int = 10,      # Add type hint
+      filters: dict = None  # Add type hint
+  ) -> dict:
+      ...
+
+Type-annotated tools produce more reliable agent behavior.
+```
+
+## Complete Tool File Template
+
+```python
+"""
+Tools for {Agent Name}.
+
+All tools use @instrument_tool for observability integration.
+"""
+
+from strands import tool
+from agents.shared.instrumentation import instrument_tool
+
+
+@instrument_tool
+@tool
+def get_resource(resource_id: str) -> dict:
+    """
+    Retrieve a resource by its ID.
+
+    Args:
+        resource_id: The unique identifier of the resource
+
+    Returns:
+        dict containing resource data with keys: id, name, status
+    """
+    # Tool implementation
+    return {'id': resource_id, 'name': 'Example', 'status': 'active'}
+
+
+@instrument_tool
+@tool
+def search_resources(query: str, limit: int = 10) -> list:
+    """
+    Search for resources matching the query.
+
+    Args:
+        query: Search query string
+        limit: Maximum number of results (default: 10)
+
+    Returns:
+        list of matching resource dictionaries
+    """
+    # Tool implementation
+    return [{'id': '1', 'match': query}]
+```
+
+## Validation Rules Summary
+
+| Rule | Severity | Pattern to Detect | Required Fix |
+|------|----------|-------------------|--------------|
+| Wrong decorator order | BLOCKING | `@tool` above `@instrument_tool` | Swap decorator positions |
+| Local @instrument_tool | BLOCKING | `def instrument_tool(` | Import from agents.shared |
+| Missing @tool | WARNING | Tool-like function without decorator | Add @tool decorator |
+| Missing docstring | WARNING | `@tool` function without docstring | Add descriptive docstring |
+| Missing type hints | WARNING | `@tool` parameters without types | Add type annotations |

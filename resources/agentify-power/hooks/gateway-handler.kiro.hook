@@ -1,0 +1,249 @@
+---
+pattern: "cdk/gateway/handlers/*/handler.py"
+trigger: fileSaved
+description: Validates Lambda handler patterns for API Gateway integration
+---
+
+# Gateway Handler Hook
+
+This hook validates Lambda handler patterns in `cdk/gateway/handlers/*/handler.py` files. These handlers serve as API Gateway integrations and require specific patterns for correct operation.
+
+## WARNING Violations
+
+All checks in this hook are WARNING level - they show in the problems panel but do not block file save.
+
+### 1. External File References Without Proper Path Handling
+
+**Check:** File path constructions must use `os.path.dirname(__file__)` for Lambda compatibility.
+
+**Why this matters:**
+Lambda functions run with a different working directory than local development. Relative paths break when deployed. The `__file__` variable provides the handler's actual location.
+
+**Patterns to detect:**
+- `open('` or `open("` without `os.path` prefix
+- `Path('` or `Path("` without using `__file__`
+- String paths like `'./data.json'` or `'data/file.txt'`
+
+**Correct pattern:**
+```python
+import os
+
+# Get path relative to handler file location
+data_path = os.path.join(os.path.dirname(__file__), 'data.json')
+
+with open(data_path, 'r') as f:
+    data = json.load(f)
+```
+
+**Warning message:**
+```
+WARNING: File reference at line {line_num} may not work in Lambda.
+
+Detected: {code_snippet}
+
+Lambda functions run with a different working directory. Use __file__ for paths:
+
+  import os
+
+  # CORRECT - relative to handler location
+  file_path = os.path.join(os.path.dirname(__file__), 'filename.json')
+
+  # WRONG - will fail in Lambda
+  file_path = './filename.json'
+  file_path = 'data/filename.json'
+
+See POWER.md Pattern 4 for Lambda handler patterns.
+```
+
+### 2. Non-String Return Values
+
+**Check:** Handler functions must return JSON strings, not Python dicts/objects.
+
+**Why this matters:**
+API Gateway Lambda proxy integration expects string response bodies. Returning a dict directly causes serialization issues. Always use `json.dumps()`.
+
+**Detection logic:**
+1. Find `return` statements in handler/main functions
+2. Check if return value is wrapped in `json.dumps(`
+3. Flag returns of dict literals `{...}`, variables, or function calls without json.dumps
+
+**Patterns to warn about:**
+```python
+return {'status': 'ok'}           # WRONG - dict literal
+return result                      # WRONG - likely a dict variable
+return process(event)              # WRONG - if function returns dict
+```
+
+**Correct pattern:**
+```python
+import json
+
+def handler(event, context):
+    result = {'status': 'ok', 'data': process(event)}
+    return json.dumps(result)      # CORRECT - JSON string
+```
+
+**Warning message:**
+```
+WARNING: Return statement at line {line_num} may not be a JSON string.
+
+Detected: return {code_snippet}
+
+API Gateway expects string response bodies. Wrap returns in json.dumps():
+
+  import json
+
+  def handler(event, context):
+      result = {'status': 'ok', 'data': ...}
+      return json.dumps(result)  # Always return string
+
+  # For error responses:
+      return json.dumps({'error': str(e)})
+
+See POWER.md Pattern 4 for Lambda handler patterns.
+```
+
+### 3. Missing mock_data.json Check
+
+**Check:** Handlers should support local development by checking for co-located mock data.
+
+**Why this matters:**
+During local development and testing, handlers can use mock data instead of calling real services. This enables rapid iteration without AWS dependencies.
+
+**Detection logic:**
+1. Check if file references `mock_data.json`
+2. Check for `os.path.exists(` pattern with mock file
+3. Warn if no mock data handling found
+
+**Correct pattern:**
+```python
+import json
+import os
+
+def handler(event, context):
+    # Support local development with mock data
+    mock_path = os.path.join(os.path.dirname(__file__), 'mock_data.json')
+    if os.path.exists(mock_path):
+        with open(mock_path, 'r') as f:
+            return json.dumps(json.load(f))
+
+    # Production logic...
+    return json.dumps({'status': 'ok'})
+```
+
+**Warning message:**
+```
+WARNING: No mock_data.json handling detected in handler.
+
+For local development, add mock data support:
+
+  import json
+  import os
+
+  def handler(event, context):
+      # Check for co-located mock data
+      mock_path = os.path.join(os.path.dirname(__file__), 'mock_data.json')
+      if os.path.exists(mock_path):
+          with open(mock_path, 'r') as f:
+              return json.dumps(json.load(f))
+
+      # Production logic below...
+
+Then create mock_data.json in the same directory as handler.py.
+
+See POWER.md Pattern 4 for Lambda handler patterns.
+```
+
+## Complete Handler Template
+
+```python
+"""
+Lambda handler for {endpoint_name} API.
+
+Supports local development via co-located mock_data.json.
+"""
+
+import json
+import logging
+import os
+from typing import Any
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+
+def handler(event: dict, context: Any) -> str:
+    """
+    Handle API Gateway requests.
+
+    Args:
+        event: API Gateway event dictionary
+        context: Lambda context object
+
+    Returns:
+        JSON string response for API Gateway
+    """
+    logger.info(f'Received event: {json.dumps(event)}')
+
+    # Support local development with mock data
+    mock_path = os.path.join(os.path.dirname(__file__), 'mock_data.json')
+    if os.path.exists(mock_path):
+        logger.info('Using mock data for local development')
+        with open(mock_path, 'r') as f:
+            return json.dumps(json.load(f))
+
+    try:
+        # Extract request parameters
+        body = json.loads(event.get('body', '{}'))
+        query_params = event.get('queryStringParameters', {}) or {}
+
+        # Process request...
+        result = process_request(body, query_params)
+
+        # Return JSON string (required by API Gateway)
+        return json.dumps({
+            'statusCode': 200,
+            'body': result
+        })
+
+    except ValueError as e:
+        logger.error(f'Validation error: {e}')
+        return json.dumps({
+            'statusCode': 400,
+            'body': {'error': str(e)}
+        })
+
+    except Exception as e:
+        logger.error(f'Unexpected error: {e}')
+        return json.dumps({
+            'statusCode': 500,
+            'body': {'error': 'Internal server error'}
+        })
+
+
+def process_request(body: dict, params: dict) -> dict:
+    """Process the API request and return result."""
+    # Implementation here
+    return {'status': 'ok'}
+```
+
+## Handler Directory Structure
+
+```
+cdk/gateway/handlers/
+  get_workflows/
+    handler.py         # Lambda handler
+    mock_data.json     # Mock response for local dev
+  create_workflow/
+    handler.py
+    mock_data.json
+  ...
+```
+
+## Validation Rules Summary
+
+| Rule | Severity | Pattern to Detect | Required Fix |
+|------|----------|-------------------|--------------|
+| Bad file paths | WARNING | `open('file.json')` without `__file__` | Use `os.path.dirname(__file__)` |
+| Dict returns | WARNING | `return {...}` or `return result` | Wrap in `json.dumps()` |
+| No mock data | WARNING | No `mock_data.json` reference | Add mock data support |
