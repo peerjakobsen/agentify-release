@@ -58,29 +58,44 @@ Extract and document the core architecture from `tech.md`:
 
 Format this as a blockquote that users can reference. This same context is embedded in every item's prompt.
 
-### 3. Roadmap Items (Multiple Sections)
+### 3. Pre-existing CDK Infrastructure (Section)
+
+**CRITICAL:** The project includes a pre-existing CDK folder structure that Kiro must NOT modify. Explain this clearly:
+
+```
+cdk/                              # PRE-EXISTING — DO NOT MODIFY
+├── app.py                        # CDK entry point
+├── config.py                     # Environment configuration
+├── stacks/
+│   ├── networking.py             # VPC, endpoints, security groups
+│   ├── observability.py          # DynamoDB table
+│   └── gateway_tools.py          # Auto-discovers handlers (Python)
+└── gateway/
+    └── handlers/                 # EMPTY — Kiro populates this
+```
+
+The `gateway_tools.py` stack automatically discovers any handlers in `cdk/gateway/handlers/*/` during deployment. Kiro's job is to CREATE handler directories inside this existing structure.
+
+### 4. Roadmap Items (Multiple Sections)
 
 Generate items in this order:
 
-#### Item 1: Mock Data Infrastructure
-- Prompt for Kiro to create shared mock data files (JSON) and utilities
-- These are used by both local agent tools AND Gateway Lambda handlers
-- Acceptance: JSON files load correctly, mock_utils imports work
+#### Item 1: Gateway Lambda Handlers (Shared Tools)
+- Prompt for Kiro to create Python Lambda handlers by **injecting them into the existing CDK structure**
+- Path: `cdk/gateway/handlers/{tool_name}/handler.py` (MUST be inside `cdk/` folder)
+- Each handler directory contains its own `mock_data.json` (bundled with Lambda at deploy time)
+- Each handler parses tool name from context, loads its bundled mock data, returns JSON
+- NOTE: The CDK stack (`cdk/stacks/gateway_tools.py`) already exists — Kiro does NOT create or modify it
+- NOTE: Gateway setup scripts already exist — Kiro does NOT create them
+- Acceptance: Handler files exist in correct path, `cdk deploy` succeeds (auto-discovers handlers)
 
-#### Item 2: Gateway Lambda Handlers
-- Prompt for Kiro to create Python Lambda handlers in `gateway/handlers/{tool_name}/handler.py`
-- Each handler parses tool name from context, loads mock data, returns JSON
-- Create tool schemas in `gateway/schemas/{tool_name}.json`
-- NOTE: The CDK stack (`cdk/lib/gateway-tools-stack.ts`) and Gateway setup scripts (`gateway/setup_gateway.py`) are pre-built templates — Kiro does NOT create these
-- Acceptance: Handler files exist, schemas are valid JSON, `cdk deploy` succeeds
-
-#### Items 3-N: One Item Per Agent
+#### Items 2-N: One Item Per Agent
 For each agent in the design:
 - Prompt for Kiro to create `agents/{agent_name}.py` with Agent class and inline tools
-- LOCAL tools defined inline using @tool decorator
+- LOCAL tools defined inline using @tool decorator (mock data embedded or loaded from `agents/mock_data/`)
 - SHARED tools accessed via Gateway MCP client (not imported locally)
 - MUST mention AgentCore deployment in the prompt
-- Reference mock data from Item 1
+- Each agent can have its own mock data in `agents/mock_data/{agent_name}/` for local tools
 
 #### Final Item: Main Orchestrator
 - Prompt for Kiro to create `agents/main.py` — the LOCAL entry point
@@ -116,7 +131,7 @@ Each roadmap item MUST follow this exact format:
 
 ### Prompt Template
 
-Every prompt MUST include this architecture context block at the top:
+Every prompt MUST include this architecture context block at the top. **Customize sections 6-7 based on item type:**
 
 ```
 Create {description of what to create}.
@@ -136,6 +151,16 @@ This is an Agentify demo project. Follow these rules strictly:
 5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md:
    - stdout JSON lines for graph visualization (node_start, node_stop, etc.)
    - DynamoDB writes for tool_call events
+
+6. **Pre-existing CDK Structure**: The project has a pre-built CDK folder. Do NOT create or modify:
+   - `cdk/stacks/*.py` — infrastructure stacks (already exist)
+   - `cdk/app.py`, `cdk/config.py` — CDK configuration (already exist)
+   - Gateway setup scripts (already exist)
+
+7. **Where to Create Files**:
+   - Gateway Lambda handlers: `cdk/gateway/handlers/{tool_name}/` (inject into existing CDK structure)
+   - Agent files: `agents/{agent_name}.py`
+   - Local orchestrator: `agents/main.py`
 
 Reference these steering files:
 - .kiro/steering/tech.md — deployment architecture
@@ -204,96 +229,61 @@ This roadmap guides you through building your Agentify demo project step by step
 
 ---
 
-## Item 1: Mock Data Infrastructure
+## Pre-existing CDK Infrastructure
 
-**Purpose:** Create shared mock data files and utilities for all agent tools.
+The project includes a pre-built CDK folder structure. **Do NOT modify these files:**
 
-**Depends on:** None
+```
+cdk/                              # PRE-EXISTING — DO NOT MODIFY
+├── app.py                        # CDK entry point
+├── config.py                     # Environment configuration
+├── stacks/
+│   ├── networking.py             # VPC, endpoints, security groups
+│   ├── observability.py          # DynamoDB table
+│   └── gateway_tools.py          # Auto-discovers handlers (Python)
+└── gateway/
+    └── handlers/                 # EMPTY — Kiro populates this directory
+```
 
-**Files to be created:**
-- `mocks/zendesk/tickets.json` — Sample ticket data
-- `mocks/zendesk/customers.json` — Sample customer data
-- `tools/mock_utils.py` — Helper functions for loading mock data
-
-**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
-
-\`\`\`
-Create the mock data infrastructure for an Agentify demo project.
-
-## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
-
-This is an Agentify demo project. Follow these rules strictly:
-
-1. **Agent Deployment**: Agents deploy to Amazon Bedrock AgentCore Runtime via `agentcore deploy`. They run REMOTELY, not locally.
-
-2. **Local Orchestrator Only**: Only `agents/main.py` runs locally. It orchestrates by calling remote agents.
-
-3. **Strands SDK**: Use `from strands import Agent, tool` for agent and tool definitions.
-
-4. **Mock Tools**: All integrations are mocks returning realistic fake data. This is a demo system.
-
-5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md
-
-Reference: .kiro/steering/integration-landscape.md for mock data schemas
-
-## Requirements
-
-Create mock data infrastructure:
-
-1. Create `mocks/` directory with subdirectories per system (zendesk/, ecommerce/, etc.)
-
-2. Create JSON files with realistic sample data matching schemas in integration-landscape.md
-
-3. Create `tools/mock_utils.py` with:
-   - `load_mock_data(system: str, filename: str) -> dict` — loads JSON from mocks/{system}/{filename}.json
-   - `MockToolDecorator` class that wraps tool calls to emit DynamoDB events
-
-4. Include 3-5 realistic records per mock data file using industry-appropriate terminology
-
-Do NOT create any agent code yet — this item is only for mock data infrastructure.
-\`\`\`
-
-**Acceptance Criteria (verify after Kiro implements):**
-- [ ] `mocks/` directory exists with JSON files
-- [ ] `from tools.mock_utils import load_mock_data` works in Python
-- [ ] JSON files contain realistic sample data
+**How auto-discovery works:** The `gateway_tools.py` stack scans `cdk/gateway/handlers/*/` during deployment. Any directory containing a `handler.py` file becomes a Lambda function. Kiro's job is to CREATE new handler directories inside this existing structure.
 
 ---
 
-## Item 2: Gateway Lambda Handlers
+## Item 1: Gateway Lambda Handlers (Shared Tools)
 
-**Purpose:** Create Python Lambda handlers for shared tools that will be deployed behind AgentCore Gateway.
+**Purpose:** Create Python Lambda handlers for shared tools by injecting them into the existing CDK structure.
 
-**Depends on:** Item 1
+**Depends on:** None
 
-**Files to be created:**
-- `gateway/handlers/zendesk_get_ticket/handler.py` — Lambda handler (Python 3.11)
-- `gateway/handlers/zendesk_get_ticket/requirements.txt` — Lambda dependencies
-- `gateway/schemas/zendesk_get_ticket.json` — Tool schema for Gateway registration
+**Files to be created (inject into existing CDK structure):**
+- `cdk/gateway/handlers/zendesk_get_ticket/handler.py` — Lambda handler (Python 3.11)
+- `cdk/gateway/handlers/zendesk_get_ticket/requirements.txt` — Dependencies (if needed)
+- `cdk/gateway/handlers/zendesk_get_ticket/mock_data.json` — Mock data bundled with Lambda
+- (Repeat for each shared tool defined in integration-landscape.md)
 
-**Pre-built files (do NOT create — already in project template):**
-- `cdk/lib/gateway-tools-stack.ts` — Auto-discovers and deploys handlers
-- `gateway/setup_gateway.py` — Creates Gateway and registers targets
-- `gateway/cleanup_gateway.py` — Tears down Gateway resources
+**Pre-built files (do NOT create or modify):**
+- `cdk/stacks/gateway_tools.py` — Auto-discovers and deploys handlers
+- `cdk/gateway/setup_gateway.py` — Creates Gateway and registers targets
+- `cdk/gateway/cleanup_gateway.py` — Tears down Gateway resources
 
 **Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
 
 \`\`\`
-Create Lambda handlers for shared tools that will be deployed behind AgentCore Gateway.
+Create Lambda handlers for shared tools by injecting them into the existing CDK folder structure.
 
 ## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
 
 This is an Agentify demo project. Follow these rules strictly:
 
-1. **Shared Tools**: Tools used by multiple agents are deployed as Lambda functions behind Gateway.
+1. **Inject Into Existing CDK Structure**: The CDK infrastructure already exists. You are ONLY creating handler directories inside `cdk/gateway/handlers/`. Do NOT create or modify any files in `cdk/stacks/`.
 
-2. **Pre-built Infrastructure**: The CDK stack and Gateway setup scripts already exist — do NOT create them:
-   - `cdk/lib/gateway-tools-stack.ts` auto-discovers handlers in `gateway/handlers/`
-   - `gateway/setup_gateway.py` creates Gateway and registers Lambda targets
+2. **Exact Path**: Create handlers at `cdk/gateway/handlers/{tool_name}/` — the `cdk/` prefix is required.
 
-3. **Your Task**: Create ONLY the Lambda handler code and tool schemas.
+3. **Auto-Discovery**: The pre-existing `cdk/stacks/gateway_tools.py` automatically discovers any directory in `cdk/gateway/handlers/` that contains a `handler.py` file. It deploys each as a Lambda function.
 
-4. **Lambda Handler Pattern**: Gateway passes tool name with target prefix. Parse using:
+4. **Mock Data Bundling**: Each handler directory MUST contain its own `mock_data.json` file. This file is bundled with the Lambda at deploy time. Do NOT reference external paths like `../../mocks/` — Lambda cannot access files outside its deployment package.
+
+5. **Lambda Handler Pattern**: Gateway passes tool name with target prefix. Parse using:
    ```python
    delimiter = "___"
    tool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')
@@ -301,20 +291,16 @@ This is an Agentify demo project. Follow these rules strictly:
        tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
    ```
 
-5. **Mock Data**: Lambda handlers load mock data from `mocks/` directory.
-
-Reference: 
-- .kiro/steering/integration-landscape.md for shared tools list
+Reference:
+- .kiro/steering/integration-landscape.md for shared tools list and mock data schemas
 - .kiro/steering/tech.md for Gateway Lambda patterns
 
 ## Requirements
 
-### 1. Lambda Handlers (Python 3.11)
-For each shared tool in integration-landscape.md, create `gateway/handlers/{tool_name}/`:
-- `handler.py` — Lambda handler with `lambda_handler(event, context)` function
-- `requirements.txt` — Minimal dependencies (if any beyond boto3)
+### 1. Lambda Handler Directories (Python 3.11)
+For each shared tool in integration-landscape.md, create `cdk/gateway/handlers/{tool_name}/` containing:
 
-Handler pattern:
+**handler.py** — Lambda handler:
 ```python
 import json
 import os
@@ -325,55 +311,74 @@ def lambda_handler(event, context):
     tool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')
     if delimiter in tool_name:
         tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
-    
-    # Load mock data
-    mock_file = os.path.join(os.path.dirname(__file__), '..', '..', 'mocks', 'system', 'data.json')
+
+    # Load mock data bundled with this Lambda
+    mock_file = os.path.join(os.path.dirname(__file__), 'mock_data.json')
     with open(mock_file) as f:
-        data = json.load(f)
-    
+        mock_data = json.load(f)
+
     # Process input from event
-    param = event.get('param')
-    
-    # Return result as JSON string
-    return json.dumps({"result": data})
+    input_params = event  # event contains the tool input parameters
+
+    # Return mock response (customize based on tool logic)
+    return json.dumps({"status": "success", "data": mock_data})
 ```
 
-### 2. Tool Schemas
-Create `gateway/schemas/{tool_name}.json` with MCP tool schema:
+**mock_data.json** — Realistic sample data for this specific tool:
 ```json
 {
-    "name": "tool_name",
-    "description": "Tool description",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "param": {"type": "string", "description": "Parameter description"}
-        },
-        "required": ["param"]
-    }
+    "records": [
+        {"id": "1", "field": "value"},
+        {"id": "2", "field": "value"}
+    ]
 }
 ```
 
-Do NOT create CDK stacks or Gateway setup scripts — they are pre-built templates.
+**requirements.txt** — Only if dependencies beyond boto3 are needed (often empty)
+
+### 2. Directory Structure After Implementation
+```
+cdk/gateway/handlers/
+├── zendesk_get_ticket/
+│   ├── handler.py
+│   ├── mock_data.json
+│   └── requirements.txt
+├── zendesk_get_comments/
+│   ├── handler.py
+│   ├── mock_data.json
+│   └── requirements.txt
+└── customer_lookup/
+    ├── handler.py
+    ├── mock_data.json
+    └── requirements.txt
+```
+
+### 3. What NOT to Create
+- Do NOT create `cdk/stacks/*.py` files — they already exist
+- Do NOT create `cdk/app.py` or `cdk/config.py` — they already exist
+- Do NOT create gateway setup scripts — they already exist
+- Do NOT create a separate `mocks/` directory — mock data goes inside each handler directory
 \`\`\`
 
 **Acceptance Criteria (verify after Kiro implements):**
-- [ ] `gateway/handlers/{tool_name}/handler.py` exists for each shared tool
-- [ ] `gateway/schemas/{tool_name}.json` exists for each shared tool
+- [ ] `cdk/gateway/handlers/{tool_name}/handler.py` exists for each shared tool
+- [ ] `cdk/gateway/handlers/{tool_name}/mock_data.json` exists with realistic sample data
+- [ ] Handler code loads mock data from same directory (not external path)
 - [ ] Handler code uses the correct tool name parsing pattern
-- [ ] `cdk deploy GatewayToolsStack` succeeds (discovers handlers automatically)
-- [ ] `python gateway/setup_gateway.py` registers targets successfully
+- [ ] `cd cdk && cdk deploy` succeeds (auto-discovers all handlers)
+- [ ] No files in `cdk/stacks/` were created or modified
 
 ---
 
-## Item 3: Ticket Analyzer Agent
+## Item 2: Ticket Analyzer Agent
 
 **Purpose:** Create the Ticket Analyzer agent with local tools and Gateway connection.
 
-**Depends on:** Items 1, 2, 3
+**Depends on:** Item 1 (Gateway Lambda Handlers must be deployed first)
 
 **Files to be created:**
 - `agents/ticket_analyzer.py` — Agent with local and Gateway tools
+- `agents/mock_data/ticket_analyzer/sentiment_responses.json` — Mock data for local tools (optional)
 
 **Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
 
@@ -391,10 +396,12 @@ This is an Agentify demo project. Follow these rules strictly:
 3. **Strands SDK**: Use `from strands import Agent, tool` for agent and tool definitions.
 
 4. **Two Tool Types**:
-   - LOCAL tools: Defined inline with @tool decorator (agent-specific)
-   - SHARED tools: Loaded from Gateway via MCP client (used by multiple agents)
+   - LOCAL tools: Defined inline with @tool decorator (agent-specific, mock data embedded or in `agents/mock_data/`)
+   - SHARED tools: Loaded from Gateway via MCP client (Lambda handlers in `cdk/gateway/handlers/`)
 
 5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md
+
+6. **Pre-existing Infrastructure**: Gateway Lambda handlers already exist in `cdk/gateway/handlers/`. Do NOT recreate them.
 
 Reference these steering files:
 - .kiro/steering/tech.md — deployment architecture and Gateway patterns
@@ -410,17 +417,18 @@ Create `agents/ticket_analyzer.py` with:
    - Role: Analyzes incoming support tickets for sentiment, urgency, and classification
 
 2. **LOCAL Tools** (defined inline with @tool, only this agent uses them):
-   - `aiml_analyze_sentiment(text: str) -> dict` — Returns sentiment analysis
-   - `aiml_classify_text(text: str, categories: list) -> str` — Classifies text
+   - `aiml_analyze_sentiment(text: str) -> dict` — Returns mock sentiment analysis
+   - `aiml_classify_text(text: str, categories: list) -> str` — Returns mock classification
+   - Mock data can be embedded directly in the tool function or loaded from `agents/mock_data/`
 
-3. **SHARED Tools** (loaded from Gateway, used by multiple agents):
+3. **SHARED Tools** (loaded from Gateway, Lambda handlers already exist in `cdk/gateway/handlers/`):
    ```python
    from strands.tools.mcp import MCPClient
    from mcp.client.streamable_http import streamablehttp_client
-   
+
    def get_gateway_tools(gateway_url: str, access_token: str) -> list:
        client = MCPClient(lambda: streamablehttp_client(
-           gateway_url, 
+           gateway_url,
            headers={"Authorization": f"Bearer {access_token}"}
        ))
        with client:
@@ -432,12 +440,13 @@ Create `agents/ticket_analyzer.py` with:
 
 5. Agent emits events to DynamoDB for tool calls
 
-This agent deploys to AgentCore Runtime. Include a comment with the deployment command.
+This agent deploys to AgentCore Runtime. Include a comment with the deployment command:
+# Deploy: agentcore deploy agents/ticket_analyzer.py
 \`\`\`
 
 **Acceptance Criteria (verify after Kiro implements):**
 - [ ] `agents/ticket_analyzer.py` exists with Agent class
-- [ ] Local tools (aiml_*) defined with @tool decorator
+- [ ] Local tools (aiml_*) defined with @tool decorator returning mock data
 - [ ] Shared tools loaded from Gateway via MCP client
 - [ ] `agentcore deploy agents/ticket_analyzer.py` succeeds
 - [ ] Both local and shared tools work when agent is invoked
@@ -516,15 +525,33 @@ This file runs LOCALLY — it is NOT deployed to AgentCore.
 
 Before outputting the roadmap, verify:
 
+### Architecture & Deployment
 1. [ ] Every prompt includes the full CRITICAL ARCHITECTURE block
 2. [ ] Every agent item's prompt mentions "deploys to AgentCore Runtime"
 3. [ ] Every agent item's acceptance criteria includes `agentcore deploy` command
 4. [ ] The main.py item's prompt explicitly states it runs LOCALLY
 5. [ ] The main.py item's prompt specifies CLI contract (--prompt, --workflow-id, --trace-id)
-6. [ ] Items are ordered by dependencies
-7. [ ] No item assumes local-only execution for agents
-8. [ ] All tools are mocks (demo system)
-9. [ ] Event emission patterns are referenced in each prompt
+
+### CDK Structure & Injection
+6. [ ] Gateway Lambda handlers use path `cdk/gateway/handlers/{tool_name}/` (with `cdk/` prefix)
+7. [ ] Each Lambda handler directory contains `mock_data.json` (bundled, not external reference)
+8. [ ] Lambda handler example loads mock data from same directory: `os.path.dirname(__file__)`
+9. [ ] Pre-existing CDK structure is clearly documented (stacks/, app.py, config.py)
+10. [ ] "What NOT to Create" section explicitly lists `cdk/stacks/*.py` as off-limits
+11. [ ] No references to `gateway/handlers/` without the `cdk/` prefix
+12. [ ] No references to external `mocks/` directory for Lambda handlers
+
+### Dependencies & Order
+13. [ ] Items are ordered by dependencies (Gateway handlers first, then agents, then orchestrator)
+14. [ ] No item assumes local-only execution for agents
+15. [ ] All tools are mocks (demo system)
+16. [ ] Event emission patterns are referenced in each prompt
+
+### Path Consistency
+17. [ ] All paths use forward slashes (not backslashes)
+18. [ ] Agent files go in `agents/` directory
+19. [ ] Lambda handlers go in `cdk/gateway/handlers/` directory
+20. [ ] No TypeScript references (CDK is Python: `cdk/stacks/gateway_tools.py`)
 
 ## Output
 
