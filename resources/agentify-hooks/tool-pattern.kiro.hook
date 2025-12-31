@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "name": "Tool Pattern Enforcer",
-  "description": "Enforces correct decorator order for Agentify tools: @instrument_tool ON TOP, @tool BOTTOM",
+  "description": "Enforces correct decorator order for Agentify tools: @instrument_tool above @tool",
   "version": "1",
   "when": {
     "type": "fileEdited",
@@ -9,7 +9,7 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "IMPORTANT: Check this file for decorator order violations.\n\nCORRECT ORDER (decorators read bottom-up):\n```python\n@instrument_tool         # ON TOP = outer wrapper\n@tool                    # BOTTOM = inner wrapper (closest to function)\ndef my_tool():\n    ...\n```\n\nWRONG ORDER to detect and fix:\n```python\n@tool                    # WRONG - @tool should be BOTTOM\n@instrument_tool         # WRONG - @instrument_tool should be ON TOP\ndef my_tool():\n    ...\n```\n\nIf you find the wrong decorator order, FIX IT immediately by swapping the decorators so @instrument_tool is on top and @tool is on the bottom (closest to the function).\n\nAlso verify:\n1. @instrument_tool is imported from agents.shared.instrumentation\n2. @tool is imported from strands\n3. No local definitions of instrument_tool exist in this file"
+    "prompt": "Check this file for decorator order violations on tool functions.\n\nCORRECT decorator stacking (exactly as shown):\n```python\n@instrument_tool\n@tool\ndef my_tool():\n    ...\n```\n\nThe @instrument_tool decorator MUST appear on the line ABOVE @tool.\nThe @tool decorator MUST appear on the line directly ABOVE the function def.\n\nWRONG order to detect:\n```python\n@tool\n@instrument_tool\ndef my_tool():\n    ...\n```\n\nIf you see @tool appearing above @instrument_tool, swap them so @instrument_tool is on the line above @tool.\n\nAlso verify:\n1. @instrument_tool is imported from agents.shared.instrumentation\n2. @tool is imported from strands\n3. No local definitions of instrument_tool exist in this file"
   },
   "shortName": "tool-pattern"
 }

@@ -9,7 +9,7 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "BLOCKING: Check this file for observability violations.\n\n1. LOCAL DEFINITIONS - If this file defines any of these functions locally, REMOVE them and import from agents.shared instead:\n   - instrument_tool\n   - set_instrumentation_context\n   - clear_instrumentation_context\n   - write_tool_event\n\nCORRECT imports:\n```python\nfrom agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context\nfrom agents.shared.dynamodb_client import write_tool_event\n```\n\n2. DECORATOR ORDER - If both @instrument_tool and @tool are present:\n   - @instrument_tool must be ON TOP (outer wrapper)\n   - @tool must be BOTTOM (closest to function)\n\nFix any violations found."
+    "prompt": "Check this file for observability violations.\n\n1. LOCAL DEFINITIONS - If this file defines any of these functions locally, REMOVE them and import from agents.shared instead:\n   - instrument_tool\n   - set_instrumentation_context\n   - clear_instrumentation_context\n   - write_tool_event\n\nCORRECT imports:\n```python\nfrom agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context\nfrom agents.shared.dynamodb_client import write_tool_event\n```\n\n2. DECORATOR ORDER - If both @instrument_tool and @tool are present, they MUST be stacked like this:\n```python\n@instrument_tool\n@tool\ndef my_tool():\n    ...\n```\n@instrument_tool must be on the line ABOVE @tool.\n\nFix any violations found."
   },
   "shortName": "observability-enforcer"
 }
