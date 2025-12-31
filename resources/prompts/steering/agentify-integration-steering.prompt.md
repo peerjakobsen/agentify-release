@@ -4,13 +4,13 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 ## Your Responsibilities
 
-1. **Define Event Emission Contract**: Document the DynamoDB event schema that agents must emit for the Demo Viewer to display execution state.
+1. **Define the Instrumentation Decorator**: Document the `@instrument_tool` decorator that wraps all tool functions for real-time monitoring.
 
-2. **Establish Agent ID Tracing**: Map agent IDs to trace identifiers for OpenTelemetry correlation and CloudWatch X-Ray integration.
+2. **Establish Context Management**: Document the `set_instrumentation_context()` pattern for correlating events across agent invocations.
 
-3. **Document CLI Invocation Pattern**: Define how the Demo Viewer triggers workflow execution via subprocess.
+3. **Document AgentCore Handler Pattern**: Define how agents expose entry points using `@app.entrypoint`.
 
-4. **Specify Required Decorators**: List the agentify_observability decorators that must be applied to agents and tools.
+4. **Specify DynamoDB Event Schema**: Document the event schema for tool calls stored in DynamoDB and polled by the Demo Viewer.
 
 ## Input Schema
 
@@ -36,7 +36,7 @@ You will receive a JSON object with the following structure:
 
 - **agentDesign.confirmedAgents**: Array of agents that will emit observability events. Each agent's ID is used for tracing and event attribution.
 
-- **agentDesign.confirmedOrchestration**: The orchestration pattern determines how events flow and which Strands streaming method to use.
+- **agentDesign.confirmedOrchestration**: The orchestration pattern determines how events flow between agents.
 
 ## Output Format
 
@@ -53,382 +53,676 @@ inclusion: always
 
 # Agentify Integration
 
-## Event Emission Contract
+## Overview
 
-[Explain the dual-mode event architecture: stdout for graph events, DynamoDB for tool events. Include the event schema table.]
+[Explain the DynamoDB-based observability architecture: tool events polled by Demo Viewer for real-time visualization.]
 
-## Agent IDs for Tracing
+## Instrumentation Context
 
-[List all agent IDs and their trace correlation requirements. Include workflow_id and trace_id patterns.]
+[Document set_instrumentation_context(), get_instrumentation_context(), clear_instrumentation_context() functions.]
 
-## CLI Invocation Pattern
+## @instrument_tool Decorator
 
-[Document how Demo Viewer triggers workflow execution via subprocess with required arguments and environment variables.]
+[Document the decorator pattern for tool observability with started/completed/error events.]
 
-## Required Decorators
+## AgentCore Handler Pattern
 
-[List agentify_observability decorators and where to apply them.]
-
-## Stdout Event Schema
-
-[Document JSON event types emitted to stdout for real-time graph updates.]
+[Document @app.entrypoint pattern for remote agents.]
 
 ## DynamoDB Event Schema
 
-[Document event schema for tool calls and agent spans stored in DynamoDB.]
+[Document event schema for tool calls stored in DynamoDB.]
+
+## Agent ID Reference
+
+[List all agent IDs from confirmedAgents.]
 ```
 
-## Event Emission Architecture
+## Observability Architecture
 
-The Demo Viewer consumes events from two sources:
-
-1. **stdout (real-time)**: Graph structure, node start/stop, workflow completion
-2. **DynamoDB (polled)**: Tool calls, agent spans, persistent history
+The Demo Viewer polls DynamoDB for tool call events to visualize workflow execution:
 
 ```
-┌─────────────────┐     spawn      ┌─────────────────┐    stdout     ┌─────────────────┐
-│   Demo Viewer   │───────────────>│  agents/main.py │──────────────>│  Graph Updates  │
-│   (Extension)   │                │  (Python)       │               │  (Real-time)    │
-└────────┬────────┘                └────────┬────────┘               └─────────────────┘
-         │                                  │
-         │  poll 500ms                      │  DynamoDB writes
-         │                                  │
-         ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                              DynamoDB Event Table                                    │
-│  PK: workflow_id  |  SK: timestamp  |  event_type, agent_name, payload, trace_id   │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────┐                    ┌─────────────────────────────────────────┐
+│   Demo Viewer   │  poll every 500ms  │           DynamoDB Event Table          │
+│   (Extension)   │◄──────────────────►│  PK: session_id  |  SK: timestamp       │
+└─────────────────┘                    │  event_id, agent, tool_name, status     │
+                                       └─────────────────────────────────────────┘
+                                                          ▲
+                                                          │ write events
+                                                          │
+┌─────────────────────────────────────────────────────────┴───────────────────────┐
+│                              AgentCore Runtime                                   │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐       │
+│  │   Agent 1   │    │   Agent 2   │    │   Agent 3   │    │   Agent N   │       │
+│  │ @instrument │    │ @instrument │    │ @instrument │    │ @instrument │       │
+│  │   _tool     │    │   _tool     │    │   _tool     │    │   _tool     │       │
+│  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘       │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## CLI Invocation Pattern Template
+**Key Principle**: Tool execution is never blocked by monitoring. All DynamoDB writes are fire-and-forget.
 
-The Demo Viewer spawns the workflow as a subprocess with these arguments:
+## Instrumentation Context Pattern
 
-```bash
-python agents/main.py \
-  --prompt "{user_prompt}" \
-  --workflow-id "{workflow_id}" \
-  --trace-id "{trace_id}"
-```
+The instrumentation context correlates events across tool invocations within a single workflow execution.
 
-### Placeholder Definitions
-
-| Placeholder | Description | Format | Example |
-|-------------|-------------|--------|---------|
-| `{user_prompt}` | User's natural language request | Free text | `Generate Q3 replenishment plan` |
-| `{workflow_id}` | Short workflow identifier | `wf-{8-char-uuid}` | `wf-abc12345` |
-| `{trace_id}` | OpenTelemetry trace ID | 32-char hex | `80e1afed08e019fc1110464cfa66635c` |
-| `{table_name}` | DynamoDB table name | String | `agentify-workflow-events` |
-| `{region}` | AWS region | String | `us-east-1` |
-
-### Environment Variables
-
-The subprocess inherits these environment variables:
-
-```bash
-AGENTIFY_DYNAMODB_TABLE={table_name}
-AGENTIFY_AWS_REGION={region}
-OTEL_EXPORTER_OTLP_ENDPOINT=https://xray.{region}.amazonaws.com
-```
-
-## Required Decorators
-
-Apply these decorators from the `agentify_observability` package:
-
-### Initialization
+### Module: `shared/instrumentation.py`
 
 ```python
-from agentify_observability import init_workflow
+"""
+Instrumentation context management for Agentify observability.
 
-# Call at workflow start in main.py
-init_workflow(
-    workflow_id=args.workflow_id,
-    trace_id=args.trace_id,
-    table_name=os.environ.get("AGENTIFY_DYNAMODB_TABLE"),
-    region=os.environ.get("AGENTIFY_AWS_REGION", "us-east-1")
-)
+AgentCore containers handle one request at a time, so module-level globals
+are safe for storing context without thread-local storage.
+"""
+
+import functools
+import json
+import logging
+import time
+import uuid
+from typing import Any, Callable, ParamSpec, TypeVar
+
+from .dynamodb_client import write_tool_event
+
+logger = logging.getLogger(__name__)
+
+P = ParamSpec('P')
+R = TypeVar('R')
+
+# Module-level globals for instrumentation context
+_session_id: str | None = None
+_agent_name: str | None = None
+
+
+def set_instrumentation_context(session_id: str, agent_name: str) -> None:
+    """
+    Set the instrumentation context for the current request.
+
+    Call this at the start of each agent handler invocation,
+    before any tools are invoked.
+
+    Args:
+        session_id: UUID identifying the workflow execution
+        agent_name: Logical agent name (e.g., 'analyzer', 'responder')
+    """
+    global _session_id, _agent_name
+    _session_id = session_id
+    _agent_name = agent_name
+    logger.debug(f'Set instrumentation context: session={session_id[:8]}..., agent={agent_name}')
+
+
+def get_instrumentation_context() -> tuple[str | None, str | None]:
+    """Get the current instrumentation context (session_id, agent_name)."""
+    return _session_id, _agent_name
+
+
+def clear_instrumentation_context() -> None:
+    """Clear the instrumentation context after request completes."""
+    global _session_id, _agent_name
+    _session_id = None
+    _agent_name = None
+    logger.debug('Cleared instrumentation context')
+
+
+def _get_timestamp() -> str:
+    """Get current timestamp in ISO format with microseconds."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec='microseconds')
+
+
+def _truncate_params(params: dict[str, Any], max_length: int = 200) -> str:
+    """Truncate parameters JSON to max length for storage."""
+    try:
+        params_str = json.dumps(params)
+        if len(params_str) > max_length:
+            return params_str[:max_length - 3] + '...'
+        return params_str
+    except Exception:
+        return '{}'
+
+
+def _truncate_error(error: str, max_length: int = 500) -> str:
+    """Truncate error message to max length."""
+    if len(error) > max_length:
+        return error[:max_length - 3] + '...'
+    return error
+
+
+def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
+    """
+    Decorator to instrument tool functions for real-time monitoring.
+
+    Writes 'started' event before tool execution and 'completed' or 'error'
+    event after, with duration_ms. Events are only written if instrumentation
+    context is set (session_id and agent_name available).
+
+    Usage:
+        @tool                    # Strands decorator FIRST
+        @instrument_tool         # Observability decorator ON TOP
+        def my_tool(param: str) -> dict:
+            ...
+
+    IMPORTANT: Always apply @tool first, then @instrument_tool on top.
+    """
+    tool_name = func.__name__
+
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        # Get context - if not set, skip instrumentation
+        session_id, agent_name = get_instrumentation_context()
+
+        if not session_id or not agent_name:
+            # No context = no events (graceful degradation)
+            return func(*args, **kwargs)
+
+        # Generate unique event ID for this invocation
+        event_id = str(uuid.uuid4())
+
+        # Capture parameters for logging
+        params = {}
+        if args:
+            params['args'] = [str(a)[:100] for a in args]
+        if kwargs:
+            params['kwargs'] = {k: str(v)[:100] for k, v in kwargs.items()}
+
+        # Record start time
+        start_time = time.time()
+        start_timestamp = _get_timestamp()
+
+        # Write 'started' event (fire-and-forget)
+        started_event = {
+            'session_id': session_id,
+            'timestamp': start_timestamp,
+            'event_id': event_id,
+            'agent': agent_name,
+            'tool_name': tool_name,
+            'parameters': _truncate_params(params),
+            'status': 'started',
+        }
+        write_tool_event(started_event)
+
+        try:
+            # Execute the actual tool function
+            result = func(*args, **kwargs)
+
+            # Calculate duration
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Write 'completed' event (fire-and-forget)
+            completed_event = {
+                'session_id': session_id,
+                'timestamp': _get_timestamp(),
+                'event_id': event_id,
+                'agent': agent_name,
+                'tool_name': tool_name,
+                'status': 'completed',
+                'duration_ms': duration_ms,
+            }
+            write_tool_event(completed_event)
+
+            return result
+
+        except Exception as e:
+            # Calculate duration even on error
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Write 'error' event (fire-and-forget)
+            error_event = {
+                'session_id': session_id,
+                'timestamp': _get_timestamp(),
+                'event_id': event_id,
+                'agent': agent_name,
+                'tool_name': tool_name,
+                'status': 'error',
+                'duration_ms': duration_ms,
+                'error_message': _truncate_error(str(e)),
+            }
+            write_tool_event(error_event)
+
+            # Re-raise the exception (don't swallow errors)
+            raise
+
+    return wrapper
 ```
 
-### Agent Span Decorator
+## DynamoDB Client Pattern
 
-Apply to agent creation functions:
+### Module: `shared/dynamodb_client.py`
 
 ```python
-from agentify_observability import agent_span
+"""
+DynamoDB client for writing tool call events.
 
-@agent_span(name="{agent_id}", role="{agent_role}")
-def create_{agent_id}() -> Agent:
-    """Create the {Agent Name} agent."""
-    # Agent creation code
-    pass
+All writes are fire-and-forget - monitoring should never block tool execution.
+"""
+
+import logging
+import os
+import time
+from typing import Any, TypedDict
+
+import boto3
+from botocore.exceptions import ClientError
+
+logger = logging.getLogger(__name__)
+
+# Environment variables
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+
+# SSM parameter path for tool events table name
+TOOL_EVENTS_TABLE_PARAM = '/agentify/services/dynamodb/tool-events-table'
+
+# TTL duration in seconds (2 hours for demo, adjust as needed)
+TTL_DURATION_SECONDS = 7200
+
+# Cached table name
+_table_name: str | None = None
+
+
+class ToolEvent(TypedDict, total=False):
+    """Schema for tool call events stored in DynamoDB."""
+    session_id: str          # UUID for workflow correlation (partition key)
+    timestamp: str           # ISO format with microseconds (sort key)
+    event_id: str           # UUID for event deduplication
+    agent: str              # Agent name that invoked the tool
+    tool_name: str          # Function name of the tool
+    parameters: str         # JSON string of input params (truncated)
+    status: str             # 'started', 'completed', or 'error'
+    duration_ms: int        # Execution time (for completed/error)
+    error_message: str      # Error description (for error events)
+    ttl: int                # Unix timestamp for automatic deletion
+
+
+def get_tool_events_table_name() -> str | None:
+    """
+    Get the DynamoDB table name from SSM Parameter Store.
+
+    Caches the result to avoid repeated SSM calls.
+    Returns None if parameter is not configured.
+    """
+    global _table_name
+
+    if _table_name is not None:
+        return _table_name
+
+    # Also check environment variable as fallback
+    env_table = os.environ.get('AGENTIFY_TABLE_NAME')
+    if env_table:
+        _table_name = env_table
+        return _table_name
+
+    try:
+        ssm = boto3.client('ssm', region_name=AWS_REGION)
+        response = ssm.get_parameter(Name=TOOL_EVENTS_TABLE_PARAM)
+        _table_name = response['Parameter']['Value']
+        logger.debug(f'Retrieved table name from SSM: {_table_name}')
+        return _table_name
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        logger.warning(f'Failed to get table name from SSM ({error_code})')
+        return None
+    except Exception as e:
+        logger.warning(f'Unexpected error getting table name: {e}')
+        return None
+
+
+def write_tool_event(event: dict[str, Any]) -> bool:
+    """
+    Write a tool call event to DynamoDB.
+
+    This is a fire-and-forget operation that logs warnings on failure
+    but NEVER raises exceptions. Tool execution must not be blocked
+    by monitoring failures.
+
+    Args:
+        event: Event data matching ToolEvent schema
+
+    Returns:
+        True if write succeeded, False otherwise
+    """
+    table_name = get_tool_events_table_name()
+    if not table_name:
+        logger.warning('Cannot write tool event: table not configured')
+        return False
+
+    try:
+        # Add TTL if not present
+        if 'ttl' not in event:
+            event['ttl'] = int(time.time()) + TTL_DURATION_SECONDS
+
+        # Get DynamoDB table
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table(table_name)
+
+        # Write event (fire-and-forget)
+        table.put_item(Item=event)
+
+        logger.debug(
+            f"Wrote tool event: {event.get('tool_name', 'unknown')} "
+            f"[{event.get('status', 'unknown')}]"
+        )
+        return True
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        logger.warning(f'DynamoDB write failed ({error_code}): {e}')
+        return False
+    except Exception as e:
+        logger.warning(f'Unexpected error writing tool event: {e}')
+        return False
+
+
+def query_tool_events(session_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    """
+    Query tool events for a session from DynamoDB.
+
+    Returns events sorted by timestamp in ascending order (oldest first).
+    Handles errors gracefully by returning an empty list.
+
+    Args:
+        session_id: The session ID to query
+        limit: Maximum number of events to return
+
+    Returns:
+        List of event dictionaries, or empty list on error
+    """
+    table_name = get_tool_events_table_name()
+    if not table_name:
+        return []
+
+    try:
+        from boto3.dynamodb.conditions import Key
+
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table(table_name)
+
+        # Query by session_id (partition key), sorted by timestamp (sort key)
+        response = table.query(
+            KeyConditionExpression=Key('session_id').eq(session_id),
+            Limit=limit,
+            ScanIndexForward=True,  # Ascending order by timestamp
+        )
+
+        items: list[dict[str, Any]] = response.get('Items', [])
+        return items
+
+    except Exception as e:
+        logger.warning(f'Error querying tool events: {e}')
+        return []
 ```
 
-### Tool Call Decorator
+## AgentCore Handler Pattern
 
-Apply to all tool functions:
+Each agent deployed to AgentCore Runtime uses the `@app.entrypoint` pattern:
+
+### Handler Template: `{agent_name}_handler.py`
 
 ```python
-from agentify_observability import tool_call
+"""
+AgentCore Runtime entry point for {Agent Name}.
 
-@tool_call(system="{system}", operation="{operation}")
-@tool
+This handler integrates with the AgentCore Runtime using BedrockAgentCoreApp
+and invokes the Strands-based {Agent Name} Agent.
+"""
+
+import json
+import logging
+import os
+from typing import Any
+
+from bedrock_agentcore.runtime import BedrockAgentCoreApp, BedrockAgentCoreContext
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create the AgentCore application
+app = BedrockAgentCoreApp()
+
+
+@app.entrypoint
+def invoke(event: dict[str, Any]) -> dict[str, Any]:
+    """
+    Handle incoming requests to the {Agent Name}.
+
+    Args:
+        event: Request payload containing 'prompt' and optional 'session_id'
+
+    Returns:
+        Response dictionary with agent output
+    """
+    logger.info(f'Received event: {json.dumps(event)}')
+
+    # Extract the prompt from the event
+    prompt = event.get('prompt', '')
+    if not prompt:
+        return {
+            'error': 'No prompt provided',
+            'usage': 'Send {"prompt": "your question here"}',
+        }
+
+    # Get session_id from AgentCore runtime context
+    ctx = BedrockAgentCoreContext()
+    session_id = ctx.get_session_id() or event.get('session_id', '')
+
+    try:
+        # Set instrumentation context if session_id provided
+        if session_id:
+            from shared.instrumentation import set_instrumentation_context
+            set_instrumentation_context(session_id, '{agent_id}')
+            logger.info(f'Set instrumentation context: session={session_id[:8]}...')
+
+        # Lazy import agent to speed up cold start
+        from agents.{agent_id}_agent import invoke_{agent_id}_agent
+
+        # Invoke the agent
+        logger.info(f'Invoking {Agent Name} Agent: {prompt[:100]}...')
+        response = invoke_{agent_id}_agent(prompt)
+
+        return {
+            'response': response,
+            'agent': '{agent_id}',
+            'session_id': session_id,
+        }
+
+    except ImportError as e:
+        logger.error(f'Failed to import agent: {e}')
+        return {
+            'error': f'Agent not available: {e}',
+            'prompt': prompt,
+        }
+    except Exception as e:
+        logger.error(f'Error invoking agent: {e}')
+        return {
+            'error': str(e),
+            'prompt': prompt,
+        }
+    finally:
+        # Clear instrumentation context
+        if session_id:
+            from shared.instrumentation import clear_instrumentation_context
+            clear_instrumentation_context()
+
+
+# Entry point for running as a module (local testing)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    logger.info(f'Starting {agent_id} agent on port {port}')
+    app.run(port=port)
+```
+
+## Tool Definition Pattern
+
+Tools must use the correct decorator stacking order:
+
+```python
+"""
+Tools for {Agent Name}.
+
+All tools use @instrument_tool for observability.
+"""
+
+from strands import tool
+from shared.instrumentation import instrument_tool
+
+
+@tool                    # Strands decorator FIRST (makes it available to agent)
+@instrument_tool         # Observability decorator ON TOP (wraps for monitoring)
 def {tool_name}(param: str) -> dict:
-    """Tool description."""
+    """
+    Tool description here.
+
+    Args:
+        param: Parameter description
+
+    Returns:
+        Result dictionary
+    """
     # Tool implementation
-    pass
+    result = do_something(param)
+    return {'result': result}
+
+
+@tool
+@instrument_tool
+def another_tool(input_data: dict) -> str:
+    """Another tool with instrumentation."""
+    # Implementation
+    return 'output'
 ```
 
-### Workflow Outcome
-
-Emit at workflow completion:
-
-```python
-from agentify_observability import workflow_outcome
-
-# After workflow completes
-workflow_outcome(
-    workflow_id=workflow_id,
-    status="completed",  # or "failed"
-    result=result_data,
-    execution_time_ms=duration
-)
-```
-
-## Stdout Event Schema
-
-Emit these JSON events to stdout (one per line, flushed immediately):
-
-### graph_structure
-
-Emit once at workflow start:
-
-```json
-{
-  "type": "graph_structure",
-  "workflow_id": "{workflow_id}",
-  "nodes": [
-    {"id": "{agent_id}", "name": "{Agent Name}", "role": "{role}"}
-  ],
-  "edges": [
-    {"from": "{source_agent_id}", "to": "{target_agent_id}"}
-  ],
-  "entry_points": ["{first_agent_id}"]
-}
-```
-
-### node_start
-
-Emit when agent begins execution:
-
-```json
-{
-  "type": "node_start",
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067200000,
-  "node_id": "{agent_id}"
-}
-```
-
-### node_stop
-
-Emit when agent completes:
-
-```json
-{
-  "type": "node_stop",
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067201234,
-  "node_id": "{agent_id}",
-  "status": "completed",
-  "execution_time_ms": 1234
-}
-```
-
-### workflow_complete
-
-Emit when entire workflow finishes:
-
-```json
-{
-  "type": "workflow_complete",
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067205000,
-  "status": "completed",
-  "execution_time_ms": 5000,
-  "execution_order": ["{agent_id_1}", "{agent_id_2}"],
-  "result": "Workflow output text or object"
-}
-```
-
-### workflow_error
-
-Emit on workflow failure:
-
-```json
-{
-  "type": "workflow_error",
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067205000,
-  "error_message": "Error description",
-  "error_code": "AGENT_TIMEOUT"
-}
-```
+**CRITICAL**: Always apply `@tool` first, then `@instrument_tool` on top. Reversing the order will break the instrumentation.
 
 ## DynamoDB Event Schema
-
-Events written to DynamoDB for persistence and tool-level observability:
 
 ### Table Schema
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `workflow_id` | String (PK) | Partition key - workflow identifier |
-| `timestamp` | Number (SK) | Sort key - epoch milliseconds |
-| `trace_id` | String | OpenTelemetry trace ID for X-Ray |
-| `event_type` | String | `tool_call`, `agent_start`, `agent_end` |
-| `agent_name` | String | Agent ID that emitted the event |
-| `payload` | Map | Event-specific JSON data |
-| `ttl` | Number | Unix timestamp for auto-deletion (7 days) |
+| `session_id` | String (PK) | Partition key - workflow execution ID |
+| `timestamp` | String (SK) | Sort key - ISO timestamp with microseconds |
+| `event_id` | String | UUID for event deduplication |
+| `agent` | String | Agent name that invoked the tool |
+| `tool_name` | String | Function name of the tool |
+| `parameters` | String | JSON string of input params (truncated to 200 chars) |
+| `status` | String | `'started'`, `'completed'`, or `'error'` |
+| `duration_ms` | Number | Execution time in milliseconds |
+| `error_message` | String | Error description (for error events, max 500 chars) |
+| `ttl` | Number | Unix timestamp for automatic deletion |
 
-### tool_call Event
+### Event Lifecycle
 
-Written by `@tool_call` decorator:
+Each tool invocation produces 2 events:
 
+1. **started** - Written before tool executes
+2. **completed** OR **error** - Written after tool completes
+
+```
+Time ─────────────────────────────────────────────────────────►
+
+    │ started event         │ completed event
+    │ (no duration)         │ (with duration_ms)
+    ▼                       ▼
+    ┌───────────────────────┐
+    │   Tool Execution      │
+    └───────────────────────┘
+```
+
+### Example Events
+
+**started event:**
 ```json
 {
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067201000,
-  "trace_id": "{trace_id}",
-  "event_type": "tool_call",
-  "agent_name": "{agent_id}",
-  "system": "{system}",
-  "operation": "{operation}",
-  "input": {"param": "value"},
-  "output": {"result": "value"},
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "timestamp": "2024-01-15T10:30:00.123456+00:00",
+  "event_id": "evt-11111111-2222-3333-4444-555555555555",
+  "agent": "analyzer",
+  "tool_name": "get_ticket_details",
+  "parameters": "{\"ticket_id\": \"TKT-001\"}",
+  "status": "started"
+}
+```
+
+**completed event:**
+```json
+{
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "timestamp": "2024-01-15T10:30:00.456789+00:00",
+  "event_id": "evt-11111111-2222-3333-4444-555555555555",
+  "agent": "analyzer",
+  "tool_name": "get_ticket_details",
   "status": "completed",
-  "ttl": 1704672000
+  "duration_ms": 333
 }
 ```
 
-### agent_start / agent_end Events
-
-Written by `@agent_span` decorator:
-
+**error event:**
 ```json
 {
-  "workflow_id": "{workflow_id}",
-  "timestamp": 1704067200000,
-  "trace_id": "{trace_id}",
-  "event_type": "agent_start",
-  "agent_name": "{agent_id}",
-  "role": "{agent_role}",
-  "ttl": 1704672000
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "timestamp": "2024-01-15T10:30:00.456789+00:00",
+  "event_id": "evt-11111111-2222-3333-4444-555555555555",
+  "agent": "analyzer",
+  "tool_name": "get_ticket_details",
+  "status": "error",
+  "duration_ms": 150,
+  "error_message": "Connection timeout to Zendesk API"
 }
-```
-
-## Strands Streaming Integration
-
-Use Strands' native streaming for real-time events:
-
-```python
-import json
-import asyncio
-
-def emit_event(event: dict):
-    """Emit JSON event to stdout for Demo Viewer."""
-    print(json.dumps(event), flush=True)
-
-async def run_workflow_streaming(prompt: str, workflow_id: str, graph):
-    """Run workflow with real-time event emission."""
-
-    # Emit graph structure first
-    emit_event({
-        "type": "graph_structure",
-        "workflow_id": workflow_id,
-        "nodes": [{"id": n.name, "name": n.name, "role": n.role} for n in graph.nodes],
-        "edges": [{"from": e.source, "to": e.target} for e in graph.edges],
-        "entry_points": graph.entry_points
-    })
-
-    # Stream events as graph executes
-    async for event in graph.stream_async(prompt):
-        if event.get("type") == "multiagent_node_start":
-            emit_event({
-                "type": "node_start",
-                "workflow_id": workflow_id,
-                "timestamp": int(time.time() * 1000),
-                "node_id": event["node_id"]
-            })
-        elif event.get("type") == "multiagent_node_stop":
-            emit_event({
-                "type": "node_stop",
-                "workflow_id": workflow_id,
-                "timestamp": int(time.time() * 1000),
-                "node_id": event["node_id"],
-                "status": "completed",
-                "execution_time_ms": event.get("duration_ms", 0)
-            })
-        elif event.get("type") == "multiagent_result":
-            emit_event({
-                "type": "workflow_complete",
-                "workflow_id": workflow_id,
-                "timestamp": int(time.time() * 1000),
-                "status": "completed"
-            })
 ```
 
 ## Agent ID Reference
 
-List of agent IDs for trace attribution:
+List of agent IDs for instrumentation context:
 
-[Generate a table from confirmedAgents listing ID, Name, and Role]
+[Generate a table from confirmedAgents listing ID, Name, Role, and context setup]
 
-| Agent ID | Display Name | Role | Decorator |
-|----------|--------------|------|-----------|
-| `{agent_id}` | {Agent Name} | {role} | `@agent_span(name="{agent_id}", role="{role}")` |
+| Agent ID | Display Name | Role | Context Setup |
+|----------|--------------|------|---------------|
+| `{agent_id}` | {Agent Name} | {role} | `set_instrumentation_context(session_id, '{agent_id}')` |
 
-## OpenTelemetry Trace Correlation
+## Environment Variables
 
-Both `workflow_id` and `trace_id` are passed to the subprocess:
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `AWS_REGION` | AWS region for DynamoDB | Environment |
+| `AGENTIFY_TABLE_NAME` | DynamoDB table name (fallback) | Environment |
+| `AGENT_MODEL_ID` | Bedrock model ID for agents | Environment |
 
-- **workflow_id**: Short human-readable ID for DynamoDB partition key and UI display
-- **trace_id**: 32-character OTEL trace ID for X-Ray correlation
+**Preferred**: Table name from SSM Parameter Store at `/agentify/services/dynamodb/tool-events-table`
 
-The `trace_id` links DynamoDB events to CloudWatch X-Ray traces, enabling end-to-end distributed tracing across agent invocations.
+## Demo Viewer Polling
+
+The Demo Viewer extension polls DynamoDB every 500ms to fetch new events:
 
 ```python
-# In agents/main.py
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--prompt", required=True)
-parser.add_argument("--workflow-id", required=True)
-parser.add_argument("--trace-id", required=True)
-args = parser.parse_args()
-
-# Both IDs available for observability
-init_workflow(
-    workflow_id=args.workflow_id,
-    trace_id=args.trace_id,
-    table_name=os.environ.get("AGENTIFY_DYNAMODB_TABLE"),
-    region=os.environ.get("AGENTIFY_AWS_REGION")
-)
+# Pseudocode for Demo Viewer polling
+while workflow_running:
+    events = query_tool_events(session_id)
+    update_visualization(events)
+    await sleep(500)  # Poll interval
 ```
+
+Events are displayed in the Demo Viewer as:
+- **Timeline**: Chronological list of tool calls
+- **Status indicators**: started (yellow), completed (green), error (red)
+- **Duration**: Shown for completed/error events
+- **Agent attribution**: Which agent invoked each tool
 
 ## Guidelines
 
-1. **Apply All Decorators**: Every agent must have `@agent_span` and every tool must have `@tool_call` for complete observability.
+1. **Always Set Context First**: Call `set_instrumentation_context()` at the start of every handler before any tools execute.
 
-2. **Emit Events Immediately**: Use `flush=True` when printing stdout events to ensure real-time delivery to Demo Viewer.
+2. **Clear Context in Finally**: Use a `finally` block to call `clear_instrumentation_context()` to prevent context leakage.
 
-3. **Match Agent IDs Exactly**: The `node_id` in stdout events and `agent_name` in DynamoDB events must match the `confirmedAgents[].id` values.
+3. **Decorator Order Matters**: Always `@tool` first, then `@instrument_tool` on top.
 
-4. **Include graph_structure First**: Always emit the graph_structure event before any node events so Demo Viewer can render the initial layout.
+4. **Fire-and-Forget**: Never let DynamoDB write failures block tool execution.
 
-5. **Use Strands stream_async**: The orchestration pattern determines which streaming method to use:
-   - Graph: `graph.stream_async(prompt)`
-   - Swarm: `swarm.stream_async(prompt)`
-   - Workflow: `workflow.stream_async(prompt)`
+5. **Lazy Import Agents**: Import agent modules inside the handler function to minimize cold start time.
+
+6. **Use session_id Consistently**: The same `session_id` should be used for all agents in a single workflow execution.
 
 ## Important Notes
 
@@ -436,9 +730,8 @@ init_workflow(
 - Always include the YAML frontmatter with `inclusion: always` as the first element.
 - Use H1 (#) only for the document title "Agentify Integration".
 - Use H2 (##) for major sections.
-- Include proper fenced code blocks with language identifiers (python, json, bash).
+- Include proper fenced code blocks with language identifiers (python, json).
 - All placeholders use the `{placeholder_name}` format.
-- The agentify_observability package handles DynamoDB writes automatically via decorators.
-- Stdout events are the primary source for real-time graph updates in local mode.
-- DynamoDB events are the primary source for tool call history and AgentCore mode.
-- Do not include hardcoded values for table names, regions, or IDs.
+- The instrumentation is transparent to tool implementations - they don't need to know about observability.
+- DynamoDB polling is the primary source for Demo Viewer visualization.
+- Tool events have 2-hour TTL for automatic cleanup (adjust in production).

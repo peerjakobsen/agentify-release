@@ -235,45 +235,50 @@ All agents share the same gateway, enabling tool reuse across the workflow.
 
 ## Stage 5: Runtime Execution
 
-### Local Development
+### Observability Architecture
 
-```bash
-python agents/main.py \
-  --prompt "Customer complaint about delayed order" \
-  --workflow-id "wf-a1b2c3d4" \
-  --trace-id "80e1afed12345678901234567890abcd"
+The Demo Viewer polls DynamoDB for tool call events written by the `@instrument_tool` decorator:
+
+```
+┌─────────────────┐                    ┌─────────────────────────────────────────┐
+│   Demo Viewer   │  poll every 500ms  │           DynamoDB Event Table          │
+│   (Extension)   │◄──────────────────►│  PK: session_id  |  SK: timestamp       │
+└─────────────────┘                    │  event_id, agent, tool_name, status     │
+                                       └─────────────────────────────────────────┘
+                                                          ▲
+                                                          │ write events
+                                                          │
+┌─────────────────────────────────────────────────────────┴───────────────────────┐
+│                              AgentCore Runtime                                   │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                          │
+│  │   Agent 1   │    │   Agent 2   │    │   Agent 3   │                          │
+│  │ @instrument │    │ @instrument │    │ @instrument │                          │
+│  │   _tool     │    │   _tool     │    │   _tool     │                          │
+│  └─────────────┘    └─────────────┘    └─────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Event Streaming (stdout)
+### DynamoDB Tool Events
 
-Real-time JSON lines for Demo Viewer graph visualization:
+Each tool invocation emits 2 events via the `@instrument_tool` decorator:
 
-```json
-{"event_type": "graph_structure", "workflow_id": "wf-a1b2c3d4", "nodes": [...], "edges": [...]}
-{"event_type": "node_start", "workflow_id": "wf-a1b2c3d4", "node_id": "analyzer", "timestamp": 1704067200000}
-{"event_type": "node_stream", "workflow_id": "wf-a1b2c3d4", "node_id": "analyzer", "token": "Analyzing..."}
-{"event_type": "node_stop", "workflow_id": "wf-a1b2c3d4", "node_id": "analyzer", "status": "completed"}
-{"event_type": "workflow_complete", "workflow_id": "wf-a1b2c3d4", "result": {...}}
-```
+| session_id | timestamp | status | agent | tool_name | duration_ms |
+|------------|-----------|--------|-------|-----------|-------------|
+| abc-12345 | 2024-01-15T10:30:00.123456 | started | analyzer | get_ticket | - |
+| abc-12345 | 2024-01-15T10:30:00.456789 | completed | analyzer | get_ticket | 333 |
+| abc-12345 | 2024-01-15T10:30:01.000000 | started | analyzer | lookup_customer | - |
+| abc-12345 | 2024-01-15T10:30:01.250000 | completed | analyzer | lookup_customer | 250 |
 
-### DynamoDB Persistence
-
-Detailed events for tool calls and historical replay:
-
-| workflow_id | timestamp | event_type | data |
-|-------------|-----------|------------|------|
-| wf-a1b2c3d4 | 1704067200001 | agent_start | {agent: "analyzer"} |
-| wf-a1b2c3d4 | 1704067200050 | tool_call | {tool: "zendesk_get_ticket", status: "started"} |
-| wf-a1b2c3d4 | 1704067200150 | tool_call | {tool: "zendesk_get_ticket", status: "completed"} |
-| wf-a1b2c3d4 | 1704067200500 | agent_end | {agent: "analyzer"} |
+**Key principle**: Tool execution is never blocked by monitoring. All DynamoDB writes are fire-and-forget.
 
 ### Demo Viewer Integration
 
 The Agentify Demo Viewer panel:
-- Watches stdout for real-time graph animation
-- Polls DynamoDB for tool call details
-- Displays execution timeline and outcomes
-- Shows success/failure status per node
+- Polls DynamoDB every 500ms for new tool events
+- Displays chronological timeline of tool calls
+- Shows status indicators: started (yellow), completed (green), error (red)
+- Attributes each tool call to the invoking agent
+- Auto-refreshes as new events arrive
 
 ---
 
