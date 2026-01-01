@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "module": "Node16",
+    "module": "ESNext",
     "target": "ES2022",
     "lib": ["ES2022"],
     "outDir": "dist",
@@ -13,7 +13,7 @@
     "declarationMap": false,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "Node16"
+    "moduleResolution": "bundler"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
