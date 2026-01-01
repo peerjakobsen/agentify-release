@@ -21,13 +21,14 @@ Quick reference for Agentify multi-agent workflow observability patterns. These 
 # CORRECT - Import from shared
 from agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context
 from agents.shared.dynamodb_client import write_tool_event
+from agents.shared.gateway_client import invoke_with_gateway
 
 # WRONG - Never define these locally
 def instrument_tool(func):  # BLOCKING ERROR
     ...
 ```
 
-The `agents/shared/` directory contains pre-built observability infrastructure that integrates with the Demo Viewer's DynamoDB polling.
+The `agents/shared/` directory contains pre-built infrastructure for observability and Gateway integration.
 
 ---
 
@@ -74,6 +75,31 @@ def invoke(event: dict[str, Any]) -> dict[str, Any]:
         # ALWAYS clear context - even on exceptions
         if session_id:
             clear_instrumentation_context()
+```
+
+---
+
+## Pattern 3.5: Agent Definition Pattern
+
+Use `invoke_with_gateway()` for agent.py - never use MCPClient directly.
+
+```python
+# CORRECT - invoke_with_gateway handles session lifecycle
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+from .tools import my_tool
+
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[my_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
+
+# WRONG - Direct MCPClient causes "session not running" errors
+from strands.tools.mcp import MCPClient
+with MCPClient(...) as client:
+    tools = client.list_tools_sync()  # BLOCKING ERROR - session closes!
 ```
 
 ---
@@ -160,6 +186,7 @@ Environment variables required for local runs:
 | Recreating `agents/shared/` modules | Demo Viewer won't see events | Import from `agents.shared.instrumentation` |
 | `@tool` above `@instrument_tool` | Instrumentation doesn't wrap tool | Put `@instrument_tool` on top, `@tool` below |
 | Missing `finally` block | Context leaks between requests | Always `clear_instrumentation_context()` in finally |
+| Using `MCPClient` directly | MCP session closes before tools execute | Use `invoke_with_gateway()` from `agents.shared.gateway_client` |
 | Returning dict from Lambda | API Gateway expects string | Use `json.dumps(result)` |
 | Missing `flush=True` | stdout buffering delays events | Always `print(json.dumps(event), flush=True)` |
 | Using ISO timestamps | Demo Viewer expects epoch ms | Use `int(time.time() * 1000)` |
@@ -174,6 +201,7 @@ Before committing agent code, verify:
 - [ ] All tool functions have `@instrument_tool` on top, `@tool` below
 - [ ] Handler functions use try/finally with context management
 - [ ] No local definitions of `instrument_tool`, `write_tool_event`, etc.
+- [ ] Agent.py uses `invoke_with_gateway()`, not direct `MCPClient`
 - [ ] Lambda handlers return `json.dumps()` strings
 - [ ] `main.py` accepts `--prompt`, `--workflow-id`, `--trace-id` arguments
 - [ ] Environment variables `AGENTIFY_TABLE_NAME`, `AWS_REGION` are read

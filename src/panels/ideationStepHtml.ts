@@ -23,8 +23,13 @@ import type {
   StepSummary,
   StepValidationStatus,
 } from '../types/wizardPanel';
-import { STEERING_FILES } from '../types/wizardPanel';
+import { STEERING_FILES, ROOT_DOC_FILES } from '../types/wizardPanel';
 import { getFileReuploadIndicatorHtml } from './resumeBannerHtml';
+
+/**
+ * Total files generated (steering + root docs like DEMO.md)
+ */
+const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES).length;
 
 // ============================================================================
 // Types (local to tabbedPanel - should be consolidated later)
@@ -2501,7 +2506,7 @@ export function renderFileProgressList(state: GenerationState): string {
  */
 export function renderGenerationProgress(state: GenerationState): string {
   const completedCount = state.completedFiles.length;
-  const totalCount = STEERING_FILES.length;
+  const totalCount = TOTAL_GENERATED_FILES;
 
   // Determine status of each checklist item
   const validateStatus = state.isGenerating || completedCount > 0 ? 'complete' : 'pending';
@@ -2779,7 +2784,7 @@ export function renderStep8ActionButtons(state: GenerationState): string {
  * Main entry point for Step 8 rendering
  */
 export function generateStep8Html(state: GenerationState, summaries: StepSummary[]): string {
-  const isComplete = state.generatedFilePaths.length === STEERING_FILES.length && !state.failedFile;
+  const isComplete = state.generatedFilePaths.length === TOTAL_GENERATED_FILES && !state.failedFile;
   const hasError = !!state.failedFile;
 
   // Determine which section to render

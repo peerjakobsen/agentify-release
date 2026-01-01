@@ -30,7 +30,13 @@ import type {
   DemoStrategyState,
   WizardState,
 } from '../types/wizardPanel';
-import { STEERING_FILES } from '../types/wizardPanel';
+import { STEERING_FILES, ROOT_DOC_FILES } from '../types/wizardPanel';
+
+/**
+ * Total files generated (steering + root docs like DEMO.md)
+ */
+const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES).length;
+
 // Task 6.3: Import environment detection utility
 import { isKiroEnvironment, getKiroLearnMoreUrl } from '../utils/environment';
 // Import steering directory path for reveal
@@ -466,7 +472,7 @@ export class Step8LogicHandler {
         this._state.accordionExpanded = false; // Auto-collapse on success
 
         // Show success toast
-        this.showSuccessToast(STEERING_FILES.length);
+        this.showSuccessToast(TOTAL_GENERATED_FILES);
       } else if (result.error) {
         // Retry also failed
         this._state.failedFile = {

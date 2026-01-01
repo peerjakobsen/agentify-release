@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Agent Pattern Enforcer",
+  "description": "Ensures agent.py uses invoke_with_gateway() instead of direct MCPClient",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["agents/*/agent.py"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this agent.py file for correct Gateway integration pattern.\n\nCORRECT PATTERN - Agent must use invoke_with_gateway():\n```python\nfrom agents.shared.gateway_client import invoke_with_gateway\nfrom .prompts import SYSTEM_PROMPT\nfrom .tools import my_tool\n\ndef invoke_{agent_id}_agent(prompt: str) -> str:\n    return invoke_with_gateway(\n        prompt=prompt,\n        local_tools=[my_tool],\n        system_prompt=SYSTEM_PROMPT\n    )\n```\n\nBLOCKING ERRORS - If any of these patterns exist, they MUST be replaced:\n1. Direct MCPClient import: `from strands.tools.mcp import MCPClient`\n2. Direct MCPClient usage: `MCPClient(...)` or `with client:`\n3. Direct list_tools_sync() call: `client.list_tools_sync()`\n4. Manual Gateway connection logic\n\nWhy: MCP tools are proxy objects that reference the client session. Direct MCPClient usage causes 'client session is not running' errors because the session closes before agent executes tools.\n\nFix: Replace all Gateway connection logic with a single call to invoke_with_gateway()."
+  },
+  "shortName": "agent-pattern"
+}

@@ -119,13 +119,13 @@ agents/shared/                     # PRE-BUNDLED — DO NOT MODIFY
 ├── __init__.py                    # Module exports
 ├── instrumentation.py             # @instrument_tool decorator, context management
 ├── dynamodb_client.py             # Fire-and-forget event persistence
-└── gateway_auth.py                # GatewayTokenManager for OAuth
+└── gateway_client.py              # invoke_with_gateway(), GatewayTokenManager
 ```
 
 Import pattern:
 ```python
 from agents.shared.instrumentation import instrument_tool, set_instrumentation_context
-from agents.shared.gateway_auth import GatewayTokenManager
+from agents.shared.gateway_client import invoke_with_gateway
 ```
 
 The `@instrument_tool` decorator emits tool events to DynamoDB for Demo Viewer visualization. All agents should IMPORT from this module.
@@ -238,65 +238,41 @@ def lambda_handler(event, context):
 
 ### Connecting Agents to Gateway
 
-Agents connect to Gateway tools via MCP client with OAuth authentication. The Gateway uses Cognito OAuth2 with client credentials grant for authentication.
+Agents connect to Gateway tools using `invoke_with_gateway()` which handles OAuth authentication and MCP session lifecycle automatically.
 
-#### Gateway Token Manager (Pre-Bundled)
+#### invoke_with_gateway() (Pre-Bundled)
 
-The `GatewayTokenManager` class is **pre-bundled** in `agents/shared/gateway_auth.py`. Import it — do not recreate:
-
-```python
-from agents.shared.gateway_auth import GatewayTokenManager
-
-# Initialize with environment variables (automatically reads GATEWAY_* vars)
-token_manager = GatewayTokenManager()
-
-# Check if OAuth is configured
-if token_manager.is_configured():
-    token = token_manager.get_token()  # Returns cached or refreshed token
-```
-
-| Method | Purpose |
-|--------|---------|
-| `is_configured()` | Check if OAuth credentials are available |
-| `get_token()` | Get valid token (caches, auto-refreshes 5min before expiry) |
-
-Environment variables (set by `setup.sh`): `GATEWAY_CLIENT_ID`, `GATEWAY_CLIENT_SECRET`, `GATEWAY_TOKEN_ENDPOINT`, `GATEWAY_SCOPE`
-
-#### Authenticated Gateway Connection
+The `invoke_with_gateway()` function is **pre-bundled** in `agents/shared/gateway_client.py`. Import it — do not recreate:
 
 ```python
-import os
-from strands import Agent
-from strands.tools.mcp import MCPClient
-from mcp.client.streamable_http import streamablehttp_client
-from agents.shared.gateway_auth import GatewayTokenManager
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+from .tools import my_local_tool
 
-# Gateway URL from environment (set by setup.sh during deployment)
-gateway_url = os.environ.get('GATEWAY_URL')
-
-# Initialize token manager (reads OAuth credentials from env vars)
-token_manager = GatewayTokenManager()
-
-if gateway_url and token_manager.is_configured():
-    # Create authenticated transport factory
-    def create_authenticated_transport():
-        token = token_manager.get_token()
-        return streamablehttp_client(
-            gateway_url,
-            headers={'Authorization': f'Bearer {token}'}
-        )
-
-    gateway_client = MCPClient(create_authenticated_transport)
-
-    with gateway_client:
-        # Discover all tools registered with Gateway
-        shared_tools = gateway_client.list_tools_sync()
-
-        # Combine with local agent-specific tools
-        agent = Agent(
-            tools=[local_tool_1, local_tool_2] + shared_tools
-        )
+def invoke_my_agent(prompt: str) -> str:
+    """Invoke agent with local and Gateway tools."""
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[my_local_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
 ```
+
+| Parameter | Purpose |
+|-----------|---------|
+| `prompt` | User prompt to send to agent |
+| `local_tools` | List of local `@tool` decorated functions |
+| `system_prompt` | System prompt for agent behavior |
+| `model_id` | Optional Bedrock model ID (defaults to `AGENT_MODEL_ID` env var) |
+| `gateway_url` | Optional Gateway URL (defaults to `GATEWAY_URL` env var) |
+
+The function handles:
+- OAuth token management (fetches, caches, auto-refreshes)
+- MCP client session lifecycle (keeps session open during agent execution)
+- Tool discovery from Gateway
+- Graceful degradation when Gateway unavailable
+
+**CRITICAL**: Do NOT use `MCPClient` directly in agent code. MCP tools are proxy objects that reference the client session. If the session closes before tools execute, you get "client session is not running" errors. The `invoke_with_gateway()` function keeps the session open during the entire agent execution.
 
 #### Gateway OAuth Environment Variables
 
