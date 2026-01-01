@@ -1,0 +1,1208 @@
+{
+  "schemaVersion": 1,
+  "savedAt": 1767180000000,
+  "currentStep": 7,
+  "highestStepReached": 8,
+  "validationAttempted": true,
+  "businessObjective": "Deal review board that collaboratively evaluates business deals and proposals. A swarm of specialist agents (legal, financial, technical, risk) dynamically hand off to each other based on what they discover during the review. The coordinator synthesizes findings into a final recommendation.",
+  "industry": "Finance",
+  "systems": [
+    "DealManagement",
+    "CompanyDatabase",
+    "MarketDataService"
+  ],
+  "aiGapFillingState": {
+    "conversationHistory": [],
+    "confirmedAssumptions": [
+      {
+        "system": "DealManagement",
+        "modules": [
+          "Deal Documents",
+          "Proposal Tracking"
+        ],
+        "integrations": [
+          "Agent -> DealManagement: retrieve deal details and documents"
+        ],
+        "source": "user-provided"
+      },
+      {
+        "system": "CompanyDatabase",
+        "modules": [
+          "Company Profiles",
+          "Due Diligence Records"
+        ],
+        "integrations": [
+          "Agent -> CompanyDatabase: lookup counterparty information"
+        ],
+        "source": "user-provided"
+      },
+      {
+        "system": "MarketDataService",
+        "modules": [
+          "Industry Benchmarks",
+          "Comparable Transactions"
+        ],
+        "integrations": [
+          "Agent -> MarketDataService: fetch market data and comparables"
+        ],
+        "source": "user-provided"
+      }
+    ],
+    "assumptionsAccepted": true,
+    "isStreaming": false,
+    "step1InputHash": "deal123"
+  },
+  "outcome": {
+    "primaryOutcome": "Demonstrate a swarm-based multi-agent workflow where specialists dynamically collaborate based on emergent findings",
+    "successMetrics": [
+      {
+        "name": "Review Completeness",
+        "targetValue": "100",
+        "unit": "percent coverage"
+      },
+      {
+        "name": "Risk Identification",
+        "targetValue": "> 90",
+        "unit": "percent accuracy"
+      },
+      {
+        "name": "Review Time",
+        "targetValue": "< 2",
+        "unit": "minutes"
+      }
+    ],
+    "stakeholders": [
+      "Legal",
+      "Finance",
+      "Engineering",
+      "Executive Leadership"
+    ],
+    "isLoading": false,
+    "primaryOutcomeEdited": false,
+    "metricsEdited": false,
+    "stakeholdersEdited": false,
+    "customStakeholders": [],
+    "suggestionsAccepted": true,
+    "step2AssumptionsHash": "deal456",
+    "refinedSections": {}
+  },
+  "security": {
+    "dataSensitivity": "Confidential",
+    "complianceFrameworks": [
+      "SOC2"
+    ],
+    "approvalGates": [
+      "Legal Review",
+      "Finance Approval"
+    ],
+    "guardrailNotes": "Demo with synthetic deal data. No real financial or legal information.",
+    "skipped": false
+  },
+  "agentDesign": {
+    "proposedAgents": [
+      {
+        "id": "coordinator",
+        "name": "Deal Coordinator",
+        "role": "Orchestrates the deal review process, delegates to specialists based on deal type, and synthesizes findings into a final recommendation with go/no-go decision",
+        "tools": [
+          "get_deal",
+          "get_company_profile",
+          "delegate_review",
+          "synthesize_findings"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "legal",
+        "name": "Legal Advisor",
+        "role": "Reviews contract terms, liability clauses, IP rights, compliance requirements, and regulatory implications. Hands off to other specialists when finding cross-domain issues.",
+        "tools": [
+          "get_deal",
+          "analyze_contract_terms",
+          "check_compliance",
+          "flag_legal_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "financial",
+        "name": "Financial Advisor",
+        "role": "Analyzes deal economics, payment terms, ROI projections, and financial risks. Validates pricing against market data and identifies cost implications.",
+        "tools": [
+          "get_deal",
+          "get_market_data",
+          "analyze_deal_economics",
+          "calculate_roi",
+          "flag_financial_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "technical",
+        "name": "Technical Advisor",
+        "role": "Assesses technical feasibility, integration requirements, infrastructure needs, and implementation timeline. Evaluates technical dependencies and constraints.",
+        "tools": [
+          "get_deal",
+          "assess_technical_feasibility",
+          "estimate_integration_effort",
+          "identify_dependencies",
+          "flag_technical_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "risk",
+        "name": "Risk Advisor",
+        "role": "Consolidates risks from all domains, assesses overall deal risk profile, identifies mitigation strategies, and provides risk-adjusted recommendation.",
+        "tools": [
+          "get_deal",
+          "get_company_profile",
+          "compile_risk_assessment",
+          "suggest_mitigations",
+          "calculate_risk_score",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "proposedOrchestration": "swarm",
+    "proposedEdges": [
+      {
+        "from": "coordinator",
+        "to": "legal",
+        "condition": "Swarm: handoff when contract review needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial analysis needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical assessment needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "risk",
+        "condition": "Swarm: handoff when risk consolidation needed"
+      },
+      {
+        "from": "legal",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial implications found"
+      },
+      {
+        "from": "legal",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical IP issues found"
+      },
+      {
+        "from": "legal",
+        "to": "risk",
+        "condition": "Swarm: handoff when legal risks identified"
+      },
+      {
+        "from": "financial",
+        "to": "legal",
+        "condition": "Swarm: handoff when contract terms affect pricing"
+      },
+      {
+        "from": "financial",
+        "to": "technical",
+        "condition": "Swarm: handoff when cost depends on implementation"
+      },
+      {
+        "from": "financial",
+        "to": "risk",
+        "condition": "Swarm: handoff when financial risks identified"
+      },
+      {
+        "from": "technical",
+        "to": "legal",
+        "condition": "Swarm: handoff when IP or licensing issues found"
+      },
+      {
+        "from": "technical",
+        "to": "financial",
+        "condition": "Swarm: handoff when cost estimates ready"
+      },
+      {
+        "from": "technical",
+        "to": "risk",
+        "condition": "Swarm: handoff when technical risks identified"
+      },
+      {
+        "from": "risk",
+        "to": "legal",
+        "condition": "Swarm: handoff when legal clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when risk assessment complete"
+      },
+      {
+        "from": "legal",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when legal review complete"
+      },
+      {
+        "from": "financial",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when financial review complete"
+      },
+      {
+        "from": "technical",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when technical review complete"
+      }
+    ],
+    "orchestrationReasoning": "Swarm pattern allows specialists to dynamically hand off to each other based on findings. Unlike graph workflows, the path is not predetermined - agents collaborate based on what they discover during the review.",
+    "proposalAccepted": true,
+    "isLoading": false,
+    "step4Hash": "deal789",
+    "aiCalled": true,
+    "confirmedAgents": [
+      {
+        "id": "coordinator",
+        "name": "Deal Coordinator",
+        "role": "Orchestrates the deal review process, delegates to specialists based on deal type, and synthesizes findings into a final recommendation with go/no-go decision",
+        "tools": [
+          "get_deal",
+          "get_company_profile",
+          "delegate_review",
+          "synthesize_findings"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "legal",
+        "name": "Legal Advisor",
+        "role": "Reviews contract terms, liability clauses, IP rights, compliance requirements, and regulatory implications. Hands off to other specialists when finding cross-domain issues.",
+        "tools": [
+          "get_deal",
+          "analyze_contract_terms",
+          "check_compliance",
+          "flag_legal_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "financial",
+        "name": "Financial Advisor",
+        "role": "Analyzes deal economics, payment terms, ROI projections, and financial risks. Validates pricing against market data and identifies cost implications.",
+        "tools": [
+          "get_deal",
+          "get_market_data",
+          "analyze_deal_economics",
+          "calculate_roi",
+          "flag_financial_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "technical",
+        "name": "Technical Advisor",
+        "role": "Assesses technical feasibility, integration requirements, infrastructure needs, and implementation timeline. Evaluates technical dependencies and constraints.",
+        "tools": [
+          "get_deal",
+          "assess_technical_feasibility",
+          "estimate_integration_effort",
+          "identify_dependencies",
+          "flag_technical_risk",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "risk",
+        "name": "Risk Advisor",
+        "role": "Consolidates risks from all domains, assesses overall deal risk profile, identifies mitigation strategies, and provides risk-adjusted recommendation.",
+        "tools": [
+          "get_deal",
+          "get_company_profile",
+          "compile_risk_assessment",
+          "suggest_mitigations",
+          "calculate_risk_score",
+          "handoff_to_specialist"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "confirmedOrchestration": "swarm",
+    "confirmedEdges": [
+      {
+        "from": "coordinator",
+        "to": "legal",
+        "condition": "Swarm: handoff when contract review needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial analysis needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical assessment needed"
+      },
+      {
+        "from": "coordinator",
+        "to": "risk",
+        "condition": "Swarm: handoff when risk consolidation needed"
+      },
+      {
+        "from": "legal",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial implications found"
+      },
+      {
+        "from": "legal",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical IP issues found"
+      },
+      {
+        "from": "legal",
+        "to": "risk",
+        "condition": "Swarm: handoff when legal risks identified"
+      },
+      {
+        "from": "financial",
+        "to": "legal",
+        "condition": "Swarm: handoff when contract terms affect pricing"
+      },
+      {
+        "from": "financial",
+        "to": "technical",
+        "condition": "Swarm: handoff when cost depends on implementation"
+      },
+      {
+        "from": "financial",
+        "to": "risk",
+        "condition": "Swarm: handoff when financial risks identified"
+      },
+      {
+        "from": "technical",
+        "to": "legal",
+        "condition": "Swarm: handoff when IP or licensing issues found"
+      },
+      {
+        "from": "technical",
+        "to": "financial",
+        "condition": "Swarm: handoff when cost estimates ready"
+      },
+      {
+        "from": "technical",
+        "to": "risk",
+        "condition": "Swarm: handoff when technical risks identified"
+      },
+      {
+        "from": "risk",
+        "to": "legal",
+        "condition": "Swarm: handoff when legal clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "financial",
+        "condition": "Swarm: handoff when financial clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "technical",
+        "condition": "Swarm: handoff when technical clarification needed"
+      },
+      {
+        "from": "risk",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when risk assessment complete"
+      },
+      {
+        "from": "legal",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when legal review complete"
+      },
+      {
+        "from": "financial",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when financial review complete"
+      },
+      {
+        "from": "technical",
+        "to": "coordinator",
+        "condition": "Swarm: handoff when technical review complete"
+      }
+    ],
+    "originalOrchestration": "swarm"
+  },
+  "mockData": {
+    "mockDefinitions": [
+      {
+        "tool": "get_deal",
+        "system": "DealManagement",
+        "operation": "getDeal",
+        "description": "Retrieves deal/proposal details and documents (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "dealId": "string"
+        },
+        "mockResponse": {
+          "dealId": "string",
+          "title": "string",
+          "type": "string",
+          "counterparty": "string",
+          "value": "number",
+          "currency": "string",
+          "summary": "string",
+          "keyTerms": "array",
+          "status": "string",
+          "submittedAt": "string"
+        },
+        "sampleData": [
+          {
+            "dealId": "DEAL-001",
+            "title": "CloudSync Software Acquisition",
+            "type": "acquisition",
+            "counterparty": "CloudSync Technologies Inc.",
+            "value": 5000000,
+            "currency": "USD",
+            "summary": "Acquisition of CloudSync's real-time data synchronization platform including all IP, customer contracts, and engineering team of 12.",
+            "keyTerms": [
+              "Full IP transfer",
+              "12-month earnout",
+              "Key employee retention",
+              "Non-compete 3 years"
+            ],
+            "status": "pending_review",
+            "submittedAt": "2024-01-15T09:00:00Z"
+          },
+          {
+            "dealId": "DEAL-002",
+            "title": "Strategic Partnership with DataFlow",
+            "type": "partnership",
+            "counterparty": "DataFlow Systems",
+            "value": 500000,
+            "currency": "USD",
+            "summary": "Revenue sharing partnership for joint go-to-market on enterprise data pipeline solutions. 70/30 revenue split, exclusive in financial services vertical.",
+            "keyTerms": [
+              "70/30 revenue split",
+              "Financial services exclusivity",
+              "Joint marketing budget",
+              "2-year initial term"
+            ],
+            "status": "pending_review",
+            "submittedAt": "2024-01-15T10:30:00Z"
+          },
+          {
+            "dealId": "DEAL-003",
+            "title": "Enterprise Infrastructure Contract",
+            "type": "vendor_contract",
+            "counterparty": "MegaCloud Corp",
+            "value": 2000000,
+            "currency": "USD",
+            "summary": "3-year cloud infrastructure contract with MegaCloud for production workloads. Includes compute, storage, and managed Kubernetes. Volume commitment with tiered pricing.",
+            "keyTerms": [
+              "3-year commitment",
+              "Volume discount tiers",
+              "99.99% SLA",
+              "Annual price lock"
+            ],
+            "status": "pending_review",
+            "submittedAt": "2024-01-15T11:00:00Z"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "get_company_profile",
+        "system": "CompanyDatabase",
+        "operation": "getCompanyProfile",
+        "description": "Retrieves counterparty company profile for due diligence (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "companyName": "string"
+        },
+        "mockResponse": {
+          "name": "string",
+          "founded": "string",
+          "headquarters": "string",
+          "employees": "number",
+          "revenue": "string",
+          "funding": "string",
+          "keyPeople": "array",
+          "riskFlags": "array"
+        },
+        "sampleData": [
+          {
+            "name": "CloudSync Technologies Inc.",
+            "founded": "2019",
+            "headquarters": "San Francisco, CA",
+            "employees": 45,
+            "revenue": "$3.2M ARR",
+            "funding": "Series A - $8M",
+            "keyPeople": [
+              "CEO: Sarah Chen",
+              "CTO: Marcus Williams"
+            ],
+            "riskFlags": [
+              "Key person dependency on CTO",
+              "Single largest customer is 40% of revenue"
+            ]
+          },
+          {
+            "name": "DataFlow Systems",
+            "founded": "2017",
+            "headquarters": "Austin, TX",
+            "employees": 120,
+            "revenue": "$15M ARR",
+            "funding": "Series B - $25M",
+            "keyPeople": [
+              "CEO: Michael Torres",
+              "CTO: Lisa Park"
+            ],
+            "riskFlags": []
+          },
+          {
+            "name": "MegaCloud Corp",
+            "founded": "2012",
+            "headquarters": "Seattle, WA",
+            "employees": 5000,
+            "revenue": "$2B ARR",
+            "funding": "Public (NASDAQ: MGCL)",
+            "keyPeople": [
+              "CEO: Robert Kim",
+              "CFO: Jennifer Walsh"
+            ],
+            "riskFlags": [
+              "Recent leadership changes",
+              "Ongoing FTC investigation"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "get_market_data",
+        "system": "MarketDataService",
+        "operation": "getMarketData",
+        "description": "Retrieves market benchmarks and comparable transactions (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "dealType": "string",
+          "industry": "string"
+        },
+        "mockResponse": {
+          "comparableDeals": "array",
+          "industryMultiples": "object",
+          "marketTrends": "array"
+        },
+        "sampleData": [
+          {
+            "comparableDeals": [
+              {
+                "name": "SyncTech acquisition by BigCorp",
+                "value": "$4.5M",
+                "multiple": "3.5x ARR"
+              },
+              {
+                "name": "DataMesh acquisition by TechGiant",
+                "value": "$8M",
+                "multiple": "4.2x ARR"
+              }
+            ],
+            "industryMultiples": {
+              "median": "3.8x ARR",
+              "range": "2.5x - 5.0x ARR"
+            },
+            "marketTrends": [
+              "Data sync market growing 25% YoY",
+              "Consolidation trend in infrastructure space",
+              "Increasing focus on real-time capabilities"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "delegate_review",
+        "system": "INLINE",
+        "operation": "delegateReview",
+        "description": "Delegates review to specialist agent (INLINE TOOL - coordinator)",
+        "isShared": false,
+        "mockRequest": {
+          "specialist": "string",
+          "context": "string"
+        },
+        "mockResponse": {
+          "delegated": "boolean",
+          "specialist": "string"
+        },
+        "sampleData": [
+          {
+            "delegated": true,
+            "specialist": "legal"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "synthesize_findings",
+        "system": "INLINE",
+        "operation": "synthesizeFindings",
+        "description": "Synthesizes findings from all specialists into recommendation (INLINE TOOL - coordinator)",
+        "isShared": false,
+        "mockRequest": {
+          "findings": "array"
+        },
+        "mockResponse": {
+          "recommendation": "string",
+          "confidence": "number",
+          "keyRisks": "array",
+          "nextSteps": "array"
+        },
+        "sampleData": [
+          {
+            "recommendation": "PROCEED_WITH_CONDITIONS",
+            "confidence": 0.85,
+            "keyRisks": [
+              "Key person dependency",
+              "Customer concentration"
+            ],
+            "nextSteps": [
+              "Negotiate retention bonuses",
+              "Review customer contracts"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "analyze_contract_terms",
+        "system": "INLINE",
+        "operation": "analyzeContractTerms",
+        "description": "Analyzes contract terms for issues (INLINE TOOL - legal)",
+        "isShared": false,
+        "mockRequest": {
+          "terms": "array"
+        },
+        "mockResponse": {
+          "issues": "array",
+          "recommendations": "array"
+        },
+        "sampleData": [
+          {
+            "issues": [
+              "Broad indemnification clause",
+              "Unclear IP assignment language"
+            ],
+            "recommendations": [
+              "Cap indemnification at deal value",
+              "Add explicit IP schedule"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "check_compliance",
+        "system": "INLINE",
+        "operation": "checkCompliance",
+        "description": "Checks regulatory compliance requirements (INLINE TOOL - legal)",
+        "isShared": false,
+        "mockRequest": {
+          "dealType": "string",
+          "jurisdictions": "array"
+        },
+        "mockResponse": {
+          "compliant": "boolean",
+          "requirements": "array"
+        },
+        "sampleData": [
+          {
+            "compliant": true,
+            "requirements": [
+              "HSR filing not required (under threshold)",
+              "CFIUS review not applicable"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "flag_legal_risk",
+        "system": "INLINE",
+        "operation": "flagLegalRisk",
+        "description": "Flags identified legal risks (INLINE TOOL - legal)",
+        "isShared": false,
+        "mockRequest": {
+          "risk": "string",
+          "severity": "string"
+        },
+        "mockResponse": {
+          "flagged": "boolean",
+          "riskId": "string"
+        },
+        "sampleData": [
+          {
+            "flagged": true,
+            "riskId": "LEGAL-001"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "analyze_deal_economics",
+        "system": "INLINE",
+        "operation": "analyzeDealEconomics",
+        "description": "Analyzes deal economics and value (INLINE TOOL - financial)",
+        "isShared": false,
+        "mockRequest": {
+          "dealValue": "number",
+          "terms": "object"
+        },
+        "mockResponse": {
+          "fairValue": "string",
+          "premium": "string",
+          "concerns": "array"
+        },
+        "sampleData": [
+          {
+            "fairValue": "$4.2M - $5.5M",
+            "premium": "15% above median",
+            "concerns": [
+              "Earnout structure adds complexity",
+              "Consider customer retention risk"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "calculate_roi",
+        "system": "INLINE",
+        "operation": "calculateROI",
+        "description": "Calculates projected ROI (INLINE TOOL - financial)",
+        "isShared": false,
+        "mockRequest": {
+          "investment": "number",
+          "projectedReturns": "object"
+        },
+        "mockResponse": {
+          "roi": "string",
+          "paybackPeriod": "string",
+          "npv": "number"
+        },
+        "sampleData": [
+          {
+            "roi": "145% over 3 years",
+            "paybackPeriod": "18 months",
+            "npv": 2500000
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "flag_financial_risk",
+        "system": "INLINE",
+        "operation": "flagFinancialRisk",
+        "description": "Flags identified financial risks (INLINE TOOL - financial)",
+        "isShared": false,
+        "mockRequest": {
+          "risk": "string",
+          "impact": "number"
+        },
+        "mockResponse": {
+          "flagged": "boolean",
+          "riskId": "string"
+        },
+        "sampleData": [
+          {
+            "flagged": true,
+            "riskId": "FIN-001"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "assess_technical_feasibility",
+        "system": "INLINE",
+        "operation": "assessTechnicalFeasibility",
+        "description": "Assesses technical feasibility of deal (INLINE TOOL - technical)",
+        "isShared": false,
+        "mockRequest": {
+          "requirements": "array"
+        },
+        "mockResponse": {
+          "feasible": "boolean",
+          "challenges": "array",
+          "recommendations": "array"
+        },
+        "sampleData": [
+          {
+            "feasible": true,
+            "challenges": [
+              "Legacy codebase requires modernization",
+              "Different cloud provider than current stack"
+            ],
+            "recommendations": [
+              "Plan 6-month migration project",
+              "Retain key engineers for knowledge transfer"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "estimate_integration_effort",
+        "system": "INLINE",
+        "operation": "estimateIntegrationEffort",
+        "description": "Estimates integration effort and cost (INLINE TOOL - technical)",
+        "isShared": false,
+        "mockRequest": {
+          "scope": "string"
+        },
+        "mockResponse": {
+          "effort": "string",
+          "cost": "number",
+          "timeline": "string"
+        },
+        "sampleData": [
+          {
+            "effort": "Medium complexity",
+            "cost": 500000,
+            "timeline": "6 months"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "identify_dependencies",
+        "system": "INLINE",
+        "operation": "identifyDependencies",
+        "description": "Identifies technical dependencies (INLINE TOOL - technical)",
+        "isShared": false,
+        "mockRequest": {
+          "system": "string"
+        },
+        "mockResponse": {
+          "dependencies": "array",
+          "risks": "array"
+        },
+        "sampleData": [
+          {
+            "dependencies": [
+              "AWS infrastructure",
+              "PostgreSQL database",
+              "Third-party sync API"
+            ],
+            "risks": [
+              "Third-party API dependency for core functionality"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "flag_technical_risk",
+        "system": "INLINE",
+        "operation": "flagTechnicalRisk",
+        "description": "Flags identified technical risks (INLINE TOOL - technical)",
+        "isShared": false,
+        "mockRequest": {
+          "risk": "string",
+          "severity": "string"
+        },
+        "mockResponse": {
+          "flagged": "boolean",
+          "riskId": "string"
+        },
+        "sampleData": [
+          {
+            "flagged": true,
+            "riskId": "TECH-001"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "compile_risk_assessment",
+        "system": "INLINE",
+        "operation": "compileRiskAssessment",
+        "description": "Compiles overall risk assessment (INLINE TOOL - risk)",
+        "isShared": false,
+        "mockRequest": {
+          "risks": "array"
+        },
+        "mockResponse": {
+          "overallRisk": "string",
+          "breakdown": "object"
+        },
+        "sampleData": [
+          {
+            "overallRisk": "MEDIUM",
+            "breakdown": {
+              "legal": "LOW",
+              "financial": "MEDIUM",
+              "technical": "MEDIUM",
+              "operational": "HIGH"
+            }
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "suggest_mitigations",
+        "system": "INLINE",
+        "operation": "suggestMitigations",
+        "description": "Suggests risk mitigation strategies (INLINE TOOL - risk)",
+        "isShared": false,
+        "mockRequest": {
+          "risks": "array"
+        },
+        "mockResponse": {
+          "mitigations": "array"
+        },
+        "sampleData": [
+          {
+            "mitigations": [
+              "Add retention bonuses for key engineers",
+              "Structure earnout to retain customer relationships",
+              "Negotiate price reduction for integration costs"
+            ]
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "calculate_risk_score",
+        "system": "INLINE",
+        "operation": "calculateRiskScore",
+        "description": "Calculates numerical risk score (INLINE TOOL - risk)",
+        "isShared": false,
+        "mockRequest": {
+          "factors": "object"
+        },
+        "mockResponse": {
+          "score": "number",
+          "rating": "string"
+        },
+        "sampleData": [
+          {
+            "score": 6.5,
+            "rating": "MODERATE - Proceed with conditions"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "handoff_to_specialist",
+        "system": "INLINE",
+        "operation": "handoffToSpecialist",
+        "description": "Hands off to another specialist agent (INLINE TOOL - all specialists)",
+        "isShared": false,
+        "mockRequest": {
+          "targetAgent": "string",
+          "reason": "string",
+          "context": "object"
+        },
+        "mockResponse": {
+          "handoffComplete": "boolean",
+          "targetAgent": "string"
+        },
+        "sampleData": [
+          {
+            "handoffComplete": true,
+            "targetAgent": "financial"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      }
+    ],
+    "useCustomerTerminology": true,
+    "isLoading": false,
+    "step5Hash": "dealmock",
+    "aiCalled": true
+  },
+  "demoStrategy": {
+    "ahaMoments": [
+      {
+        "id": "aha-swarm-001",
+        "title": "Dynamic specialist handoff",
+        "triggerType": "tool",
+        "triggerName": "handoff_to_specialist",
+        "talkingPoint": "Watch how the Legal Advisor discovers a financial implication and dynamically hands off to the Financial Advisor - this isn't a predetermined path, it's emergent collaboration."
+      },
+      {
+        "id": "aha-swarm-002",
+        "title": "Shared tools enable collaboration",
+        "triggerType": "tool",
+        "triggerName": "get_deal",
+        "talkingPoint": "All five agents share access to the same deal data through the MCP Gateway - this is how they maintain context as they hand off to each other."
+      },
+      {
+        "id": "aha-swarm-003",
+        "title": "Risk consolidation across domains",
+        "triggerType": "agent",
+        "triggerName": "risk",
+        "talkingPoint": "The Risk Advisor receives findings from legal, financial, and technical specialists, consolidating them into a unified risk assessment - true cross-functional collaboration."
+      },
+      {
+        "id": "aha-swarm-004",
+        "title": "Coordinator synthesis",
+        "triggerType": "tool",
+        "triggerName": "synthesize_findings",
+        "talkingPoint": "After the swarm completes its analysis, the Coordinator synthesizes all findings into a clear go/no-go recommendation with conditions - the human-ready output."
+      }
+    ],
+    "persona": {
+      "name": "VP of Corporate Development",
+      "role": "Executive responsible for M&A and strategic partnerships",
+      "painPoint": "Wants to accelerate deal review while ensuring all risks are identified before presenting to the board"
+    },
+    "narrativeScenes": [
+      {
+        "id": "scene-001",
+        "title": "Software Acquisition Review",
+        "description": "A $5M acquisition deal is submitted for review. The coordinator delegates to specialists who discover key person risk, IP concerns, and integration costs. Watch how they hand off to each other as new issues emerge.",
+        "highlightedAgents": [
+          "coordinator",
+          "legal",
+          "technical",
+          "financial",
+          "risk"
+        ]
+      },
+      {
+        "id": "scene-002",
+        "title": "Partnership Agreement Analysis",
+        "description": "A revenue-sharing partnership requires legal review of exclusivity clauses, financial analysis of the split, and technical assessment of integration requirements. Specialists collaborate to identify the best terms.",
+        "highlightedAgents": [
+          "coordinator",
+          "legal",
+          "financial"
+        ]
+      },
+      {
+        "id": "scene-003",
+        "title": "Vendor Contract Due Diligence",
+        "description": "A major infrastructure contract with a vendor under FTC investigation triggers extensive risk analysis. Watch how the risk advisor pulls in legal and financial specialists for clarification.",
+        "highlightedAgents": [
+          "coordinator",
+          "risk",
+          "legal",
+          "financial"
+        ]
+      }
+    ],
+    "isGeneratingMoments": false,
+    "isGeneratingPersona": false,
+    "isGeneratingNarrative": false,
+    "momentsEdited": false,
+    "personaEdited": false,
+    "narrativeEdited": false
+  },
+  "generation": {
+    "isGenerating": false,
+    "currentFileIndex": 0,
+    "completedFiles": [],
+    "generatedFilePaths": [],
+    "accordionExpanded": false,
+    "canGenerate": true,
+    "isPlaceholderMode": true,
+    "roadmapGenerating": false,
+    "roadmapGenerated": false,
+    "roadmapFilePath": ""
+  }
+}

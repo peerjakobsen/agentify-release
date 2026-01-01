@@ -1,0 +1,7 @@
+{
+  "id": "support-triage",
+  "name": "Customer Support Triage",
+  "description": "4-agent support ticket routing system with graph-based decision making and 2 shared MCP Gateway tools",
+  "tags": ["intermediate", "graph-workflow", "4-agents", "mcp-gateway"],
+  "version": "1.0.0"
+}

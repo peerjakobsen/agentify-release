@@ -176,11 +176,19 @@ export class WizardStatePersistenceService implements vscode.Disposable {
 
       return { state: persisted, status: 'loaded' };
     } catch (error) {
-      // File not found
+      // File not found - check various error types from vscode.workspace.fs
+      if (error instanceof vscode.FileSystemError) {
+        // VS Code FileSystemError for file not found
+        return { state: null, status: 'not_found' };
+      }
+
       if (
         error instanceof Error &&
         (error.name === 'FileNotFound' ||
           error.message.includes('ENOENT') ||
+          error.message.includes('FileNotFound') ||
+          error.message.includes('does not exist') ||
+          (error as NodeJS.ErrnoException).code === 'ENOENT' ||
           (error as NodeJS.ErrnoException).code === 'FileNotFound')
       ) {
         return { state: null, status: 'not_found' };

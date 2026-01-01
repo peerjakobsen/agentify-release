@@ -1,0 +1,612 @@
+{
+  "schemaVersion": 1,
+  "savedAt": 1767180000000,
+  "currentStep": 7,
+  "highestStepReached": 8,
+  "validationAttempted": true,
+  "businessObjective": "Customer support ticket triage system that intelligently routes incoming tickets to specialized agents. A triage agent analyzes tickets and routes them to technical support, billing support, or escalation based on issue type and customer priority. Demonstrates graph-based LLM-driven routing with shared tools.",
+  "industry": "Technology",
+  "systems": [
+    "TicketSystem",
+    "CustomerDatabase"
+  ],
+  "aiGapFillingState": {
+    "conversationHistory": [],
+    "confirmedAssumptions": [
+      {
+        "system": "TicketSystem",
+        "modules": [
+          "Ticket Management"
+        ],
+        "integrations": [
+          "Agent -> TicketSystem: get ticket by ID"
+        ],
+        "source": "user-provided"
+      },
+      {
+        "system": "CustomerDatabase",
+        "modules": [
+          "Customer Profiles",
+          "Account History"
+        ],
+        "integrations": [
+          "Agent -> CustomerDatabase: lookup customer by ID"
+        ],
+        "source": "user-provided"
+      }
+    ],
+    "assumptionsAccepted": true,
+    "isStreaming": false,
+    "step1InputHash": "support123"
+  },
+  "outcome": {
+    "primaryOutcome": "Demonstrate a graph-based multi-agent workflow with LLM-driven routing decisions and shared tools via MCP Gateway",
+    "successMetrics": [
+      {
+        "name": "Tickets Routed",
+        "targetValue": "100",
+        "unit": "percent accuracy"
+      },
+      {
+        "name": "Response Time",
+        "targetValue": "< 5",
+        "unit": "seconds"
+      }
+    ],
+    "stakeholders": [
+      "Engineering",
+      "Customer Success"
+    ],
+    "isLoading": false,
+    "primaryOutcomeEdited": false,
+    "metricsEdited": false,
+    "stakeholdersEdited": false,
+    "customStakeholders": [],
+    "suggestionsAccepted": true,
+    "step2AssumptionsHash": "support456",
+    "refinedSections": {}
+  },
+  "security": {
+    "dataSensitivity": "Internal",
+    "complianceFrameworks": [],
+    "approvalGates": [],
+    "guardrailNotes": "Demo with mock customer data only. No real PII.",
+    "skipped": true
+  },
+  "agentDesign": {
+    "proposedAgents": [
+      {
+        "id": "triage",
+        "name": "Triage Agent",
+        "role": "Analyzes incoming support tickets, classifies issue type (technical, billing, or escalation), and routes to the appropriate specialist agent",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "classify_issue"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "technical",
+        "name": "Technical Support",
+        "role": "Handles product bugs, integration issues, API questions, and technical troubleshooting. Can escalate complex issues.",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "search_knowledge_base",
+          "create_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "billing",
+        "name": "Billing Support",
+        "role": "Handles payment issues, refund requests, subscription changes, and invoice questions. Can escalate complex issues.",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "check_billing_history",
+          "create_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "escalation",
+        "name": "Escalation Handler",
+        "role": "Handles VIP customers, complex multi-issue tickets, frustrated customers, and issues requiring manager approval",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "flag_for_human_review",
+          "create_priority_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "proposedOrchestration": "graph",
+    "proposedEdges": [
+      {
+        "from": "triage",
+        "to": "technical",
+        "condition": "Issue classified as technical"
+      },
+      {
+        "from": "triage",
+        "to": "billing",
+        "condition": "Issue classified as billing"
+      },
+      {
+        "from": "triage",
+        "to": "escalation",
+        "condition": "VIP customer or high priority"
+      },
+      {
+        "from": "technical",
+        "to": "escalation",
+        "condition": "Issue requires escalation"
+      },
+      {
+        "from": "billing",
+        "to": "escalation",
+        "condition": "Issue requires escalation"
+      }
+    ],
+    "orchestrationReasoning": "Graph-based routing allows the LLM to make dynamic decisions about ticket routing. The triage agent decides the initial path, and specialist agents can escalate when needed.",
+    "proposalAccepted": true,
+    "isLoading": false,
+    "step4Hash": "support789",
+    "aiCalled": true,
+    "confirmedAgents": [
+      {
+        "id": "triage",
+        "name": "Triage Agent",
+        "role": "Analyzes incoming support tickets, classifies issue type (technical, billing, or escalation), and routes to the appropriate specialist agent",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "classify_issue"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "technical",
+        "name": "Technical Support",
+        "role": "Handles product bugs, integration issues, API questions, and technical troubleshooting. Can escalate complex issues.",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "search_knowledge_base",
+          "create_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "billing",
+        "name": "Billing Support",
+        "role": "Handles payment issues, refund requests, subscription changes, and invoice questions. Can escalate complex issues.",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "check_billing_history",
+          "create_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "escalation",
+        "name": "Escalation Handler",
+        "role": "Handles VIP customers, complex multi-issue tickets, frustrated customers, and issues requiring manager approval",
+        "tools": [
+          "get_ticket",
+          "get_customer",
+          "flag_for_human_review",
+          "create_priority_response"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "confirmedOrchestration": "graph",
+    "confirmedEdges": [
+      {
+        "from": "triage",
+        "to": "technical",
+        "condition": "Issue classified as technical"
+      },
+      {
+        "from": "triage",
+        "to": "billing",
+        "condition": "Issue classified as billing"
+      },
+      {
+        "from": "triage",
+        "to": "escalation",
+        "condition": "VIP customer or high priority"
+      },
+      {
+        "from": "technical",
+        "to": "escalation",
+        "condition": "Issue requires escalation"
+      },
+      {
+        "from": "billing",
+        "to": "escalation",
+        "condition": "Issue requires escalation"
+      }
+    ],
+    "originalOrchestration": "graph"
+  },
+  "mockData": {
+    "mockDefinitions": [
+      {
+        "tool": "get_ticket",
+        "system": "TicketSystem",
+        "operation": "getTicket",
+        "description": "Retrieves support ticket details by ID (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "ticketId": "string"
+        },
+        "mockResponse": {
+          "ticketId": "string",
+          "subject": "string",
+          "description": "string",
+          "priority": "string",
+          "customerId": "string",
+          "createdAt": "string",
+          "status": "string"
+        },
+        "sampleData": [
+          {
+            "ticketId": "TKT-001",
+            "subject": "API Integration Error",
+            "description": "Getting 500 errors when calling the /users endpoint. Started after the latest update.",
+            "priority": "high",
+            "customerId": "CUST-100",
+            "createdAt": "2024-01-15T10:30:00Z",
+            "status": "open"
+          },
+          {
+            "ticketId": "TKT-002",
+            "subject": "Refund Request",
+            "description": "I was charged twice for my subscription last month. Please refund the duplicate charge.",
+            "priority": "medium",
+            "customerId": "CUST-200",
+            "createdAt": "2024-01-15T11:00:00Z",
+            "status": "open"
+          },
+          {
+            "ticketId": "TKT-003",
+            "subject": "Urgent: System Down",
+            "description": "Our entire production environment is down! We are a Fortune 500 company and losing millions per hour!",
+            "priority": "critical",
+            "customerId": "CUST-VIP",
+            "createdAt": "2024-01-15T11:30:00Z",
+            "status": "open"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "get_customer",
+        "system": "CustomerDatabase",
+        "operation": "getCustomer",
+        "description": "Retrieves customer profile and account history (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "customerId": "string"
+        },
+        "mockResponse": {
+          "customerId": "string",
+          "name": "string",
+          "email": "string",
+          "tier": "string",
+          "accountAge": "string",
+          "totalSpend": "number",
+          "openTickets": "number"
+        },
+        "sampleData": [
+          {
+            "customerId": "CUST-100",
+            "name": "Acme Corp",
+            "email": "support@acme.com",
+            "tier": "professional",
+            "accountAge": "2 years",
+            "totalSpend": 12000,
+            "openTickets": 1
+          },
+          {
+            "customerId": "CUST-200",
+            "name": "Jane Smith",
+            "email": "jane@example.com",
+            "tier": "starter",
+            "accountAge": "6 months",
+            "totalSpend": 300,
+            "openTickets": 1
+          },
+          {
+            "customerId": "CUST-VIP",
+            "name": "MegaCorp Industries",
+            "email": "enterprise@megacorp.com",
+            "tier": "enterprise",
+            "accountAge": "5 years",
+            "totalSpend": 500000,
+            "openTickets": 3
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "classify_issue",
+        "system": "INLINE",
+        "operation": "classifyIssue",
+        "description": "Classifies ticket into category: technical, billing, or escalation (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "subject": "string",
+          "description": "string",
+          "customerTier": "string"
+        },
+        "mockResponse": {
+          "category": "string",
+          "confidence": "number",
+          "reasoning": "string"
+        },
+        "sampleData": [
+          {
+            "category": "technical",
+            "confidence": 0.95,
+            "reasoning": "Ticket mentions API errors and technical issues"
+          },
+          {
+            "category": "billing",
+            "confidence": 0.92,
+            "reasoning": "Ticket mentions refund and duplicate charge"
+          },
+          {
+            "category": "escalation",
+            "confidence": 0.99,
+            "reasoning": "VIP customer with critical priority system outage"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "search_knowledge_base",
+        "system": "INLINE",
+        "operation": "searchKnowledgeBase",
+        "description": "Searches internal knowledge base for relevant solutions (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "query": "string"
+        },
+        "mockResponse": {
+          "articles": "array",
+          "topMatch": "string"
+        },
+        "sampleData": [
+          {
+            "articles": ["API Troubleshooting Guide", "500 Error Resolution"],
+            "topMatch": "Check API rate limits and authentication tokens"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "check_billing_history",
+        "system": "INLINE",
+        "operation": "checkBillingHistory",
+        "description": "Retrieves customer billing history for verification (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "customerId": "string"
+        },
+        "mockResponse": {
+          "recentCharges": "array",
+          "duplicatesFound": "boolean"
+        },
+        "sampleData": [
+          {
+            "recentCharges": [
+              {"date": "2024-01-01", "amount": 29.99},
+              {"date": "2024-01-01", "amount": 29.99}
+            ],
+            "duplicatesFound": true
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "create_response",
+        "system": "INLINE",
+        "operation": "createResponse",
+        "description": "Creates a formatted response for the customer (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "ticketId": "string",
+          "responseText": "string",
+          "resolution": "string"
+        },
+        "mockResponse": {
+          "responseId": "string",
+          "sent": "boolean"
+        },
+        "sampleData": [
+          {
+            "responseId": "RESP-001",
+            "sent": true
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "flag_for_human_review",
+        "system": "INLINE",
+        "operation": "flagForHumanReview",
+        "description": "Flags ticket for human manager review (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "ticketId": "string",
+          "reason": "string",
+          "urgency": "string"
+        },
+        "mockResponse": {
+          "flagged": "boolean",
+          "assignedTo": "string"
+        },
+        "sampleData": [
+          {
+            "flagged": true,
+            "assignedTo": "Manager: Sarah Johnson"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "create_priority_response",
+        "system": "INLINE",
+        "operation": "createPriorityResponse",
+        "description": "Creates high-priority response with SLA commitment (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "ticketId": "string",
+          "responseText": "string",
+          "slaCommitment": "string"
+        },
+        "mockResponse": {
+          "responseId": "string",
+          "priorityLevel": "string",
+          "escalatedTo": "string"
+        },
+        "sampleData": [
+          {
+            "responseId": "RESP-VIP-001",
+            "priorityLevel": "P1",
+            "escalatedTo": "VP of Engineering"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      }
+    ],
+    "useCustomerTerminology": false,
+    "isLoading": false,
+    "step5Hash": "supportmock",
+    "aiCalled": true
+  },
+  "demoStrategy": {
+    "ahaMoments": [
+      {
+        "id": "aha-triage-001",
+        "title": "Intelligent ticket routing",
+        "triggerType": "agent",
+        "triggerName": "triage",
+        "talkingPoint": "Watch how the Triage Agent analyzes the ticket content and customer tier to make an intelligent routing decision - this is LLM-driven graph orchestration in action."
+      },
+      {
+        "id": "aha-shared-001",
+        "title": "Shared tools across agents",
+        "triggerType": "tool",
+        "triggerName": "get_ticket",
+        "talkingPoint": "Notice how both the Triage Agent and the specialist agents use the same get_ticket tool - it's deployed once as a Lambda and shared via MCP Gateway."
+      },
+      {
+        "id": "aha-escalation-001",
+        "title": "Dynamic escalation path",
+        "triggerType": "agent",
+        "triggerName": "escalation",
+        "talkingPoint": "The VIP customer's ticket was automatically routed to the Escalation Handler based on customer tier and priority - no hardcoded rules, just LLM judgment."
+      }
+    ],
+    "persona": {
+      "name": "Support Manager",
+      "role": "Customer Success Lead evaluating AI-powered support automation",
+      "painPoint": "Wants to reduce ticket response time while maintaining quality for VIP customers"
+    },
+    "narrativeScenes": [
+      {
+        "id": "scene-001",
+        "title": "Technical Issue Routing",
+        "description": "A professional tier customer reports an API integration error. The triage agent classifies it as technical and routes to Technical Support, which finds a solution in the knowledge base.",
+        "highlightedAgents": [
+          "triage",
+          "technical"
+        ]
+      },
+      {
+        "id": "scene-002",
+        "title": "Billing Issue Resolution",
+        "description": "A starter tier customer reports a duplicate charge. Triage routes to Billing Support, which verifies the duplicate and processes a refund.",
+        "highlightedAgents": [
+          "triage",
+          "billing"
+        ]
+      },
+      {
+        "id": "scene-003",
+        "title": "VIP Escalation",
+        "description": "An enterprise VIP customer reports a critical system outage. Triage immediately routes to Escalation Handler, which flags for human review and creates a P1 response.",
+        "highlightedAgents": [
+          "triage",
+          "escalation"
+        ]
+      }
+    ],
+    "isGeneratingMoments": false,
+    "isGeneratingPersona": false,
+    "isGeneratingNarrative": false,
+    "momentsEdited": false,
+    "personaEdited": false,
+    "narrativeEdited": false
+  },
+  "generation": {
+    "isGenerating": false,
+    "currentFileIndex": 0,
+    "completedFiles": [],
+    "generatedFilePaths": [],
+    "accordionExpanded": false,
+    "canGenerate": true,
+    "isPlaceholderMode": true,
+    "roadmapGenerating": false,
+    "roadmapGenerated": false,
+    "roadmapFilePath": ""
+  }
+}

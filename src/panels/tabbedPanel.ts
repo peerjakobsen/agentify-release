@@ -266,21 +266,29 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
   ): void {
+    const startTime = Date.now();
+    console.log(`[TabbedPanel] ${startTime} resolveWebviewView START`);
     this._view = webviewView;
 
+    console.log(`[TabbedPanel] ${Date.now() - startTime}ms Setting webview options`);
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this._extensionUri],
     };
 
-    // Check project initialization and load persisted state
-    this.checkProjectInitialization().then(async () => {
-      // Task 6.3: Load persisted state on panel resolve
-      await this.loadPersistedState();
+    // Render initial content immediately (before async work)
+    console.log(`[TabbedPanel] ${Date.now() - startTime}ms Rendering initial content...`);
+    try {
       this.updateWebviewContent();
+      console.log(`[TabbedPanel] ${Date.now() - startTime}ms Initial content rendered`);
       this.syncStateToWebview();
-    });
+      console.log(`[TabbedPanel] ${Date.now() - startTime}ms Initial state synced`);
+    } catch (error) {
+      console.error(`[TabbedPanel] ${Date.now() - startTime}ms Error rendering initial content:`, error);
+    }
 
+    // Set up message handler immediately
+    console.log(`[TabbedPanel] ${Date.now() - startTime}ms Setting up message handler`);
     webviewView.webview.onDidReceiveMessage(
       (message) => this.handleMessage(message),
       undefined,
@@ -288,7 +296,46 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     );
 
     // Watch for config changes
-    this.subscribeToConfigChanges();
+    console.log(`[TabbedPanel] ${Date.now() - startTime}ms Setting up config watcher`);
+    try {
+      this.subscribeToConfigChanges();
+      console.log(`[TabbedPanel] ${Date.now() - startTime}ms Config watcher set up`);
+    } catch (error) {
+      console.error(`[TabbedPanel] ${Date.now() - startTime}ms Error setting up config watcher:`, error);
+    }
+
+    console.log(`[TabbedPanel] ${Date.now() - startTime}ms resolveWebviewView SYNC COMPLETE, starting async work`);
+
+    // Check project initialization and load persisted state in background
+    // Use Promise.race with timeout to prevent hanging
+    const asyncWork = async () => {
+      const asyncStart = Date.now();
+      try {
+        console.log(`[TabbedPanel] ${asyncStart - startTime}ms Async: Starting checkProjectInitialization`);
+        await this.checkProjectInitialization();
+        console.log(`[TabbedPanel] ${Date.now() - startTime}ms Async: checkProjectInitialization complete`);
+
+        console.log(`[TabbedPanel] ${Date.now() - startTime}ms Async: Starting loadPersistedState`);
+        await this.loadPersistedState();
+        console.log(`[TabbedPanel] ${Date.now() - startTime}ms Async: loadPersistedState complete`);
+
+        console.log(`[TabbedPanel] ${Date.now() - startTime}ms Async: Updating webview content`);
+        this.updateWebviewContent();
+        this.syncStateToWebview();
+        console.log(`[TabbedPanel] ${Date.now() - startTime}ms Async: ALL COMPLETE`);
+      } catch (error) {
+        console.error(`[TabbedPanel] ${Date.now() - startTime}ms Async error:`, error);
+      }
+    };
+
+    // Run with 10 second timeout
+    const timeout = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('Async initialization timed out after 10s')), 10000)
+    );
+
+    Promise.race([asyncWork(), timeout]).catch((error) => {
+      console.error(`[TabbedPanel] ${Date.now() - startTime}ms TIMEOUT or ERROR:`, error);
+    });
   }
 
   /**
@@ -1303,7 +1350,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       const fileSizeBytes = fileContent.byteLength;
 
       // Import the processImportedFile utility
-      const { processImportedFile } = await import('../utils/mockDataImportUtils.js');
+      const { processImportedFile } = await import('../utils/mockDataImportUtils');
 
       // Process the imported file
       const result = processImportedFile(
@@ -1389,7 +1436,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
     // Get the AgentDesignService and request edge suggestions
     try {
-      const { getAgentDesignService } = await import('../services/agentDesignService.js');
+      const { getAgentDesignService } = await import('../services/agentDesignService');
       const service = getAgentDesignService(this._context);
 
       // Call the edge suggestion method

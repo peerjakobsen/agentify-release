@@ -1,0 +1,7 @@
+{
+  "id": "hello-greeter",
+  "name": "Hello Greeter",
+  "description": "Simple greeting workflow with user lookup - demonstrates multi-agent pattern with shared MCP Gateway tool",
+  "tags": ["beginner", "multi-agent", "mcp-gateway"],
+  "version": "1.0.0"
+}

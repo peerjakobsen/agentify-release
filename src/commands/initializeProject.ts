@@ -11,6 +11,7 @@
  * 5b. Ensures .gitignore has entries for sensitive files
  * 5c. Creates/updates pyproject.toml if selected
  * 6. Generates .agentify/config.json
+ * 6b. Shows demo project picker (sample project or start fresh)
  * 7. Creates .kiro/steering/agentify-integration.md
  * 8. Auto-opens cdk/README.md for deployment instructions
  * 9. Shows success notification with summary
@@ -37,6 +38,11 @@ import {
   showInitializationModal,
   showFreshInitializationConfirm,
 } from '../panels/InitializationModal';
+import { showDemoProjectPicker } from '../panels/DemoProjectPicker';
+import {
+  discoverDemoProjects,
+  extractDemoProject,
+} from '../services/demoProjectService';
 import { createSteeringFile } from '../templates/steeringFile';
 import { createPyprojectToml } from '../templates/pyprojectTemplate';
 import type { AgentifyConfig } from '../types';
@@ -82,6 +88,8 @@ export interface InitializationResult {
   extractedGroups?: string[];
   pyprojectCreated?: boolean;
   steeringFileCreated?: boolean;
+  /** ID of installed demo project, if any */
+  demoInstalled?: string;
 }
 
 /**
@@ -509,6 +517,33 @@ export async function handleInitializeProject(
     return { success: false };
   }
 
+  // Step 6b: Show demo project picker
+  let demoInstalled: string | undefined;
+  try {
+    const demoProjects = await discoverDemoProjects(context.extensionPath);
+    const demoResult = await showDemoProjectPicker(demoProjects);
+
+    if (demoResult === null) {
+      // User cancelled - still continue with initialization (just no demo)
+      console.log('[Agentify] Demo picker cancelled, continuing without demo');
+    } else if (demoResult.choice === 'demo' && demoResult.demoId) {
+      const extracted = await extractDemoProject(
+        context.extensionPath,
+        workspaceRoot,
+        demoResult.demoId
+      );
+      if (extracted) {
+        demoInstalled = demoResult.demoId;
+        console.log(`[Agentify] Installed demo: ${demoResult.demoId}`);
+      }
+    } else {
+      console.log('[Agentify] User chose to start fresh');
+    }
+  } catch (error) {
+    // Non-blocking - log but continue
+    console.warn('[Agentify] Demo picker error:', error);
+  }
+
   // Step 7: Create steering file (non-blocking - errors don't fail initialization)
   let steeringFileCreated = false;
   try {
@@ -541,5 +576,6 @@ export async function handleInitializeProject(
     extractedGroups,
     pyprojectCreated,
     steeringFileCreated,
+    demoInstalled,
   };
 }

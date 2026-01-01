@@ -24,14 +24,30 @@ docs/**
 *.map
 *.d.ts
 
+# Webpack config
+webpack.config.js
+
 # Config files
 .eslintrc*
 .prettierrc*
 vitest.config.*
 
+# Unnecessary dist files from old tsc builds
+# Webpack bundles to dist/extension.js and chunks
+dist/services/**
+dist/panels/**
+dist/utils/**
+dist/types/**
+dist/commands/**
+dist/templates/**
+dist/config/**
+dist/messages/**
+dist/*.d.ts
+dist/*.ts
+
 # Keep these (not ignored):
-# - dist/          (compiled extension)
-# - infrastructure/ (CloudFormation templates)
-# - resources/     (icons, images)
+# - dist/extension.js (webpack bundle)
+# - dist/*.extension.js (webpack chunks)
+# - resources/     (icons, images, demos)
 # - package.json
 # - README.md

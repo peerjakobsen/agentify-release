@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "savedAt": 1767179845303,
+  "currentStep": 7,
+  "highestStepReached": 8,
+  "validationAttempted": true,
+  "businessObjective": "Simple greeting workflow that looks up a user and generates a personalized greeting. Two agents work together: one analyzes the request and looks up user info, the other generates the greeting response.",
+  "industry": "Technology",
+  "systems": [
+    "UserDatabase"
+  ],
+  "aiGapFillingState": {
+    "conversationHistory": [],
+    "confirmedAssumptions": [
+      {
+        "system": "UserDatabase",
+        "modules": [
+          "User Profiles"
+        ],
+        "integrations": [
+          "Agent -> UserDatabase: lookup user by ID"
+        ],
+        "source": "user-provided"
+      }
+    ],
+    "assumptionsAccepted": true,
+    "isStreaming": false,
+    "step1InputHash": "simple123"
+  },
+  "outcome": {
+    "primaryOutcome": "Demonstrate a minimal multi-agent workflow with shared tools via MCP Gateway",
+    "successMetrics": [
+      {
+        "name": "Greeting Generated",
+        "targetValue": "1",
+        "unit": "per request"
+      }
+    ],
+    "stakeholders": [
+      "Engineering"
+    ],
+    "isLoading": false,
+    "primaryOutcomeEdited": false,
+    "metricsEdited": false,
+    "stakeholdersEdited": false,
+    "customStakeholders": [],
+    "suggestionsAccepted": true,
+    "step2AssumptionsHash": "simple456",
+    "refinedSections": {}
+  },
+  "security": {
+    "dataSensitivity": "Internal",
+    "complianceFrameworks": [],
+    "approvalGates": [],
+    "guardrailNotes": "Simple demo with mock data only.",
+    "skipped": true
+  },
+  "agentDesign": {
+    "proposedAgents": [
+      {
+        "id": "analyzer",
+        "name": "Request Analyzer",
+        "role": "Analyzes incoming greeting requests and retrieves user information using the shared lookup tool",
+        "tools": [
+          "lookup_user",
+          "extract_user_id"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "greeter",
+        "name": "Greeting Generator",
+        "role": "Generates personalized greetings based on user data from the analyzer",
+        "tools": [
+          "format_greeting",
+          "get_time_of_day"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "proposedOrchestration": "workflow",
+    "proposedEdges": [
+      {
+        "from": "analyzer",
+        "to": "greeter"
+      }
+    ],
+    "orchestrationReasoning": "Simple sequential workflow: analyzer looks up user, greeter generates response.",
+    "proposalAccepted": true,
+    "isLoading": false,
+    "step4Hash": "simple789",
+    "aiCalled": true,
+    "confirmedAgents": [
+      {
+        "id": "analyzer",
+        "name": "Request Analyzer",
+        "role": "Analyzes incoming greeting requests and retrieves user information using the shared lookup tool",
+        "tools": [
+          "lookup_user",
+          "extract_user_id"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      },
+      {
+        "id": "greeter",
+        "name": "Greeting Generator",
+        "role": "Generates personalized greetings based on user data from the analyzer",
+        "tools": [
+          "format_greeting",
+          "get_time_of_day"
+        ],
+        "nameEdited": false,
+        "roleEdited": false,
+        "toolsEdited": false
+      }
+    ],
+    "confirmedOrchestration": "workflow",
+    "confirmedEdges": [
+      {
+        "from": "analyzer",
+        "to": "greeter"
+      }
+    ],
+    "originalOrchestration": "workflow"
+  },
+  "mockData": {
+    "mockDefinitions": [
+      {
+        "tool": "lookup_user",
+        "system": "UserDatabase",
+        "operation": "lookupUser",
+        "description": "Looks up user profile by ID (SHARED TOOL - deployed via MCP Gateway)",
+        "isShared": true,
+        "mockRequest": {
+          "userId": "string"
+        },
+        "mockResponse": {
+          "userId": "string",
+          "name": "string",
+          "email": "string",
+          "preferredLanguage": "string",
+          "memberSince": "string"
+        },
+        "sampleData": [
+          {
+            "userId": "user-001",
+            "name": "Alice Smith",
+            "email": "alice@example.com",
+            "preferredLanguage": "en",
+            "memberSince": "2023-01-15"
+          },
+          {
+            "userId": "user-002",
+            "name": "Bob Jones",
+            "email": "bob@example.com",
+            "preferredLanguage": "en",
+            "memberSince": "2024-06-20"
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "extract_user_id",
+        "system": "INLINE",
+        "operation": "extractUserId",
+        "description": "Extracts user ID from the incoming request text (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "text": "string"
+        },
+        "mockResponse": {
+          "userId": "string",
+          "found": true
+        },
+        "sampleData": [
+          {
+            "userId": "user-001",
+            "found": true
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "format_greeting",
+        "system": "INLINE",
+        "operation": "formatGreeting",
+        "description": "Formats a personalized greeting message (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {
+          "name": "string",
+          "timeOfDay": "string"
+        },
+        "mockResponse": {
+          "greeting": "string"
+        },
+        "sampleData": [
+          {
+            "greeting": "Good morning, Alice! Welcome back."
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      },
+      {
+        "tool": "get_time_of_day",
+        "system": "INLINE",
+        "operation": "getTimeOfDay",
+        "description": "Returns current time of day category (INLINE TOOL - runs in agent)",
+        "isShared": false,
+        "mockRequest": {},
+        "mockResponse": {
+          "timeOfDay": "string",
+          "hour": 0
+        },
+        "sampleData": [
+          {
+            "timeOfDay": "morning",
+            "hour": 9
+          }
+        ],
+        "requestEdited": false,
+        "responseEdited": false,
+        "sampleDataEdited": false,
+        "expanded": false
+      }
+    ],
+    "useCustomerTerminology": false,
+    "isLoading": false,
+    "step5Hash": "simplemock",
+    "aiCalled": true
+  },
+  "demoStrategy": {
+    "ahaMoments": [
+      {
+        "id": "aha-simple-001",
+        "title": "Shared tool invoked via MCP Gateway",
+        "triggerType": "tool",
+        "triggerName": "lookup_user",
+        "talkingPoint": "Watch the analyzer agent call the shared lookup_user tool that's deployed as a Lambda function and accessed via the MCP Gateway. This is the key integration point."
+      }
+    ],
+    "persona": {
+      "name": "Demo User",
+      "role": "Developer testing the Agentify workflow",
+      "painPoint": "Wants to validate the end-to-end agent + shared tool pattern works"
+    },
+    "narrativeScenes": [
+      {
+        "id": "scene-001",
+        "title": "Simple Greeting Request",
+        "description": "User sends a greeting request with a user ID. The analyzer extracts the ID and looks up the user via the shared tool. The greeter then formats a personalized response.",
+        "highlightedAgents": [
+          "analyzer",
+          "greeter"
+        ]
+      }
+    ],
+    "isGeneratingMoments": false,
+    "isGeneratingPersona": false,
+    "isGeneratingNarrative": false,
+    "momentsEdited": false,
+    "personaEdited": false,
+    "narrativeEdited": false
+  },
+  "generation": {
+    "isGenerating": false,
+    "currentFileIndex": 0,
+    "completedFiles": [],
+    "generatedFilePaths": [],
+    "accordionExpanded": false,
+    "canGenerate": true,
+    "isPlaceholderMode": true,
+    "roadmapGenerating": false,
+    "roadmapGenerated": false,
+    "roadmapFilePath": ""
+  }
+}

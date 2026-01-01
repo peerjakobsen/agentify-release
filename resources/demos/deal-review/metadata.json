@@ -1,0 +1,7 @@
+{
+  "id": "deal-review",
+  "name": "Deal Review Board",
+  "description": "5-agent swarm that collaboratively reviews business deals with emergent handoffs and 3 shared MCP Gateway tools",
+  "tags": ["advanced", "swarm-workflow", "5-agents", "mcp-gateway"],
+  "version": "1.0.0"
+}
