@@ -475,10 +475,12 @@ if [ -n "$AGENT_NAME" ]; then
     EXECUTION_ROLE=$(grep -A 15 "^  ${AGENT_NAME}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" | grep "execution_role:" | head -1 | sed 's/.*arn:aws:iam::[0-9]*:role\///' | tr -d ' ')
 
     if [ -n "$EXECUTION_ROLE" ]; then
-        TABLE_ARN=$(aws dynamodb describe-table --table-name agentify-workflow-events --query "Table.TableArn" --output text --region "${REGION}" 2>/dev/null || echo "")
+        # Use project-specific table name (matches what CDK creates)
+        TABLE_ARN=$(aws dynamodb describe-table --table-name "${PROJECT_NAME}-workflow-events" --query "Table.TableArn" --output text --region "${REGION}" 2>/dev/null || echo "")
 
         if [ -n "$TABLE_ARN" ]; then
             POLICY_NAME="AgentifyAccess-${AGENT_NAME}"
+            # Grant access to both /agentify/* (gateway params) and /{project}/* (DynamoDB table param)
             POLICY_DOCUMENT='{
                 "Version": "2012-10-17",
                 "Statement": [
@@ -491,8 +493,11 @@ if [ -n "$AGENT_NAME" ]; then
                     {
                         "Sid": "SSMParameterAccess",
                         "Effect": "Allow",
-                        "Action": ["ssm:GetParameter", "ssm:GetParameters"],
-                        "Resource": ["arn:aws:ssm:'${REGION}':'${ACCOUNT_ID}':parameter/agentify/*"]
+                        "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
+                        "Resource": [
+                            "arn:aws:ssm:'${REGION}':'${ACCOUNT_ID}':parameter/agentify/*",
+                            "arn:aws:ssm:'${REGION}':'${ACCOUNT_ID}':parameter/'${PROJECT_NAME}'/*"
+                        ]
                     }
                 ]
             }'
@@ -504,6 +509,8 @@ if [ -n "$AGENT_NAME" ]; then
                 --region "${REGION}" 2>/dev/null && \
                 print_success "IAM permissions added for ${AGENT_NAME}" || \
                 print_warning "Could not add IAM permissions for ${AGENT_NAME}"
+        else
+            print_warning "DynamoDB table ${PROJECT_NAME}-workflow-events not found, skipping IAM policy"
         fi
     else
         print_warning "Could not find execution role for ${AGENT_NAME}"

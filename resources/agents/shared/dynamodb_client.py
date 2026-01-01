@@ -19,7 +19,9 @@ tool events with comprehensive error handling and graceful degradation.
 The module resolves the DynamoDB table name using a multi-tier strategy:
 
 1. **Cached table name**: Performance optimization for repeated calls
-2. **SSM Parameter Store**: `/agentify/services/dynamodb/tool-events-table` (preferred)
+2. **SSM Parameter Store**: `/{project}/services/dynamodb/workflow-events-table` (preferred)
+   - Project name from `AGENTIFY_PROJECT_NAME` env var (defaults to 'agentify')
+   - Allows multiple projects to coexist in the same AWS account
 3. **Environment Variable**: `AGENTIFY_TABLE_NAME` (fallback)
 4. **Graceful degradation**: Returns None if no configuration found
 
@@ -85,8 +87,22 @@ from botocore.exceptions import ClientError
 
 # Configuration constants
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-TOOL_EVENTS_TABLE_PARAM = '/agentify/services/dynamodb/tool-events-table'
 TTL_DURATION_SECONDS = 7200  # 2 hours
+
+
+def _get_tool_events_table_param() -> str:
+    """
+    Get project-specific SSM parameter path for DynamoDB table.
+
+    Uses AGENTIFY_PROJECT_NAME environment variable to construct a project-specific
+    path that matches what CDK creates. This allows multiple Agentify projects to
+    coexist in the same AWS account without SSM parameter conflicts.
+
+    Returns:
+        str: SSM parameter path like '/{project}/services/dynamodb/workflow-events-table'
+    """
+    project = os.environ.get('AGENTIFY_PROJECT_NAME', 'agentify')
+    return f'/{project}/services/dynamodb/workflow-events-table'
 
 # Module-level cache for table name
 _table_name: str | None = None
@@ -106,7 +122,8 @@ def get_tool_events_table_name() -> str | None:
 
     Resolution order:
     1. Cached table name (performance optimization)
-    2. SSM Parameter Store: /agentify/services/dynamodb/tool-events-table (preferred)
+    2. SSM Parameter Store: /{project}/services/dynamodb/workflow-events-table (preferred)
+       - Project name from AGENTIFY_PROJECT_NAME env var (defaults to 'agentify')
     3. Environment Variable: AGENTIFY_TABLE_NAME (fallback)
     4. None (graceful degradation)
 
@@ -147,14 +164,15 @@ def get_tool_events_table_name() -> str | None:
     # Try SSM Parameter Store (preferred for production)
     try:
         ssm = boto3.client('ssm', region_name=AWS_REGION)
-        response = ssm.get_parameter(Name=TOOL_EVENTS_TABLE_PARAM)
+        param_path = _get_tool_events_table_param()
+        response = ssm.get_parameter(Name=param_path)
         _table_name = response['Parameter']['Value']
         logger.debug(f'Retrieved table name from SSM: {_table_name}')
         return _table_name
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', 'Unknown')
         if error_code == 'ParameterNotFound':
-            logger.debug(f'SSM parameter {TOOL_EVENTS_TABLE_PARAM} not found')
+            logger.debug(f'SSM parameter {_get_tool_events_table_param()} not found')
         else:
             logger.warning(f'SSM error ({error_code}): {e}')
     except Exception as e:
