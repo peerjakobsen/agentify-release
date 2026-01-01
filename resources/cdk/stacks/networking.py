@@ -248,6 +248,17 @@ class NetworkingStack(Stack):
             security_groups=[self.endpoint_security_group],
         )
 
+        # X-Ray endpoint - for OpenTelemetry trace export
+        # AgentCore Runtime has built-in OTEL that sends traces to X-Ray.
+        # Without this endpoint, force_flush() times out (~30s per flush),
+        # causing significant delays in agent response times.
+        self.vpc.add_interface_endpoint(
+            "XRayEndpoint",
+            service=ec2.InterfaceVpcEndpointAwsService.XRAY,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            security_groups=[self.endpoint_security_group],
+        )
+
     def _create_security_groups(self) -> None:
         """Create security groups for AgentCore agents."""
         # Agent security group - outbound only

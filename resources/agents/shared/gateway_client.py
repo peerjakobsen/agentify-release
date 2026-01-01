@@ -26,17 +26,17 @@ def invoke_my_agent(prompt: str) -> str:
     )
 ```
 
-## Environment Variables
+## Gateway Credentials
 
-- `GATEWAY_URL`: MCP Gateway endpoint URL
-- `GATEWAY_CLIENT_ID`: Cognito OAuth client ID
-- `GATEWAY_CLIENT_SECRET`: Cognito OAuth client secret
-- `GATEWAY_TOKEN_ENDPOINT`: Cognito token endpoint URL
-- `GATEWAY_SCOPE`: OAuth scope for Gateway access
-- `AGENT_MODEL_ID`: Bedrock model ID (optional)
+Gateway credentials are automatically discovered from SSM Parameter Store:
+- `/agentify/{project}/gateway/url`
+- `/agentify/{project}/gateway/client_id`
+- `/agentify/{project}/gateway/client_secret`
+- `/agentify/{project}/gateway/token_endpoint`
+- `/agentify/{project}/gateway/scope`
 
-These are automatically set by setup.sh when deploying agents if a
-Gateway has been configured for the project.
+The project name is read from `AGENTIFY_PROJECT_NAME` environment variable,
+which is set automatically by setup.sh during agent deployment.
 
 ## Why This Module Exists
 
@@ -51,14 +51,82 @@ ensuring Gateway tools work correctly.
 import logging
 import os
 from datetime import datetime, timedelta
+from functools import lru_cache
+from typing import TypedDict
 
+import boto3
 import httpx
+from botocore.exceptions import ClientError
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 from strands.tools.mcp import MCPClient
 
 logger = logging.getLogger(__name__)
+
+
+class GatewayConfig(TypedDict, total=False):
+    """Gateway configuration from SSM Parameter Store."""
+
+    url: str
+    client_id: str
+    client_secret: str
+    token_endpoint: str
+    scope: str
+
+
+@lru_cache(maxsize=1)
+def _get_gateway_config_from_ssm() -> GatewayConfig | None:
+    """
+    Read Gateway configuration from SSM Parameter Store.
+
+    Credentials are stored at `/agentify/{project}/gateway/*` by setup.sh.
+    The project name is read from AGENTIFY_PROJECT_NAME environment variable.
+
+    Returns:
+        GatewayConfig dict if credentials found, None otherwise.
+    """
+    project = os.environ.get('AGENTIFY_PROJECT_NAME')
+    if not project:
+        logger.debug('AGENTIFY_PROJECT_NAME not set, cannot read Gateway config from SSM')
+        return None
+
+    prefix = f'/agentify/{project}/gateway'
+    logger.debug('Reading Gateway config from SSM: %s/*', prefix)
+
+    try:
+        ssm = boto3.client('ssm')
+
+        # Get all parameters under the prefix
+        response = ssm.get_parameters_by_path(
+            Path=prefix,
+            WithDecryption=True,  # Required for SecureString (client_secret)
+        )
+
+        if not response.get('Parameters'):
+            logger.debug('No Gateway parameters found in SSM at %s', prefix)
+            return None
+
+        # Parse parameters into config dict
+        config: GatewayConfig = {}
+        for param in response['Parameters']:
+            # Extract key name from full path: /agentify/project/gateway/url -> url
+            key = param['Name'].split('/')[-1]
+            config[key] = param['Value']
+
+        # Validate required fields
+        required = ['url', 'client_id', 'client_secret', 'token_endpoint', 'scope']
+        missing = [k for k in required if not config.get(k)]
+        if missing:
+            logger.warning('Gateway config incomplete, missing: %s', missing)
+            return None
+
+        logger.info('Gateway config loaded from SSM: %s', prefix)
+        return config
+
+    except ClientError as e:
+        logger.warning('Failed to read Gateway config from SSM: %s', e)
+        return None
 
 
 class GatewayTokenManager:
@@ -72,36 +140,28 @@ class GatewayTokenManager:
     tokens are refreshed proactively, avoiding authentication failures
     during tool invocations.
 
-    Attributes:
-        client_id: Cognito OAuth client ID
-        client_secret: Cognito OAuth client secret
-        token_endpoint: Cognito token endpoint URL
-        scope: OAuth scope for Gateway access
+    Credentials are read from SSM Parameter Store automatically.
     """
 
-    def __init__(
-        self,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-        token_endpoint: str | None = None,
-        scope: str | None = None,
-    ):
+    def __init__(self):
         """
         Initialize the token manager.
 
-        Credentials can be passed directly or read from environment variables.
-        Environment variables are used as fallbacks when parameters are None.
-
-        Args:
-            client_id: Cognito OAuth client ID (or GATEWAY_CLIENT_ID env var)
-            client_secret: Cognito OAuth client secret (or GATEWAY_CLIENT_SECRET env var)
-            token_endpoint: Cognito token endpoint URL (or GATEWAY_TOKEN_ENDPOINT env var)
-            scope: OAuth scope for Gateway access (or GATEWAY_SCOPE env var)
+        Credentials are loaded from SSM Parameter Store using the project
+        name from AGENTIFY_PROJECT_NAME environment variable.
         """
-        self.client_id = client_id or os.environ.get('GATEWAY_CLIENT_ID')
-        self.client_secret = client_secret or os.environ.get('GATEWAY_CLIENT_SECRET')
-        self.token_endpoint = token_endpoint or os.environ.get('GATEWAY_TOKEN_ENDPOINT')
-        self.scope = scope or os.environ.get('GATEWAY_SCOPE')
+        config = _get_gateway_config_from_ssm()
+        if config:
+            self.client_id = config.get('client_id')
+            self.client_secret = config.get('client_secret')
+            self.token_endpoint = config.get('token_endpoint')
+            self.scope = config.get('scope')
+        else:
+            self.client_id = None
+            self.client_secret = None
+            self.token_endpoint = None
+            self.scope = None
+
         self._token: str | None = None
         self._expires_at: datetime | None = None
 
@@ -176,12 +236,12 @@ def invoke_with_gateway(
     local_tools: list,
     system_prompt: str,
     model_id: str | None = None,
-    gateway_url: str | None = None,
 ) -> str:
     """
     Execute agent with proper MCP Gateway session lifecycle.
 
     This function handles:
+    - Gateway config discovery from SSM Parameter Store
     - OAuth token management for Gateway authentication
     - MCP client lifecycle (session kept alive during agent execution)
     - Tool discovery from Gateway
@@ -197,7 +257,6 @@ def invoke_with_gateway(
         local_tools: List of local tool functions (decorated with @tool)
         system_prompt: System prompt for agent behavior
         model_id: Bedrock model ID (defaults to AGENT_MODEL_ID env var)
-        gateway_url: Gateway URL (defaults to GATEWAY_URL env var)
 
     Returns:
         Agent response message as string
@@ -222,8 +281,7 @@ def invoke_with_gateway(
     if not prompt or not prompt.strip():
         raise ValueError('Prompt cannot be empty')
 
-    # Environment fallbacks
-    gateway_url = gateway_url or os.environ.get('GATEWAY_URL')
+    # Get model ID from environment
     model_id = model_id or os.environ.get('AGENT_MODEL_ID')
 
     # Create model
@@ -233,6 +291,10 @@ def invoke_with_gateway(
     else:
         model = BedrockModel()
         logger.debug('Created BedrockModel with default configuration')
+
+    # Get Gateway URL from SSM config
+    gateway_config = _get_gateway_config_from_ssm()
+    gateway_url = gateway_config.get('url') if gateway_config else None
 
     # Case 1: No Gateway - local tools only
     if not gateway_url:

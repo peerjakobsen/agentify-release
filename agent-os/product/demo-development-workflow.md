@@ -395,6 +395,41 @@ The Agentify Demo Viewer panel:
 
 ---
 
+## Best Practices: Debugging with Kiro
+
+After deployment, **let Kiro invoke agents and debug issues itself**. Kiro can:
+
+1. Run `agentcore invoke` commands to test agents
+2. Check CloudWatch logs for runtime errors
+3. Identify and fix issues like port mismatches, import errors, or configuration problems
+4. Redeploy with corrections
+
+### Why This Works
+
+Kiro may occasionally generate code that deviates from steering file examples (e.g., using port 8081 instead of 8080). Rather than manually debugging:
+
+1. Ask Kiro to invoke the agent
+2. Let it observe the failure (timeout, health check failure, etc.)
+3. Have it check CloudWatch logs: `aws logs tail /aws/bedrock-agentcore/runtimes/{agent-id}-DEFAULT`
+4. Let Kiro identify the root cause and fix it
+
+### Example Debug Session
+
+```
+User: "The greeter agent invoke is stuck"
+
+Kiro:
+1. Checks CloudWatch logs → sees repeated "Starting agent on port 8081"
+2. Checks Dockerfile → sees EXPOSE 8080
+3. Identifies port mismatch
+4. Fixes handler to use port 8080
+5. Redeploys agent
+```
+
+This self-healing loop is faster than manual debugging and helps Kiro learn from its own mistakes.
+
+---
+
 ## Orchestration Patterns
 
 Agentify supports three orchestration patterns:

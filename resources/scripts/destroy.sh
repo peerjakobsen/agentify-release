@@ -1,16 +1,19 @@
 #!/bin/bash
 # =============================================================================
-# Agentify Infrastructure Destroy Script
+# Agentify Infrastructure Destroy Script (2-Phase)
 # =============================================================================
-# This script tears down Agentify infrastructure:
-#   - AgentCore agents (if deployed)
-#   - AgentCore MCP Gateway (if configured)
-#   - CDK stacks (VPC, DynamoDB, Lambda functions)
+# This script tears down Agentify infrastructure in 2 phases:
+#
+#   Phase 1: Delete AgentCore agents and MCP Gateway (always succeeds)
+#   Phase 2: Delete CDK stacks (only when ENIs are released)
+#
+# Note: AgentCore ENIs can take up to 8 hours to release after agent deletion.
+#       If Phase 2 fails due to hanging ENIs, wait and re-run the script.
 #
 # Usage:
-#   ./scripts/destroy.sh                # Destroy everything
+#   ./scripts/destroy.sh                # Destroy everything (2 phases)
 #   ./scripts/destroy.sh --force        # Skip confirmation
-#   ./scripts/destroy.sh --skip-agents  # Keep agents, destroy Gateway + infra
+#   ./scripts/destroy.sh --check-only   # Just check ENI status
 # =============================================================================
 
 set -e
@@ -54,6 +57,56 @@ sanitize_project_name() {
         sed 's/[^a-z0-9-]//g' | \
         sed 's/-\+/-/g' | \
         sed 's/^-//;s/-$//'
+}
+
+# Get VPC ID from infrastructure.json or CloudFormation
+get_vpc_id() {
+    local vpc_id=""
+
+    # Try infrastructure.json first
+    if [ -f "${PROJECT_ROOT}/.agentify/infrastructure.json" ] && command -v jq &> /dev/null; then
+        vpc_id=$(jq -r '.vpc_id // empty' "${PROJECT_ROOT}/.agentify/infrastructure.json" 2>/dev/null)
+    fi
+
+    # Fallback to CloudFormation stack outputs
+    if [ -z "$vpc_id" ]; then
+        NETWORKING_STACK="Agentify-${PROJECT_NAME}-Networking-${REGION}"
+        vpc_id=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORKING_STACK}" \
+            --region "${REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+    fi
+
+    echo "$vpc_id"
+}
+
+# Check for hanging AgentCore ENIs in the project VPC
+# Returns: 0 if no ENIs, 1 if ENIs exist (sets HANGING_ENI_COUNT and HANGING_ENI_LIST)
+check_hanging_enis() {
+    local vpc_id="$1"
+
+    if [ -z "$vpc_id" ]; then
+        print_warning "No VPC ID found, cannot check ENIs"
+        HANGING_ENI_COUNT=0
+        return 0
+    fi
+
+    # Query for agentic_ai ENIs in VPC
+    HANGING_ENI_LIST=$(aws ec2 describe-network-interfaces \
+        --region "${REGION}" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+                  "Name=interface-type,Values=agentic_ai" \
+        --query 'NetworkInterfaces[].[NetworkInterfaceId,SubnetId,PrivateIpAddress]' \
+        --output text 2>/dev/null || echo "")
+
+    if [ -n "$HANGING_ENI_LIST" ]; then
+        HANGING_ENI_COUNT=$(echo "$HANGING_ENI_LIST" | wc -l | tr -d ' ')
+        return 1
+    fi
+
+    HANGING_ENI_COUNT=0
+    return 0
 }
 
 WORKSPACE_FOLDER="$(basename "${PROJECT_ROOT}")"
@@ -107,7 +160,7 @@ print_success "AWS credentials valid (Account: ${ACCOUNT_ID})"
 
 # Parse arguments
 FORCE=false
-SKIP_AGENTS=false
+CHECK_ONLY=false
 REGION="${AWS_REGION:-us-east-1}"
 
 while [[ $# -gt 0 ]]; do
@@ -116,8 +169,8 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
-        --skip-agents)
-            SKIP_AGENTS=true
+        --check-only)
+            CHECK_ONLY=true
             shift
             ;;
         --region|-r)
@@ -127,9 +180,16 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: $0 [options]"
             echo ""
+            echo "Destroys Agentify infrastructure in 2 phases:"
+            echo "  Phase 1: Delete AgentCore agents and MCP Gateway"
+            echo "  Phase 2: Delete CDK stacks (VPC, DynamoDB, etc.)"
+            echo ""
+            echo "Note: AgentCore ENIs can take up to 8 hours to release after agent deletion."
+            echo "      If Phase 2 fails due to hanging ENIs, wait and re-run the script."
+            echo ""
             echo "Options:"
             echo "  --force, -f        Skip confirmation prompt"
-            echo "  --skip-agents      Skip agent deletion"
+            echo "  --check-only       Check ENI status without deleting anything"
             echo "  --region, -r       AWS region (default: us-east-1)"
             echo "  -h, --help         Show this help message"
             exit 0
@@ -142,6 +202,45 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "${PROJECT_ROOT}"
+
+# Handle --check-only flag early
+if [ "$CHECK_ONLY" = true ]; then
+    echo ""
+    echo "============================================="
+    echo "  Agentify ENI Status Check"
+    echo "  Project: ${PROJECT_NAME}"
+    echo "  Region: ${REGION}"
+    echo "============================================="
+    echo ""
+
+    print_step "Checking for hanging AgentCore ENIs..."
+    VPC_ID=$(get_vpc_id)
+
+    if [ -z "$VPC_ID" ]; then
+        print_warning "No VPC found for project. Infrastructure may already be destroyed."
+        exit 0
+    fi
+
+    print_step "Checking VPC: ${VPC_ID}"
+
+    if check_hanging_enis "$VPC_ID"; then
+        print_success "No hanging ENIs found. CDK destroy can proceed."
+        echo ""
+        echo "Run: ./scripts/destroy.sh --force"
+    else
+        print_warning "${HANGING_ENI_COUNT} AgentCore ENI(s) still attached:"
+        echo ""
+        echo "$HANGING_ENI_LIST" | while read -r eni subnet ip; do
+            echo "    - ${eni} in ${subnet} (${ip})"
+        done
+        echo ""
+        echo -e "${YELLOW}ENIs are managed by AWS and can take up to 8 hours to release.${NC}"
+        echo "CDK destroy cannot proceed until ENIs are released."
+        echo ""
+        echo "To retry: ./scripts/destroy.sh --check-only"
+    fi
+    exit 0
+fi
 
 echo ""
 echo "============================================="
@@ -170,43 +269,88 @@ if [ "$FORCE" = false ]; then
     fi
 fi
 
+# =============================================================================
+# PHASE 1: Cleanup (Agents + Gateway)
+# =============================================================================
+echo ""
+echo "============================================="
+echo "  Phase 1: Cleanup (Agents + Gateway)"
+echo "============================================="
+echo ""
+
+PHASE1_AGENTS_DELETED=false
+PHASE1_GATEWAY_DELETED=false
+
 # Step 1: Delete AgentCore Agents
-if [ "$SKIP_AGENTS" = false ]; then
-    print_step "Step 1/3: Deleting AgentCore agents..."
+print_step "Deleting AgentCore agents..."
 
-    # Check if agentcore toolkit is installed and config exists
-    if [ -f "${PROJECT_ROOT}/.bedrock_agentcore.yaml" ]; then
-        if uv run agentcore --version &> /dev/null 2>&1; then
-            # Get list of configured agents
-            AGENTS=$(grep "^  [a-z_]*:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" 2>/dev/null | sed 's/://g' | tr -d ' ' || echo "")
+# Check if agentcore toolkit is installed and config exists
+if [ -f "${PROJECT_ROOT}/.bedrock_agentcore.yaml" ]; then
+    # Ensure agentcore toolkit is available (install in CDK dir if needed)
+    cd "${CDK_DIR}"
+    uv sync --quiet 2>/dev/null || true
+    if ! uv run agentcore --help &> /dev/null 2>&1; then
+        print_step "Installing AgentCore Starter Toolkit..."
+        uv add --dev bedrock-agentcore-starter-toolkit 2>/dev/null || true
+    fi
+    cd "${PROJECT_ROOT}"
 
-            if [ -n "$AGENTS" ]; then
-                for AGENT in $AGENTS; do
-                    print_step "Destroying agent: ${AGENT}"
-                    uv run agentcore destroy -a "${AGENT}" --force 2>/dev/null || print_warning "Agent ${AGENT} may already be destroyed"
-                done
-                print_success "Agent destroy commands issued"
+    if uv run --project "${CDK_DIR}" agentcore --help &> /dev/null 2>&1; then
+        # Get list of configured agents from YAML (agents section, indented entries)
+        AGENTS=$(grep -A 100 "^agents:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" 2>/dev/null | grep "^  [a-z_0-9]*:$" | sed 's/://g' | tr -d ' ' || echo "")
 
-                # Poll until all agents are fully deleted
-                # AgentCore destroy is async - ENIs won't release until agents are gone
-                print_step "Waiting for agents to be fully deleted..."
+        # IMPORTANT: Extract agent_id values BEFORE destroying
+        # agentcore destroy removes the agent from .bedrock_agentcore.yaml,
+        # so we need the IDs upfront to poll AWS directly
+        declare -a AGENT_IDS=()
+        if [ -n "$AGENTS" ]; then
+            for AGENT in $AGENTS; do
+                AGENT_ID=$(grep -A 20 "^  ${AGENT}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" 2>/dev/null | grep "agent_id:" | head -1 | sed 's/.*agent_id: *//' | tr -d ' "' || echo "")
+                if [ -n "$AGENT_ID" ]; then
+                    AGENT_IDS+=("$AGENT_ID")
+                    print_step "Found agent ${AGENT} with ID: ${AGENT_ID}"
+                fi
+            done
+        fi
+
+        if [ -n "$AGENTS" ]; then
+            # Issue destroy commands for all agents
+            for AGENT in $AGENTS; do
+                print_step "Destroying agent: ${AGENT}"
+                uv run --project "${CDK_DIR}" agentcore destroy -a "${AGENT}" --force 2>/dev/null || print_warning "Agent ${AGENT} may already be destroyed"
+            done
+            print_success "Agent destroy commands issued"
+
+            # Poll AWS directly until all agents are fully deleted
+            # This is critical because agentcore destroy is async and removes
+            # the agent from .bedrock_agentcore.yaml immediately, but ENIs
+            # won't release until the agent runtime is actually deleted in AWS
+            if [ ${#AGENT_IDS[@]} -gt 0 ]; then
+                print_step "Waiting for agents to be fully deleted from AWS..."
                 MAX_WAIT=300  # 5 minutes max
                 POLL_INTERVAL=10
                 ELAPSED=0
 
                 while [ $ELAPSED -lt $MAX_WAIT ]; do
                     ALL_DELETED=true
-                    for AGENT in $AGENTS; do
-                        # Check if agent still exists (status command returns non-zero if not found)
-                        if uv run agentcore status -a "${AGENT}" &>/dev/null; then
-                            STATUS=$(uv run agentcore status -a "${AGENT}" 2>/dev/null | grep -i "status" | head -1 || echo "unknown")
-                            print_step "Agent ${AGENT} still exists: ${STATUS}"
+                    for AGENT_ID in "${AGENT_IDS[@]}"; do
+                        # Poll AWS directly - get-agent-runtime returns error when agent doesn't exist
+                        if aws bedrock-agentcore-control get-agent-runtime \
+                            --agent-runtime-id "$AGENT_ID" \
+                            --region "${REGION}" &>/dev/null; then
+                            # Agent still exists in AWS
+                            STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
+                                --agent-runtime-id "$AGENT_ID" \
+                                --region "${REGION}" \
+                                --query 'status' --output text 2>/dev/null || echo "unknown")
+                            print_step "Agent ${AGENT_ID} still exists in AWS (status: ${STATUS})"
                             ALL_DELETED=false
                         fi
                     done
 
                     if [ "$ALL_DELETED" = true ]; then
-                        print_success "All agents deleted"
+                        print_success "All agents deleted from AWS"
+                        PHASE1_AGENTS_DELETED=true
                         break
                     fi
 
@@ -218,25 +362,19 @@ if [ "$SKIP_AGENTS" = false ]; then
                 if [ $ELAPSED -ge $MAX_WAIT ]; then
                     print_warning "Timeout waiting for agent deletion. Proceeding anyway..."
                 fi
-
-                # Additional wait for ENI release after agents are gone
-                print_step "Waiting 30s for ENI release..."
-                sleep 30
-            else
-                print_warning "No agents found in .bedrock_agentcore.yaml"
             fi
         else
-            print_warning "AgentCore Starter Toolkit not installed. Skipping agent deletion."
+            print_warning "No agents found in .bedrock_agentcore.yaml"
         fi
     else
-        print_warning "No AgentCore config found. Skipping agent deletion."
+        print_warning "AgentCore Starter Toolkit not installed. Skipping agent deletion."
     fi
 else
-    print_warning "Step 1/3: Skipping agent deletion (--skip-agents)"
+    print_warning "No AgentCore config found. Skipping agent deletion."
 fi
 
 # Step 2: Cleanup MCP Gateway
-print_step "Step 2/3: Cleaning up AgentCore MCP Gateway..."
+print_step "Cleaning up AgentCore MCP Gateway..."
 
 GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
 if [ -f "${GATEWAY_CONFIG}" ]; then
@@ -244,16 +382,75 @@ if [ -f "${GATEWAY_CONFIG}" ]; then
     # Sync dependencies to ensure toolkit is available
     uv sync --quiet 2>/dev/null || true
     print_step "Running Gateway cleanup (includes Cognito resources)..."
-    uv run python gateway/cleanup_gateway.py --force && \
-        print_success "Gateway cleanup complete" || \
+    if uv run python gateway/cleanup_gateway.py --force; then
+        print_success "Gateway cleanup complete"
+        PHASE1_GATEWAY_DELETED=true
+    else
         print_warning "Gateway cleanup failed. You may need to delete it manually."
+    fi
     cd "${PROJECT_ROOT}"
 else
     print_warning "No gateway_config.json found. Skipping Gateway cleanup."
 fi
 
-# Step 3: CDK Destroy
-print_step "Step 3/3: Destroying CDK stacks..."
+# =============================================================================
+# PHASE 2: Infrastructure (CDK)
+# =============================================================================
+echo ""
+echo "============================================="
+echo "  Phase 2: Infrastructure (CDK)"
+echo "============================================="
+echo ""
+
+# Check for hanging ENIs before attempting CDK destroy
+print_step "Checking for hanging AgentCore ENIs..."
+VPC_ID=$(get_vpc_id)
+
+if [ -n "$VPC_ID" ]; then
+    print_step "Checking VPC: ${VPC_ID}"
+
+    if ! check_hanging_enis "$VPC_ID"; then
+        print_error "${HANGING_ENI_COUNT} AgentCore ENI(s) still attached to VPC subnets:"
+        echo ""
+        echo "$HANGING_ENI_LIST" | while read -r eni subnet ip; do
+            echo "    - ${eni} in ${subnet} (${ip})"
+        done
+        echo ""
+        echo "============================================="
+        echo -e "  ${YELLOW}Phase 1 Complete - Phase 2 Blocked${NC}"
+        echo "============================================="
+        echo ""
+        echo "Completed:"
+        if [ "$PHASE1_AGENTS_DELETED" = true ]; then
+            echo "  - AgentCore agents deleted"
+        else
+            echo "  - AgentCore agents (none found or already deleted)"
+        fi
+        if [ "$PHASE1_GATEWAY_DELETED" = true ]; then
+            echo "  - MCP Gateway deleted"
+        else
+            echo "  - MCP Gateway (none found or already deleted)"
+        fi
+        echo ""
+        echo "Blocked:"
+        echo "  - CDK stacks (waiting for ENI release)"
+        echo ""
+        echo -e "${YELLOW}ENIs are managed by AWS and can take up to 8 hours to release.${NC}"
+        echo "CDK destroy cannot proceed until ENIs are released."
+        echo ""
+        echo "To check status:    ./scripts/destroy.sh --check-only"
+        echo "To retry destroy:   ./scripts/destroy.sh --force"
+        echo ""
+        exit 1
+    fi
+
+    print_success "No hanging ENIs found"
+else
+    print_warning "No VPC found. Infrastructure may already be destroyed or never created."
+fi
+
+# CDK Destroy
+print_step "Destroying CDK stacks..."
 
 # Change to CDK directory
 cd "${CDK_DIR}"
@@ -292,10 +489,12 @@ echo "============================================="
 echo -e "  ${GREEN}Teardown Complete!${NC}"
 echo "============================================="
 echo ""
+echo "All resources have been deleted:"
+echo "  - AgentCore agents"
+echo "  - AgentCore MCP Gateway"
+echo "  - AWS CDK resources (VPC, DynamoDB, etc.)"
+echo ""
 echo "Notes:"
-echo "  - AgentCore agents have been deleted"
-echo "  - AgentCore MCP Gateway has been deleted"
-echo "  - AWS CDK resources have been deleted"
 echo "  - CloudWatch logs may be retained based on retention policy"
 echo "  - ECR repositories may need manual cleanup if not empty"
 echo ""

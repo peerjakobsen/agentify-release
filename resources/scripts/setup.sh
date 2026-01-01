@@ -315,6 +315,25 @@ if [ -n "$SCHEMA_FILES" ]; then
                 print_step "Listing registered Gateway targets..."
                 uv run agentcore gateway list-mcp-gateway-targets --id "$GATEWAY_ID" --region "${REGION}" 2>/dev/null || true
 
+                # Store Gateway credentials in SSM Parameter Store
+                # This allows agents to discover Gateway config at runtime without env vars
+                print_step "Storing Gateway credentials in SSM Parameter Store..."
+                SSM_PREFIX="/agentify/${PROJECT_NAME}/gateway"
+
+                DEPLOY_CLIENT_ID=$(jq -r '.oauth.client_id // empty' "$GATEWAY_CONFIG")
+                DEPLOY_CLIENT_SECRET=$(jq -r '.oauth.client_secret // empty' "$GATEWAY_CONFIG")
+                DEPLOY_TOKEN_ENDPOINT=$(jq -r '.oauth.token_endpoint // empty' "$GATEWAY_CONFIG")
+                DEPLOY_SCOPE=$(jq -r '.oauth.scope // empty' "$GATEWAY_CONFIG")
+
+                # Write each parameter (use SecureString for secret)
+                aws ssm put-parameter --name "${SSM_PREFIX}/url" --value "${GATEWAY_URL}" --type "String" --overwrite --region "${REGION}" 2>/dev/null || true
+                aws ssm put-parameter --name "${SSM_PREFIX}/client_id" --value "${DEPLOY_CLIENT_ID}" --type "String" --overwrite --region "${REGION}" 2>/dev/null || true
+                aws ssm put-parameter --name "${SSM_PREFIX}/client_secret" --value "${DEPLOY_CLIENT_SECRET}" --type "SecureString" --overwrite --region "${REGION}" 2>/dev/null || true
+                aws ssm put-parameter --name "${SSM_PREFIX}/token_endpoint" --value "${DEPLOY_TOKEN_ENDPOINT}" --type "String" --overwrite --region "${REGION}" 2>/dev/null || true
+                aws ssm put-parameter --name "${SSM_PREFIX}/scope" --value "${DEPLOY_SCOPE}" --type "String" --overwrite --region "${REGION}" 2>/dev/null || true
+
+                print_success "Gateway credentials stored in SSM: ${SSM_PREFIX}/*"
+
                 echo ""
                 echo "============================================="
                 echo "  MCP Gateway Testing Commands"
@@ -328,7 +347,7 @@ if [ -n "$SCHEMA_FILES" ]; then
                 echo "  # Then call: POST ${GATEWAY_URL}"
                 echo "  # With JSON-RPC body: {\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"TARGET___TOOL\",\"arguments\":{}}}"
                 echo ""
-                echo "See cdk/gateway_config.json for OAuth credentials"
+                echo "Gateway credentials stored in SSM: ${SSM_PREFIX}/*"
                 echo ""
             fi
         fi
@@ -419,25 +438,8 @@ if [ -n "$AGENT_NAME" ]; then
     # Deploy agent
     print_step "Deploying ${AGENT_NAME} via CodeBuild..."
 
-    # Pass Gateway credentials as environment variables if available
-    DEPLOY_ENV_ARGS=""
-    GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
-    if [ -f "$GATEWAY_CONFIG" ] && command -v jq &> /dev/null; then
-        DEPLOY_GATEWAY_URL=$(jq -r '.gateway_url // empty' "$GATEWAY_CONFIG")
-        DEPLOY_CLIENT_ID=$(jq -r '.oauth.client_id // empty' "$GATEWAY_CONFIG")
-        DEPLOY_CLIENT_SECRET=$(jq -r '.oauth.client_secret // empty' "$GATEWAY_CONFIG")
-        DEPLOY_TOKEN_ENDPOINT=$(jq -r '.oauth.token_endpoint // empty' "$GATEWAY_CONFIG")
-        DEPLOY_SCOPE=$(jq -r '.oauth.scope // empty' "$GATEWAY_CONFIG")
-
-        if [ -n "$DEPLOY_GATEWAY_URL" ]; then
-            DEPLOY_ENV_ARGS="--env GATEWAY_URL=${DEPLOY_GATEWAY_URL}"
-            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_CLIENT_ID=${DEPLOY_CLIENT_ID}"
-            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_CLIENT_SECRET=${DEPLOY_CLIENT_SECRET}"
-            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_TOKEN_ENDPOINT=${DEPLOY_TOKEN_ENDPOINT}"
-            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_SCOPE=${DEPLOY_SCOPE}"
-            print_step "Setting Gateway credentials for ${AGENT_NAME}"
-        fi
-    fi
+    # Pass project name so agent can discover Gateway credentials from SSM
+    DEPLOY_ENV_ARGS="--env AGENTIFY_PROJECT_NAME=${PROJECT_NAME}"
 
     uv run agentcore deploy -a "${AGENT_NAME}" --auto-update-on-conflict ${DEPLOY_ENV_ARGS}
     print_success "${AGENT_NAME} deployed"
