@@ -138,8 +138,8 @@ For tools used by only one agent, define them locally using the Strands `@tool` 
 from strands import Agent, tool
 from agents.shared.instrumentation import instrument_tool
 
-@instrument_tool         # ON TOP = outer wrapper (captures observability events)
-@tool                    # BOTTOM = inner wrapper (registers with Strands SDK)
+@tool                    # ON TOP = outer wrapper (registers with Strands SDK)
+@instrument_tool         # BELOW = inner wrapper (captures observability events)
 def analyze_inventory_trends(sku: str, days: int = 30) -> dict:
     """Analyze inventory trends for a specific SKU.
     Only the Inventory Agent uses this specialized analysis.
@@ -150,7 +150,7 @@ def analyze_inventory_trends(sku: str, days: int = 30) -> dict:
 agent = Agent(tools=[analyze_inventory_trends])
 ```
 
-**CRITICAL Decorator Order**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` must be ON TOP. Python applies decorators bottom-up, so `@tool` registers the function with Strands first, then `@instrument_tool` wraps it for observability.
+**CRITICAL Decorator Order**: `@tool` must be ON TOP, `@instrument_tool` must be BELOW (closest to function). Python applies decorators bottom-up, so `@instrument_tool` wraps the function for observability first, then `@tool` registers it with Strands.
 
 **When to use local tools:**
 - Tool is specific to one agent's responsibilities

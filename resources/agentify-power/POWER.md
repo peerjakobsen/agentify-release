@@ -34,19 +34,19 @@ The `agents/shared/` directory contains pre-built infrastructure for observabili
 
 ## Pattern 2: Decorator Order
 
-`@tool` FIRST (bottom), `@instrument_tool` ON TOP. Decorators are read bottom-up.
+`@tool` ON TOP, `@instrument_tool` BELOW (closer to function). Python applies decorators bottom-up.
 
 ```python
-# CORRECT - @tool first, @instrument_tool on top
-@instrument_tool         # Applied second (wraps the tool)
-@tool                    # Applied first (makes it a tool)
+# CORRECT - @tool on top, @instrument_tool below
+@tool                    # Applied second (registers with Strands)
+@instrument_tool         # Applied first (wraps function for observability)
 def my_tool(param: str) -> dict:
     """Tool description."""
     return {'result': param}
 
 # WRONG - Reversed order breaks instrumentation
-@tool
-@instrument_tool         # BLOCKING ERROR - won't wrap correctly
+@instrument_tool
+@tool                    # BLOCKING ERROR - won't register correctly
 def my_tool(param: str) -> dict:
     ...
 ```
@@ -184,7 +184,7 @@ Environment variables required for local runs:
 | Pitfall | Why It Breaks | Fix |
 |---------|--------------|-----|
 | Recreating `agents/shared/` modules | Demo Viewer won't see events | Import from `agents.shared.instrumentation` |
-| `@tool` above `@instrument_tool` | Instrumentation doesn't wrap tool | Put `@instrument_tool` on top, `@tool` below |
+| `@instrument_tool` above `@tool` | Strands doesn't register tool correctly | Put `@tool` on top, `@instrument_tool` below |
 | Missing `finally` block | Context leaks between requests | Always `clear_instrumentation_context()` in finally |
 | Using `MCPClient` directly | MCP session closes before tools execute | Use `invoke_with_gateway()` from `agents.shared.gateway_client` |
 | Returning dict from Lambda | API Gateway expects string | Use `json.dumps(result)` |
@@ -198,7 +198,7 @@ Environment variables required for local runs:
 
 Before committing agent code, verify:
 
-- [ ] All tool functions have `@instrument_tool` on top, `@tool` below
+- [ ] All tool functions have `@tool` on top, `@instrument_tool` below
 - [ ] Handler functions use try/finally with context management
 - [ ] No local definitions of `instrument_tool`, `write_tool_event`, etc.
 - [ ] Agent.py uses `invoke_with_gateway()`, not direct `MCPClient`

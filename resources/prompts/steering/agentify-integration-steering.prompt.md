@@ -376,8 +376,8 @@ from strands import tool
 from agents.shared.instrumentation import instrument_tool
 
 
-@instrument_tool         # ON TOP = outer wrapper (captures observability events)
-@tool                    # BOTTOM = inner wrapper (registers with Strands SDK)
+@tool                    # ON TOP = outer wrapper (registers with Strands SDK)
+@instrument_tool         # BELOW = inner wrapper (captures observability events)
 def {tool_name}(param: str) -> dict:
     """
     Tool description here.
@@ -393,15 +393,15 @@ def {tool_name}(param: str) -> dict:
     return {'result': result}
 
 
-@instrument_tool
 @tool
+@instrument_tool
 def another_tool(input_data: dict) -> str:
     """Another tool with instrumentation."""
     # Implementation
     return 'output'
 ```
 
-**CRITICAL Decorator Order**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` must be ON TOP. Python applies decorators bottom-up, so `@tool` registers the function first, then `@instrument_tool` wraps it for observability. Reversing this breaks instrumentation.
+**CRITICAL Decorator Order**: `@tool` must be ON TOP, `@instrument_tool` must be BELOW (closest to function). Python applies decorators bottom-up, so `@instrument_tool` wraps the function for observability first, then `@tool` registers it with Strands. Reversing this breaks instrumentation.
 
 ## DynamoDB Event Schema
 
@@ -524,7 +524,7 @@ Events are displayed in the Demo Viewer as:
 
 2. **Clear Context in Finally**: Use a `finally` block to call `clear_instrumentation_context()` to prevent context leakage.
 
-3. **Decorator Order Matters**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` ON TOP. Python applies decorators bottom-up.
+3. **Decorator Order Matters**: `@tool` must be ON TOP, `@instrument_tool` BELOW (closest to function). Python applies decorators bottom-up.
 
 4. **Fire-and-Forget**: Never let DynamoDB write failures block tool execution.
 

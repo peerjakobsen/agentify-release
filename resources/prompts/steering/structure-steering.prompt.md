@@ -310,8 +310,8 @@ You are the {Agent Name}.
 from strands import tool
 from agents.shared.instrumentation import instrument_tool
 
-@instrument_tool         # ON TOP = outer wrapper (captures observability events)
-@tool                    # BOTTOM = inner wrapper (registers with Strands SDK)
+@tool                    # ON TOP = outer wrapper (registers with Strands SDK)
+@instrument_tool         # BELOW = inner wrapper (captures observability events)
 def {tool_name}(param: str) -> dict:
     """Tool description from mockDefinitions.
 
@@ -322,7 +322,7 @@ def {tool_name}(param: str) -> dict:
     pass
 ```
 
-**CRITICAL Decorator Order**: `@tool` must be BOTTOM (closest to function), `@instrument_tool` must be ON TOP. Python applies decorators bottom-up, so `@tool` registers the function first, then `@instrument_tool` wraps it for observability. Reversing this breaks instrumentation.
+**CRITICAL Decorator Order**: `@tool` must be ON TOP, `@instrument_tool` must be BELOW (closest to function). Python applies decorators bottom-up, so `@instrument_tool` wraps the function for observability first, then `@tool` registers it with Strands. Reversing this breaks instrumentation.
 
 ## CDK Infrastructure
 
