@@ -209,18 +209,22 @@ When deploying an agent with `./scripts/setup.sh --agent <name>`:
 
 2. **setup.sh adds Agentify-specific inline policy** (after deploy completes):
    - Policy name: `AgentifyAccess-{agent_name}`
-   - Grants `dynamodb:PutItem`, `dynamodb:Query` on workflow-events table
-   - Grants `ssm:GetParameter` on `/agentify/*` parameters
+   - Grants `dynamodb:PutItem`, `dynamodb:Query` on project-specific workflow-events table
+   - Grants `ssm:GetParameter` on both `/agentify/*` (gateway) and `/{project}/*` (DynamoDB) parameters
 
 ```bash
 # setup.sh extracts role from .bedrock_agentcore.yaml and adds:
+# Note: Uses ${PROJECT_NAME} derived from workspace folder
 aws iam put-role-policy \
     --role-name "AmazonBedrockAgentCoreSDKRuntime-us-east-1-xyz123" \
     --policy-name "AgentifyAccess-analyzer" \
     --policy-document '{
         "Statement": [
-            {"Action": ["dynamodb:PutItem", "dynamodb:Query"], "Resource": ["arn:aws:dynamodb:...:table/agentify-workflow-events"]},
-            {"Action": ["ssm:GetParameter"], "Resource": ["arn:aws:ssm:...:parameter/agentify/*"]}
+            {"Action": ["dynamodb:PutItem", "dynamodb:Query"], "Resource": ["arn:aws:dynamodb:...:table/${PROJECT_NAME}-workflow-events"]},
+            {"Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"], "Resource": [
+                "arn:aws:ssm:...:parameter/agentify/*",
+                "arn:aws:ssm:...:parameter/${PROJECT_NAME}/*"
+            ]}
         ]
     }'
 ```
@@ -246,15 +250,19 @@ After CDK deployment, the setup script registers tools with the AgentCore MCP Ga
 
 ### Gateway OAuth Authentication
 
-The MCP Gateway uses Cognito OAuth2 with client credentials grant for authentication. When agents are deployed, setup.sh reads credentials from `cdk/gateway_config.json` and passes them as environment variables:
+The MCP Gateway uses Cognito OAuth2 with client credentials grant for authentication. Credentials are stored in SSM Parameter Store during `setup.sh` and discovered at runtime:
 
-| Environment Variable | Description |
-|---------------------|-------------|
-| `GATEWAY_URL` | MCP Gateway endpoint URL |
-| `GATEWAY_CLIENT_ID` | Cognito OAuth client ID |
-| `GATEWAY_CLIENT_SECRET` | Cognito OAuth client secret |
-| `GATEWAY_TOKEN_ENDPOINT` | Cognito token endpoint URL |
-| `GATEWAY_SCOPE` | OAuth scope for Gateway access |
+**SSM Parameters** (stored at `/agentify/{project}/gateway/*`):
+
+| Parameter | Description |
+|-----------|-------------|
+| `/agentify/{project}/gateway/url` | MCP Gateway endpoint URL |
+| `/agentify/{project}/gateway/client_id` | Cognito OAuth client ID |
+| `/agentify/{project}/gateway/client_secret` | Cognito OAuth client secret (SecureString) |
+| `/agentify/{project}/gateway/token_endpoint` | Cognito token endpoint URL |
+| `/agentify/{project}/gateway/scope` | OAuth scope for Gateway access |
+
+**Runtime Discovery**: Agents read `AGENTIFY_PROJECT_NAME` env var to construct the SSM path, then fetch credentials at startup. This eliminates hardcoded credentials and enables multi-project isolation.
 
 ### Gateway Client Module
 
@@ -342,7 +350,88 @@ Agents run in isolated VPC subnets with no NAT Gateway. To reach services:
 | `cognito-idp` | Interface | OAuth token fetching |
 | Other services | See networking.py | DynamoDB, Bedrock, SSM, etc. |
 
-All agents share the same gateway, enabling tool reuse across the workflow.
+All agents within a project share the same gateway, enabling tool reuse across the workflow.
+
+### Multi-Project Isolation
+
+Multiple Agentify projects can coexist in the same AWS account without conflicts. Each project has its own:
+- MCP Gateway with unique tools
+- DynamoDB table for events
+- SSM parameter namespace
+
+#### How Agents Discover Their Gateway
+
+The `AGENTIFY_PROJECT_NAME` environment variable is the key to multi-project isolation:
+
+**1. Deploy Time** (`setup.sh`):
+```bash
+# Project name derived from workspace folder, passed to agent
+DEPLOY_ENV_ARGS="--env AGENTIFY_PROJECT_NAME=${PROJECT_NAME}"
+uv run agentcore deploy -a "${AGENT_NAME}" ${DEPLOY_ENV_ARGS}
+```
+
+**2. Runtime** (`gateway_client.py`):
+```python
+def _get_gateway_ssm_prefix() -> str | None:
+    project = os.environ.get('AGENTIFY_PROJECT_NAME')
+    if not project:
+        return None
+    return f'/agentify/{project}/gateway'
+```
+
+#### SSM Parameter Namespacing
+
+Each project gets isolated SSM parameters:
+
+| Project | SSM Path | Resources |
+|---------|----------|-----------|
+| support-triage | `/agentify/support-triage/gateway/*` | Gateway URL, OAuth credentials |
+| inventory-demo | `/agentify/inventory-demo/gateway/*` | Gateway URL, OAuth credentials |
+| sales-assistant | `/agentify/sales-assistant/gateway/*` | Gateway URL, OAuth credentials |
+
+DynamoDB tables are also project-specific:
+- `support-triage-workflow-events`
+- `inventory-demo-workflow-events`
+- `sales-assistant-workflow-events`
+
+#### Complete Isolation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Project: support-triage                                          │
+│                                                                  │
+│ setup.sh deploys:                                                │
+│   - Gateway: support-triage-gateway-xxx                          │
+│   - SSM: /agentify/support-triage/gateway/*                     │
+│   - DynamoDB: support-triage-workflow-events                     │
+│   - Agent env: AGENTIFY_PROJECT_NAME=support-triage             │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Project: inventory-demo                                          │
+│                                                                  │
+│ setup.sh deploys:                                                │
+│   - Gateway: inventory-demo-gateway-yyy                          │
+│   - SSM: /agentify/inventory-demo/gateway/*                     │
+│   - DynamoDB: inventory-demo-workflow-events                     │
+│   - Agent env: AGENTIFY_PROJECT_NAME=inventory-demo             │
+└─────────────────────────────────────────────────────────────────┘
+
+At runtime:
+  support-triage agent → reads AGENTIFY_PROJECT_NAME=support-triage
+                       → looks up /agentify/support-triage/gateway/*
+                       → connects to support-triage-gateway-xxx
+                       → writes events to support-triage-workflow-events
+                       → sees only support-triage tools
+
+  inventory-demo agent → reads AGENTIFY_PROJECT_NAME=inventory-demo
+                       → looks up /agentify/inventory-demo/gateway/*
+                       → connects to inventory-demo-gateway-yyy
+                       → writes events to inventory-demo-workflow-events
+                       → sees only inventory-demo tools
+```
+
+Each agent automatically discovers **only its own project's gateway, tools, and DynamoDB table** based on the environment variable set during deployment.
 
 ---
 
