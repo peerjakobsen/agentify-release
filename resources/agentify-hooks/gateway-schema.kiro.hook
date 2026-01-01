@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Gateway Schema Validator",
+  "description": "Ensures gateway schemas only use AgentCore-supported JSON Schema properties",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["cdk/gateway/schemas/*.json"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this Gateway tool schema for AgentCore MCP Gateway compatibility.\n\nAgentCore MCP Gateway ONLY supports these JSON Schema properties:\n- type\n- properties\n- required\n- items\n- description\n\nUNSUPPORTED properties (must remove or convert):\n- additionalProperties → remove entirely\n- enum → move allowed values into description field\n- format → move format info into description field\n- minimum/maximum → move constraints into description field\n- pattern → move pattern info into description field\n- minLength/maxLength → move into description field\n- minItems/maxItems → move into description field\n\nExample conversions:\n\nBEFORE:\n```json\n\"priority\": {\n  \"type\": \"string\",\n  \"enum\": [\"low\", \"medium\", \"high\"]\n}\n```\n\nAFTER:\n```json\n\"priority\": {\n  \"type\": \"string\",\n  \"description\": \"Priority level. One of: low, medium, high\"\n}\n```\n\nBEFORE:\n```json\n\"email\": {\n  \"type\": \"string\",\n  \"format\": \"email\",\n  \"description\": \"User email\"\n}\n```\n\nAFTER:\n```json\n\"email\": {\n  \"type\": \"string\",\n  \"description\": \"User email (email format)\"\n}\n```\n\nBEFORE:\n```json\n\"inputSchema\": {\n  \"type\": \"object\",\n  \"properties\": { ... },\n  \"required\": [\"id\"],\n  \"additionalProperties\": false\n}\n```\n\nAFTER:\n```json\n\"inputSchema\": {\n  \"type\": \"object\",\n  \"properties\": { ... },\n  \"required\": [\"id\"]\n}\n```\n\nFix any unsupported properties found. Preserve the semantic meaning by incorporating constraint info into descriptions."
+  },
+  "shortName": "gateway-schema"
+}

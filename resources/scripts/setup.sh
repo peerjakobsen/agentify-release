@@ -19,6 +19,10 @@
 
 set -e
 
+# Disable pagers globally to prevent blocking on command output
+export AWS_PAGER=""
+export PAGER=""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -313,7 +317,8 @@ if [ -n "$SCHEMA_FILES" ]; then
             if [ -n "$GATEWAY_ID" ]; then
                 echo ""
                 print_step "Listing registered Gateway targets..."
-                uv run agentcore gateway list-mcp-gateway-targets --id "$GATEWAY_ID" --region "${REGION}" 2>/dev/null || true
+                # Disable pager to prevent blocking on JSON output
+                PAGER="" uv run agentcore gateway list-mcp-gateway-targets --id "$GATEWAY_ID" --region "${REGION}" 2>/dev/null || true
 
                 # Store Gateway credentials in SSM Parameter Store
                 # This allows agents to discover Gateway config at runtime without env vars

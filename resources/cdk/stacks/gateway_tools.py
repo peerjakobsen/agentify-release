@@ -123,6 +123,7 @@ class GatewayToolsStack(Stack):
                 timeout=Duration.seconds(30),
                 memory_size=256,
                 description=f"AgentCore Gateway tool: {tool_name}",
+                tracing=lambda_.Tracing.ACTIVE,
             )
 
             # Grant AgentCore Gateway invoke permission
