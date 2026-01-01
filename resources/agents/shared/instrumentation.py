@@ -145,9 +145,9 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
         # Generate unique event ID
         event_id = str(uuid.uuid4())
 
-        # Record start time
+        # Record start time (epoch milliseconds for DynamoDB sort key)
         start_time = datetime.now(timezone.utc)
-        start_timestamp = start_time.isoformat(timespec='microseconds')
+        start_timestamp = int(start_time.timestamp() * 1000)
 
         # Prepare parameters (truncated for storage)
         params = {}
@@ -161,7 +161,7 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
 
         # Write 'started' event (fire-and-forget)
         started_event = {
-            'session_id': session_id,
+            'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
             'timestamp': start_timestamp,
             'event_id': event_id,
             'agent': agent_name,
@@ -181,8 +181,8 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
 
             # Write 'completed' event (fire-and-forget)
             completed_event = {
-                'session_id': session_id,
-                'timestamp': end_time.isoformat(timespec='microseconds'),
+                'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
+                'timestamp': int(end_time.timestamp() * 1000),  # epoch milliseconds
                 'event_id': event_id,
                 'agent': agent_name,
                 'tool_name': tool_name,
@@ -200,8 +200,8 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
 
             # Write 'error' event (fire-and-forget)
             error_event = {
-                'session_id': session_id,
-                'timestamp': end_time.isoformat(timespec='microseconds'),
+                'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
+                'timestamp': int(end_time.timestamp() * 1000),  # epoch milliseconds
                 'event_id': event_id,
                 'agent': agent_name,
                 'tool_name': tool_name,

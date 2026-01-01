@@ -30,7 +30,7 @@ maintaining performance through caching.
 
 Events are validated against a strict schema before writing:
 
-- **Required fields**: session_id, timestamp, event_id, agent, tool_name, status
+- **Required fields**: workflow_id, timestamp, event_id, agent, tool_name, status
 - **Status values**: Must be 'started', 'completed', or 'error'
 - **Conditional fields**: duration_ms required for completed/error, error_message for error
 - **Data types**: String fields must be non-empty, duration_ms must be non-negative integer
@@ -175,7 +175,7 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
 
     Args:
         event: Event data dictionary containing:
-            - session_id (str): Workflow execution UUID (partition key)
+            - workflow_id (str): Workflow execution UUID (partition key)
             - timestamp (str): ISO 8601 timestamp with microseconds (sort key)
             - event_id (str): UUID for event deduplication
             - agent (str): Agent name that executed the tool
@@ -196,7 +196,7 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
         >>>
         >>> # Write a 'started' event
         >>> success = write_tool_event({
-        ...     'session_id': 'abc-123',
+        ...     'workflow_id': 'abc-123',
         ...     'timestamp': '2024-01-15T10:30:00.123456+00:00',
         ...     'event_id': 'evt-456',
         ...     'agent': 'analyzer',
@@ -218,7 +218,7 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
         return False
 
     # Validate required fields
-    required_fields = ['session_id', 'timestamp', 'event_id', 'agent', 'tool_name', 'status']
+    required_fields = ['workflow_id', 'timestamp', 'event_id', 'agent', 'tool_name', 'status']
     for field in required_fields:
         if field not in event:
             logger.warning(f'Cannot write tool event: missing required field "{field}"')
@@ -266,15 +266,15 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
         return False
 
 
-def query_tool_events(session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+def query_tool_events(workflow_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """
-    Query tool events for a session from DynamoDB.
+    Query tool events for a workflow from DynamoDB.
 
     Returns events sorted by timestamp in ascending order (oldest first).
     Handles errors gracefully by returning an empty list.
 
     Args:
-        session_id: The session ID (partition key) to query
+        workflow_id: The workflow ID (partition key) to query
         limit: Maximum number of events to return (default: 100)
 
     Returns:
@@ -285,7 +285,7 @@ def query_tool_events(session_id: str, limit: int = 100) -> List[Dict[str, Any]]
 
         >>> from agents.shared.dynamodb_client import query_tool_events
         >>>
-        >>> events = query_tool_events("session-123")
+        >>> events = query_tool_events("workflow-123")
         >>> for event in events:
         ...     print(f"{event['tool_name']}: {event['status']}")
 
@@ -295,8 +295,8 @@ def query_tool_events(session_id: str, limit: int = 100) -> List[Dict[str, Any]]
         - Designed for Demo Viewer polling at 500ms intervals
     """
     # Validate input parameters
-    if not session_id or not isinstance(session_id, str) or not session_id.strip():
-        logger.warning('Invalid session_id provided to query_tool_events')
+    if not workflow_id or not isinstance(workflow_id, str) or not workflow_id.strip():
+        logger.warning('Invalid workflow_id provided to query_tool_events')
         return []
 
     if not isinstance(limit, int) or limit <= 0:
@@ -316,14 +316,14 @@ def query_tool_events(session_id: str, limit: int = 100) -> List[Dict[str, Any]]
 
         # Query DynamoDB
         response = table.query(
-            KeyConditionExpression='session_id = :sid',
-            ExpressionAttributeValues={':sid': session_id.strip()},
+            KeyConditionExpression='workflow_id = :wid',
+            ExpressionAttributeValues={':wid': workflow_id.strip()},
             Limit=limit,
             ScanIndexForward=True  # Sort by timestamp ascending (oldest first)
         )
 
         events = response.get('Items', [])
-        logger.debug(f'Retrieved {len(events)} events for session {session_id}')
+        logger.debug(f'Retrieved {len(events)} events for workflow {workflow_id}')
         return events
 
     except ClientError as e:
@@ -340,5 +340,5 @@ def query_tool_events(session_id: str, limit: int = 100) -> List[Dict[str, Any]]
 
     except Exception as e:
         # Graceful degradation: log error and return empty list
-        logger.warning(f'Failed to query tool events for session {session_id}: {e}')
+        logger.warning(f'Failed to query tool events for workflow {workflow_id}: {e}')
         return []
