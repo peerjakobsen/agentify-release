@@ -191,6 +191,51 @@ class NetworkingStack(Stack):
             security_groups=[self.endpoint_security_group],
         )
 
+        # ECR endpoints - REQUIRED for AgentCore to pull container images
+        # Without these, AgentCore cannot pull the agent container from ECR
+        # ECR Docker endpoint - for docker pull operations
+        self.vpc.add_interface_endpoint(
+            "EcrDkrEndpoint",
+            service=ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.endpoint_security_group],
+        )
+
+        # ECR API endpoint - for ECR API calls (auth, describe, etc.)
+        self.vpc.add_interface_endpoint(
+            "EcrApiEndpoint",
+            service=ec2.InterfaceVpcEndpointAwsService.ECR,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.endpoint_security_group],
+        )
+
+        # AgentCore Gateway endpoint - for MCP Gateway tool invocations
+        # Without this, agents in VPC cannot reach the MCP Gateway endpoint
+        # Service name: com.amazonaws.{region}.bedrock-agentcore.gateway
+        self.vpc.add_interface_endpoint(
+            "AgentCoreGatewayEndpoint",
+            service=ec2.InterfaceVpcEndpointService(
+                f"com.amazonaws.{self.region}.bedrock-agentcore.gateway",
+                port=443,
+            ),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.endpoint_security_group],
+            private_dns_enabled=True,
+        )
+
+        # Cognito Identity Provider endpoint - for Gateway OAuth token fetching
+        # Without this, agents cannot fetch OAuth tokens from Cognito
+        # Required for MCP Gateway authentication
+        self.vpc.add_interface_endpoint(
+            "CognitoIdpEndpoint",
+            service=ec2.InterfaceVpcEndpointService(
+                f"com.amazonaws.{self.region}.cognito-idp",
+                port=443,
+            ),
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[self.endpoint_security_group],
+        )
+
     def _create_security_groups(self) -> None:
         """Create security groups for AgentCore agents."""
         # Agent security group - outbound only

@@ -210,24 +210,80 @@ After CDK deployment, the setup script registers tools with the AgentCore MCP Ga
 # resources/gateway/setup_gateway.py
 1. Read Lambda ARNs from CDK CloudFormation outputs
 2. Create/update MCP Gateway via AgentCore Starter Toolkit
-3. Register each Lambda as a gateway target
-4. Save gateway configuration
+3. Create Cognito User Pool for OAuth authentication
+4. Register each Lambda as a gateway target
+5. Save gateway configuration (including OAuth credentials) to cdk/gateway_config.json
 ```
+
+### Gateway OAuth Authentication
+
+The MCP Gateway uses Cognito OAuth2 with client credentials grant for authentication. When agents are deployed, setup.sh reads credentials from `cdk/gateway_config.json` and passes them as environment variables:
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `GATEWAY_URL` | MCP Gateway endpoint URL |
+| `GATEWAY_CLIENT_ID` | Cognito OAuth client ID |
+| `GATEWAY_CLIENT_SECRET` | Cognito OAuth client secret |
+| `GATEWAY_TOKEN_ENDPOINT` | Cognito token endpoint URL |
+| `GATEWAY_SCOPE` | OAuth scope for Gateway access |
+
+### GatewayTokenManager Pattern
+
+Agents use `agents/shared/gateway_auth.py` to fetch and cache OAuth tokens:
+
+```python
+from agents.shared.gateway_auth import GatewayTokenManager
+from mcp.client.streamable_http import streamablehttp_client
+from strands.tools.mcp import MCPClient
+
+token_manager = GatewayTokenManager()
+
+if gateway_url and token_manager.is_configured():
+    def create_authenticated_transport():
+        token = token_manager.get_token()
+        return streamablehttp_client(
+            gateway_url,
+            headers={'Authorization': f'Bearer {token}'}
+        )
+    gateway_client = MCPClient(create_authenticated_transport)
+```
+
+The token manager:
+- Reads credentials from environment variables
+- Fetches tokens from Cognito via VPC endpoint
+- Caches tokens and refreshes 5 minutes before expiry
+- Never blocks tool execution on token errors
 
 ### Tool Invocation Flow
 
 ```
 Agent (running in AgentCore Runtime)
     │
+    │ 1. Get OAuth token from Cognito (via VPC endpoint)
     ▼
-AgentCore MCP Gateway
+GatewayTokenManager
     │
+    │ 2. Pass Bearer token in Authorization header
+    ▼
+AgentCore MCP Gateway (validates token)
+    │
+    │ 3. Invoke Lambda target
     ▼
 Lambda Function (shared tool)
     │
     ▼
 Response back to Agent
 ```
+
+### VPC Endpoint Requirements
+
+Agents run in isolated VPC subnets with no NAT Gateway. To reach services:
+
+| Service | VPC Endpoint | Purpose |
+|---------|--------------|---------|
+| `bedrock-agentcore.gateway` | Interface | MCP Gateway tool invocations |
+| `cognito-idp` | Interface | OAuth token fetching |
+| Other services | See networking.py | DynamoDB, Bedrock, SSM, etc. |
 
 All agents share the same gateway, enabling tool reuse across the workflow.
 
@@ -321,9 +377,12 @@ project/
 │       ├── demo-strategy.md
 │       ├── agentify-integration.md
 │       └── roadmap.md
-├── agents/                     # Kiro generated
-│   ├── main.py                 # Local orchestrator
-│   ├── analyzer.py             # Agent handlers (deploy to AgentCore)
+├── agents/
+│   ├── shared/                 # Bundled utilities (from extension)
+│   │   ├── __init__.py
+│   │   └── gateway_auth.py     # OAuth token manager for MCP Gateway
+│   ├── main.py                 # Local orchestrator (Kiro generated)
+│   ├── analyzer.py             # Agent handlers (Kiro generated, deploy to AgentCore)
 │   ├── responder.py
 │   ├── enricher.py
 │   └── mock_data/              # Optional: mock data for agent-local tools

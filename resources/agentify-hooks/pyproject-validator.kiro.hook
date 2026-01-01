@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "PyProject Dependency Validator",
+  "description": "Ensures bedrock-agentcore-starter-toolkit is in dev dependencies, not main dependencies",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["pyproject.toml"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this pyproject.toml for dependency placement issues.\n\n## CRITICAL RULE\n\n`bedrock-agentcore-starter-toolkit` MUST be in `[project.optional-dependencies].dev`, NOT in `[project].dependencies`.\n\n### Why This Matters\n\nThis package requires GCC to build (via `ruamel-yaml-clibz` dependency). The slim Docker image used for agent deployment doesn't have GCC, causing build failures during CodeBuild.\n\nThe toolkit is only needed for CLI commands (`agentcore configure/deploy`), not at agent runtime.\n\n## Check For\n\n1. **WRONG** - starter-toolkit in main dependencies:\n```toml\n[project]\ndependencies = [\n    \"bedrock-agentcore-starter-toolkit>=0.2.0\",  # WRONG!\n]\n```\n\n2. **CORRECT** - starter-toolkit in dev dependencies:\n```toml\n[project.optional-dependencies]\ndev = [\n    \"bedrock-agentcore-starter-toolkit>=0.2.0\",  # CORRECT\n]\n```\n\n## Required Main Dependencies\n\nVerify these are in `[project].dependencies`:\n- `strands-agents` - Agent runtime framework\n- `bedrock-agentcore` (NOT `bedrock-agentcore-runtime`) - AgentCore runtime library\n- `mcp` - MCP client for Gateway\n- `boto3` - AWS SDK\n\n## Action\n\nIf `bedrock-agentcore-starter-toolkit` is found in main dependencies, move it to `[project.optional-dependencies].dev`."
+  },
+  "shortName": "pyproject-validator"
+}

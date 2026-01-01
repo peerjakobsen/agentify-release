@@ -9,6 +9,7 @@
  * 4. Checks for existing CDK folder
  * 5. Extracts bundled CDK and scripts resources
  * 5b. Ensures .gitignore has entries for sensitive files
+ * 5c. Creates pyproject.toml for agent dependencies
  * 6. Generates .agentify/config.json
  * 7. Creates .kiro/steering/agentify-integration.md
  * 8. Installs Agentify Power to .kiro/powers/agentify/
@@ -29,6 +30,7 @@ import {
   CDK_DEST_PATH,
 } from '../services/resourceExtractionService';
 import { createSteeringFile } from '../templates/steeringFile';
+import { createPyprojectToml } from '../templates/pyprojectTemplate';
 import type { AgentifyConfig } from '../types';
 
 /**
@@ -71,6 +73,7 @@ export interface InitializationResult {
   region?: string;
   cdkExtracted?: boolean;
   scriptsExtracted?: boolean;
+  pyprojectCreated?: boolean;
   steeringFileCreated?: boolean;
   powerInstalled?: boolean;
 }
@@ -443,6 +446,25 @@ export async function handleInitializeProject(
     console.warn('[Agentify] Failed to update .gitignore:', error);
   }
 
+  // Step 5c: Create pyproject.toml for agent dependencies (if not exists)
+  let pyprojectCreated = false;
+  const pyprojectPath = path.join(workspaceRoot, 'pyproject.toml');
+  try {
+    if (!fs.existsSync(pyprojectPath)) {
+      // Get project name from workspace folder name
+      const projectName = path.basename(workspaceRoot);
+      const pyprojectContent = createPyprojectToml(projectName);
+      fs.writeFileSync(pyprojectPath, pyprojectContent, 'utf8');
+      pyprojectCreated = true;
+      console.log('[Agentify] Created pyproject.toml for agent dependencies');
+    } else {
+      console.log('[Agentify] pyproject.toml already exists, skipping creation');
+    }
+  } catch (error) {
+    // Non-blocking - log but continue
+    console.warn('[Agentify] Failed to create pyproject.toml:', error);
+  }
+
   // Step 6: Generate config.json (without infrastructure.dynamodb)
   const configCreated = await generateConfig(region, profile);
 
@@ -498,6 +520,7 @@ export async function handleInitializeProject(
     region,
     cdkExtracted: extractionResult.cdkExtracted,
     scriptsExtracted: extractionResult.scriptsExtracted,
+    pyprojectCreated,
     steeringFileCreated,
     powerInstalled,
   };

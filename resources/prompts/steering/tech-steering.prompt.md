@@ -233,31 +233,170 @@ def lambda_handler(event, context):
 
 ### Connecting Agents to Gateway
 
-Agents connect to Gateway tools via MCP client:
+Agents connect to Gateway tools via MCP client with OAuth authentication. The Gateway uses Cognito OAuth2 with client credentials grant for authentication.
+
+#### Gateway Token Manager
+
+Create `agents/shared/gateway_auth.py` for OAuth token management:
 
 ```python
+"""OAuth token manager for MCP Gateway authentication."""
+
+import logging
+import os
+from datetime import datetime, timedelta
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class GatewayTokenManager:
+    """Manages OAuth tokens for MCP Gateway authentication."""
+
+    def __init__(
+        self,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        token_endpoint: str | None = None,
+        scope: str | None = None,
+    ):
+        self.client_id = client_id or os.environ.get('GATEWAY_CLIENT_ID')
+        self.client_secret = client_secret or os.environ.get('GATEWAY_CLIENT_SECRET')
+        self.token_endpoint = token_endpoint or os.environ.get('GATEWAY_TOKEN_ENDPOINT')
+        self.scope = scope or os.environ.get('GATEWAY_SCOPE')
+        self._token: str | None = None
+        self._expires_at: datetime | None = None
+
+    def is_configured(self) -> bool:
+        """Check if OAuth credentials are configured."""
+        return all([self.client_id, self.client_secret, self.token_endpoint, self.scope])
+
+    def get_token(self) -> str:
+        """Get a valid OAuth token, refreshing if necessary."""
+        if self._token and self._expires_at and self._expires_at > datetime.now():
+            return self._token
+
+        if not self.is_configured():
+            raise ValueError('Gateway OAuth credentials not configured')
+
+        logger.info('Fetching new OAuth token from %s', self.token_endpoint)
+        response = httpx.post(
+            self.token_endpoint,
+            data={
+                'grant_type': 'client_credentials',
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+                'scope': self.scope,
+            },
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        self._token = data['access_token']
+        expires_in = data.get('expires_in', 3600) - 300  # Refresh 5 min early
+        self._expires_at = datetime.now() + timedelta(seconds=expires_in)
+
+        logger.info('OAuth token obtained, expires in %d seconds', expires_in)
+        return self._token
+```
+
+#### Authenticated Gateway Connection
+
+```python
+import os
 from strands import Agent
 from strands.tools.mcp import MCPClient
 from mcp.client.streamable_http import streamablehttp_client
+from agents.shared.gateway_auth import GatewayTokenManager
 
-# Gateway provides a single MCP endpoint for all registered tools
-gateway_url = "https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
+# Gateway URL from environment (set by setup.sh during deployment)
+gateway_url = os.environ.get('GATEWAY_URL')
 
-gateway_client = MCPClient(lambda: streamablehttp_client(gateway_url))
+# Initialize token manager (reads OAuth credentials from env vars)
+token_manager = GatewayTokenManager()
 
-with gateway_client:
-    # Discover all tools registered with Gateway
-    shared_tools = gateway_client.list_tools_sync()
-    
-    # Combine with local agent-specific tools
-    agent = Agent(
-        tools=[local_tool_1, local_tool_2] + shared_tools
-    )
+if gateway_url and token_manager.is_configured():
+    # Create authenticated transport factory
+    def create_authenticated_transport():
+        token = token_manager.get_token()
+        return streamablehttp_client(
+            gateway_url,
+            headers={'Authorization': f'Bearer {token}'}
+        )
+
+    gateway_client = MCPClient(create_authenticated_transport)
+
+    with gateway_client:
+        # Discover all tools registered with Gateway
+        shared_tools = gateway_client.list_tools_sync()
+
+        # Combine with local agent-specific tools
+        agent = Agent(
+            tools=[local_tool_1, local_tool_2] + shared_tools
+        )
 ```
+
+#### Gateway OAuth Environment Variables
+
+These environment variables are automatically set by `setup.sh` when deploying agents:
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `GATEWAY_URL` | MCP Gateway endpoint URL | `cdk/gateway_config.json` |
+| `GATEWAY_CLIENT_ID` | Cognito OAuth client ID | `cdk/gateway_config.json` |
+| `GATEWAY_CLIENT_SECRET` | Cognito OAuth client secret | `cdk/gateway_config.json` |
+| `GATEWAY_TOKEN_ENDPOINT` | Cognito token endpoint URL | `cdk/gateway_config.json` |
+| `GATEWAY_SCOPE` | OAuth scope for Gateway access | `cdk/gateway_config.json` |
 
 ## Gateway Configuration
 
 Register Lambda targets with AgentCore Gateway:
+
+## Package Management with uv
+
+This project uses **uv** for Python package management. uv provides fast dependency resolution, lock file support, and is compatible with the pyproject.toml standard.
+
+### Why uv over pip
+
+- **Faster dependency resolution** - 10-100x faster than pip
+- **Lock file support** - `uv.lock` ensures reproducible builds
+- **pyproject.toml standard** - Modern Python packaging
+- **Used by setup.sh** - Deployment scripts use `uv run agentcore` commands
+
+### Dependency Separation
+
+**CRITICAL**: The `bedrock-agentcore-starter-toolkit` MUST be in dev dependencies, not main dependencies.
+
+| Package | Location | Reason |
+|---------|----------|--------|
+| `strands-agents` | main | Agent runtime framework |
+| `bedrock-agentcore` | main | AgentCore runtime library (BedrockAgentCoreApp) |
+| `mcp` | main | MCP client for Gateway connection |
+| `boto3` | main | AWS SDK |
+| `bedrock-agentcore-starter-toolkit` | **dev ONLY** | CLI tool (`agentcore` commands) - requires GCC |
+
+**Why starter-toolkit must be dev-only**: This package requires GCC to build (via `ruamel-yaml-clibz` dependency). The slim Docker image used for agent deployment doesn't have GCC, causing build failures if included in main dependencies. It's only needed locally for running `agentcore configure/deploy` commands.
+
+### Common Commands
+
+```bash
+# Install dependencies (main only)
+uv sync
+
+# Install with dev dependencies (includes agentcore CLI)
+uv sync --all-extras
+
+# Run agent locally
+uv run python agents/main.py --prompt "..."
+
+# Deploy agent (requires dev deps)
+uv run agentcore deploy -a {agent_name}
+
+# Run tests
+uv run pytest
+```
 
 ## Policy Mapping
 

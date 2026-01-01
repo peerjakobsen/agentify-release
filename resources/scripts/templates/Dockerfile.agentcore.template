@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 WORKDIR /app
 
 # All environment variables in one layer
@@ -9,7 +9,7 @@ ENV UV_SYSTEM_PYTHON=1 \
     DOCKER_CONTAINER=1 \
     AWS_REGION=us-east-1 \
     AWS_DEFAULT_REGION=us-east-1 \
-    PYTHONPATH=/app/agents \
+    PYTHONPATH=/app \
     OTEL_SERVICE_NAME=AGENT_NAME \
     OTEL_PYTHON_DISTRO=aws_distro \
     OTEL_PYTHON_CONFIGURATOR=aws_configurator \
@@ -39,4 +39,4 @@ COPY . .
 
 # Run the handler module from the agents directory
 # AGENT_HANDLER_MODULE will be replaced by setup.sh
-CMD ["opentelemetry-instrument", "python", "-m", "AGENT_HANDLER_MODULE"]
+CMD ["opentelemetry-instrument", "python", "-m", "agents.AGENT_HANDLER_MODULE"]

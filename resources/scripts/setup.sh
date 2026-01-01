@@ -297,7 +297,7 @@ if [ -n "$SCHEMA_FILES" ]; then
     # Check if agentcore toolkit is installed (must be in CDK dir for uv)
     if ! uv run agentcore --version &> /dev/null 2>&1; then
         print_step "Installing AgentCore Starter Toolkit..."
-        uv add bedrock-agentcore-starter-toolkit
+        uv add --dev bedrock-agentcore-starter-toolkit
     fi
 
     print_step "Running Gateway setup..."
@@ -348,7 +348,7 @@ if [ -n "$AGENT_NAME" ]; then
     # Check if agentcore toolkit is installed
     if ! uv run agentcore --version &> /dev/null 2>&1; then
         print_step "Installing AgentCore Starter Toolkit..."
-        uv add bedrock-agentcore-starter-toolkit
+        uv add --dev bedrock-agentcore-starter-toolkit
     fi
 
     # Find the handler file
@@ -418,7 +418,28 @@ if [ -n "$AGENT_NAME" ]; then
 
     # Deploy agent
     print_step "Deploying ${AGENT_NAME} via CodeBuild..."
-    uv run agentcore deploy -a "${AGENT_NAME}" --auto-update-on-conflict
+
+    # Pass Gateway credentials as environment variables if available
+    DEPLOY_ENV_ARGS=""
+    GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
+    if [ -f "$GATEWAY_CONFIG" ] && command -v jq &> /dev/null; then
+        DEPLOY_GATEWAY_URL=$(jq -r '.gateway_url // empty' "$GATEWAY_CONFIG")
+        DEPLOY_CLIENT_ID=$(jq -r '.oauth.client_id // empty' "$GATEWAY_CONFIG")
+        DEPLOY_CLIENT_SECRET=$(jq -r '.oauth.client_secret // empty' "$GATEWAY_CONFIG")
+        DEPLOY_TOKEN_ENDPOINT=$(jq -r '.oauth.token_endpoint // empty' "$GATEWAY_CONFIG")
+        DEPLOY_SCOPE=$(jq -r '.oauth.scope // empty' "$GATEWAY_CONFIG")
+
+        if [ -n "$DEPLOY_GATEWAY_URL" ]; then
+            DEPLOY_ENV_ARGS="--env GATEWAY_URL=${DEPLOY_GATEWAY_URL}"
+            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_CLIENT_ID=${DEPLOY_CLIENT_ID}"
+            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_CLIENT_SECRET=${DEPLOY_CLIENT_SECRET}"
+            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_TOKEN_ENDPOINT=${DEPLOY_TOKEN_ENDPOINT}"
+            DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env GATEWAY_SCOPE=${DEPLOY_SCOPE}"
+            print_step "Setting Gateway credentials for ${AGENT_NAME}"
+        fi
+    fi
+
+    uv run agentcore deploy -a "${AGENT_NAME}" --auto-update-on-conflict ${DEPLOY_ENV_ARGS}
     print_success "${AGENT_NAME} deployed"
 
     # Store agent ID in SSM Parameter Store

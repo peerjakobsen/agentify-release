@@ -182,10 +182,46 @@ if [ "$SKIP_AGENTS" = false ]; then
 
             if [ -n "$AGENTS" ]; then
                 for AGENT in $AGENTS; do
-                    print_step "Deleting agent: ${AGENT}"
-                    uv run agentcore delete -a "${AGENT}" --force 2>/dev/null || print_warning "Agent ${AGENT} may already be deleted"
+                    print_step "Destroying agent: ${AGENT}"
+                    uv run agentcore destroy -a "${AGENT}" --force 2>/dev/null || print_warning "Agent ${AGENT} may already be destroyed"
                 done
-                print_success "Agent deletion complete"
+                print_success "Agent destroy commands issued"
+
+                # Poll until all agents are fully deleted
+                # AgentCore destroy is async - ENIs won't release until agents are gone
+                print_step "Waiting for agents to be fully deleted..."
+                MAX_WAIT=300  # 5 minutes max
+                POLL_INTERVAL=10
+                ELAPSED=0
+
+                while [ $ELAPSED -lt $MAX_WAIT ]; do
+                    ALL_DELETED=true
+                    for AGENT in $AGENTS; do
+                        # Check if agent still exists (status command returns non-zero if not found)
+                        if uv run agentcore status -a "${AGENT}" &>/dev/null; then
+                            STATUS=$(uv run agentcore status -a "${AGENT}" 2>/dev/null | grep -i "status" | head -1 || echo "unknown")
+                            print_step "Agent ${AGENT} still exists: ${STATUS}"
+                            ALL_DELETED=false
+                        fi
+                    done
+
+                    if [ "$ALL_DELETED" = true ]; then
+                        print_success "All agents deleted"
+                        break
+                    fi
+
+                    echo "  Waiting ${POLL_INTERVAL}s for agent deletion... (${ELAPSED}s/${MAX_WAIT}s)"
+                    sleep $POLL_INTERVAL
+                    ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                done
+
+                if [ $ELAPSED -ge $MAX_WAIT ]; then
+                    print_warning "Timeout waiting for agent deletion. Proceeding anyway..."
+                fi
+
+                # Additional wait for ENI release after agents are gone
+                print_step "Waiting 30s for ENI release..."
+                sleep 30
             else
                 print_warning "No agents found in .bedrock_agentcore.yaml"
             fi

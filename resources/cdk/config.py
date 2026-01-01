@@ -20,17 +20,34 @@ SUPPORTED_REGIONS: list[str] = ["us-east-1", "us-west-2", "eu-west-1"]
 # AgentCore Runtime supported Availability Zone IDs by region
 # These are AZ IDs (not names) which are consistent across all AWS accounts
 # See: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html
-AGENTCORE_SUPPORTED_AZ_IDS: dict[str, set[str]] = {
+AGENTCORE_RUNTIME_SUPPORTED_AZ_IDS: dict[str, set[str]] = {
     "us-east-1": {"use1-az1", "use1-az2", "use1-az4"},
     "us-west-2": {"usw2-az1", "usw2-az2", "usw2-az3"},
     "eu-west-1": {"euw1-az1", "euw1-az2", "euw1-az3"},
 }
 
+# AgentCore Gateway supported Availability Zone IDs by region
+# Gateway VPC endpoint has different AZ support than Runtime
+# We need AZs that BOTH Runtime AND Gateway support for full functionality
+# Note: use1-az1 is NOT supported by Gateway in us-east-1
+AGENTCORE_GATEWAY_SUPPORTED_AZ_IDS: dict[str, set[str]] = {
+    "us-east-1": {"use1-az2", "use1-az4", "use1-az6"},  # Gateway doesn't support use1-az1
+    "us-west-2": {"usw2-az1", "usw2-az2", "usw2-az3"},
+    "eu-west-1": {"euw1-az1", "euw1-az2", "euw1-az3"},
+}
+
+# Combined: AZ IDs supported by BOTH Runtime AND Gateway
+# This is the intersection - required for agents to use MCP Gateway tools
+AGENTCORE_SUPPORTED_AZ_IDS: dict[str, set[str]] = {
+    region: AGENTCORE_RUNTIME_SUPPORTED_AZ_IDS[region] & AGENTCORE_GATEWAY_SUPPORTED_AZ_IDS[region]
+    for region in AGENTCORE_RUNTIME_SUPPORTED_AZ_IDS
+}
+
 # Fallback AZ names for when AWS credentials are unavailable during synthesis
-# These are typical mappings but may differ per account - actual deployment
-# will validate against the account's real AZ mappings
+# These prioritize AZ names that commonly map to the intersection AZ IDs
+# Note: AZ name-to-ID mapping varies per account, prefer fresh credentials
 FALLBACK_AZ_NAMES: dict[str, list[str]] = {
-    "us-east-1": ["us-east-1a", "us-east-1b", "us-east-1c"],
+    "us-east-1": ["us-east-1c", "us-east-1d"],  # commonly use1-az2, use1-az4
     "us-west-2": ["us-west-2a", "us-west-2b", "us-west-2c"],
     "eu-west-1": ["eu-west-1a", "eu-west-1b", "eu-west-1c"],
 }
