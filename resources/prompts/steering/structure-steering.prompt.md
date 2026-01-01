@@ -125,7 +125,7 @@ project-root/
 │       ├── __init__.py            # Module exports
 │       ├── instrumentation.py     # @instrument_tool decorator (pre-bundled)
 │       ├── dynamodb_client.py     # Fire-and-forget events (pre-bundled)
-│       └── gateway_auth.py        # GatewayTokenManager (pre-bundled)
+│       └── gateway_client.py       # Gateway integration (pre-bundled)
 ├── cdk/                           # AWS CDK infrastructure (Python)
 │   ├── app.py                     # CDK app entry point
 │   ├── config.py                  # Environment configuration
@@ -272,33 +272,30 @@ if __name__ == '__main__':
 
 **agent.py** - Creates the Strands agent with local and Gateway tools:
 ```python
-from strands import Agent
-from strands.models.bedrock import BedrockModel
-from strands.tools.mcp import MCPClient
-from mcp.client.streamable_http import streamablehttp_client
+"""Agent definition for {Agent Name}."""
+
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
 from .tools import {local_tool_imports}
 
-# Local tools (agent-specific)
-from .tools import analyze_trends, calculate_forecast
 
-# Gateway tools (shared across agents) - loaded at runtime
-def get_gateway_tools(gateway_url: str) -> list:
-    """Load shared tools from AgentCore Gateway."""
-    client = MCPClient(lambda: streamablehttp_client(gateway_url))
-    with client:
-        return client.list_tools_sync()
+def invoke_{agent_id}_agent(prompt: str) -> str:
+    """Invoke the {Agent Name} agent.
 
-def create_{agent_id}(gateway_url: str = None) -> Agent:
-    """Create the {Agent Name} agent."""
-    local_tools = [analyze_trends, calculate_forecast]
-    shared_tools = get_gateway_tools(gateway_url) if gateway_url else []
-    
-    return Agent(
-        model=BedrockModel(model_id="..."),
-        system_prompt=SYSTEM_PROMPT,
-        tools=local_tools + shared_tools
+    Uses invoke_with_gateway() which handles:
+    - OAuth token management for Gateway
+    - MCP client session lifecycle
+    - Tool discovery from Gateway
+    - Graceful degradation when Gateway unavailable
+    """
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[{local_tools}],
+        system_prompt=SYSTEM_PROMPT
     )
 ```
+
+**CRITICAL**: Do NOT use `MCPClient` directly. The `invoke_with_gateway()` function handles MCP session lifecycle to prevent "client session is not running" errors. The session must stay open during agent execution for Gateway tools to work.
 
 **prompts.py** - Contains system prompt:
 ```python

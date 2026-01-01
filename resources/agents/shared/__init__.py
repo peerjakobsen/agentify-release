@@ -26,8 +26,9 @@ chronological tool execution timelines across multi-agent workflows.
 - `query_tool_events()`: Retrieve events for a workflow session
 - `get_tool_events_table_name()`: Resolve DynamoDB table name from configuration
 
-### Authentication
+### Gateway Integration
 - `GatewayTokenManager`: OAuth token management for MCP Gateway authentication
+- `invoke_with_gateway()`: Execute agent with proper MCP session lifecycle
 
 ## Integration Patterns for Agent Developers
 
@@ -120,7 +121,7 @@ from .dynamodb_client import (
     get_tool_events_table_name
 )
 
-from .gateway_auth import GatewayTokenManager
+from .gateway_client import GatewayTokenManager, invoke_with_gateway
 
 __all__ = [
     'instrument_tool',
@@ -130,5 +131,6 @@ __all__ = [
     'write_tool_event',
     'query_tool_events',
     'get_tool_events_table_name',
-    'GatewayTokenManager'
+    'GatewayTokenManager',
+    'invoke_with_gateway'
 ]

@@ -123,7 +123,7 @@ The Demo Viewer polls DynamoDB for tool call events to visualize workflow execut
 |------|---------|-------------|
 | `agents/shared/instrumentation.py` | Tool observability | `instrument_tool`, `set_instrumentation_context`, `clear_instrumentation_context` |
 | `agents/shared/dynamodb_client.py` | Event persistence | `write_tool_event`, `query_tool_events`, `get_tool_events_table_name` |
-| `agents/shared/gateway_auth.py` | OAuth for Gateway | `GatewayTokenManager` |
+| `agents/shared/gateway_client.py` | Gateway integration | `GatewayTokenManager`, `invoke_with_gateway` |
 
 ### Import Pattern
 
@@ -138,8 +138,8 @@ from agents.shared.instrumentation import (
 # Import DynamoDB client (PRE-BUNDLED - do not recreate)
 from agents.shared.dynamodb_client import write_tool_event
 
-# Import Gateway auth (PRE-BUNDLED - do not recreate)
-from agents.shared.gateway_auth import GatewayTokenManager
+# Import Gateway client (PRE-BUNDLED - do not recreate)
+from agents.shared.gateway_client import GatewayTokenManager, invoke_with_gateway
 ```
 
 ## Instrumentation Context Pattern
@@ -214,6 +214,52 @@ success = write_tool_event({
 })
 # success is True/False - errors are logged but never raised
 ```
+
+## Gateway Client Usage
+
+The `agents/shared/gateway_client.py` module provides MCP Gateway integration with proper session lifecycle management. **This module is pre-bundled — DO NOT recreate it.**
+
+### Available Functions
+
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `invoke_with_gateway()` | Execute agent with Gateway tools (session managed) | `str` (response) |
+| `GatewayTokenManager` | OAuth token management for Gateway auth | Token manager instance |
+
+### Why invoke_with_gateway() Exists
+
+MCP tools returned by `list_tools_sync()` are **proxy objects** that reference the MCP client session. If the session closes before the agent executes tools, you get "client session is not running" errors.
+
+`invoke_with_gateway()` keeps the MCP session open during the entire agent execution, ensuring Gateway tools work correctly.
+
+### Usage Pattern
+
+```python
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+from .tools import my_local_tool
+
+def invoke_my_agent(prompt: str) -> str:
+    """Invoke agent with local and Gateway tools."""
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[my_local_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
+```
+
+### Environment Variables
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `GATEWAY_URL` | MCP Gateway endpoint URL | Dockerfile / setup.sh |
+| `GATEWAY_CLIENT_ID` | Cognito OAuth client ID | Dockerfile / setup.sh |
+| `GATEWAY_CLIENT_SECRET` | Cognito OAuth client secret | Dockerfile / setup.sh |
+| `GATEWAY_TOKEN_ENDPOINT` | Cognito token endpoint URL | Dockerfile / setup.sh |
+| `GATEWAY_SCOPE` | OAuth scope for Gateway access | Dockerfile / setup.sh |
+| `AGENT_MODEL_ID` | Bedrock model ID (optional) | Dockerfile / setup.sh |
+
+**CRITICAL**: Do NOT use `MCPClient` directly in agent code. The `invoke_with_gateway()` function handles MCP session lifecycle to prevent "client session is not running" errors.
 
 ## AgentCore Handler Pattern
 

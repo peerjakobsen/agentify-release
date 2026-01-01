@@ -198,6 +198,35 @@ This allows Kiro to simply add new handlers to the directory structure without m
 ./scripts/destroy.sh
 ```
 
+### IAM Role & Policy Creation
+
+When deploying an agent with `./scripts/setup.sh --agent <name>`:
+
+1. **AgentCore SDK creates execution role** (during `agentcore deploy`):
+   - Role name: `AmazonBedrockAgentCoreSDKRuntime-{region}-{hash}`
+   - Trust policy: Allows `bedrock-agentcore.amazonaws.com` to assume it
+   - Managed policies: `AmazonBedrockAgentCoreRuntimePolicy`, CloudWatch Logs
+
+2. **setup.sh adds Agentify-specific inline policy** (after deploy completes):
+   - Policy name: `AgentifyAccess-{agent_name}`
+   - Grants `dynamodb:PutItem`, `dynamodb:Query` on workflow-events table
+   - Grants `ssm:GetParameter` on `/agentify/*` parameters
+
+```bash
+# setup.sh extracts role from .bedrock_agentcore.yaml and adds:
+aws iam put-role-policy \
+    --role-name "AmazonBedrockAgentCoreSDKRuntime-us-east-1-xyz123" \
+    --policy-name "AgentifyAccess-analyzer" \
+    --policy-document '{
+        "Statement": [
+            {"Action": ["dynamodb:PutItem", "dynamodb:Query"], "Resource": ["arn:aws:dynamodb:...:table/agentify-workflow-events"]},
+            {"Action": ["ssm:GetParameter"], "Resource": ["arn:aws:ssm:...:parameter/agentify/*"]}
+        ]
+    }'
+```
+
+**Important:** Always deploy agents via `./scripts/setup.sh --agent <name>` to ensure IAM permissions are applied. Manual deployment via `uv run agentcore deploy` will skip the Agentify policy.
+
 ---
 
 ## Stage 4: AgentCore MCP Gateway
@@ -227,28 +256,56 @@ The MCP Gateway uses Cognito OAuth2 with client credentials grant for authentica
 | `GATEWAY_TOKEN_ENDPOINT` | Cognito token endpoint URL |
 | `GATEWAY_SCOPE` | OAuth scope for Gateway access |
 
-### GatewayTokenManager Pattern
+### Gateway Client Module
 
-Agents use `agents/shared/gateway_auth.py` to fetch and cache OAuth tokens:
+Agents use `agents/shared/gateway_client.py` for MCP Gateway integration. This module provides two key components:
 
+1. **GatewayTokenManager** - OAuth token management with Cognito
+2. **invoke_with_gateway()** - Agent execution with proper MCP session lifecycle
+
+#### MCP Session Lifecycle (Critical)
+
+MCP tools returned by `list_tools_sync()` are **proxy objects** that maintain a reference to the MCP client session. If the session closes before the agent executes tools, you get "client session is not running" errors.
+
+**Wrong pattern (causes errors):**
 ```python
-from agents.shared.gateway_auth import GatewayTokenManager
-from mcp.client.streamable_http import streamablehttp_client
-from strands.tools.mcp import MCPClient
+def get_gateway_tools(gateway_url):
+    client = MCPClient(lambda: streamablehttp_client(gateway_url))
+    with client:
+        tools = client.list_tools_sync()  # Tools reference this session
+        return tools
+    # Session CLOSES here - tools become "dead" proxies!
 
-token_manager = GatewayTokenManager()
-
-if gateway_url and token_manager.is_configured():
-    def create_authenticated_transport():
-        token = token_manager.get_token()
-        return streamablehttp_client(
-            gateway_url,
-            headers={'Authorization': f'Bearer {token}'}
-        )
-    gateway_client = MCPClient(create_authenticated_transport)
+# Later: agent tries to call tool → ERROR: client session is not running
 ```
 
-The token manager:
+**Correct pattern (invoke_with_gateway handles this):**
+```python
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+from .tools import my_local_tool
+
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[my_local_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
+```
+
+The `invoke_with_gateway()` function keeps the MCP session open during the entire agent execution:
+```python
+with client:
+    gateway_tools = client.list_tools_sync()
+    agent = Agent(tools=local_tools + gateway_tools)
+    result = agent(prompt)  # Tool calls happen with session OPEN
+    return result.message   # Session still OPEN here
+# Session closes AFTER agent completes
+```
+
+#### GatewayTokenManager
+
+The token manager handles OAuth2 client credentials flow:
 - Reads credentials from environment variables
 - Fetches tokens from Cognito via VPC endpoint
 - Caches tokens and refreshes 5 minutes before expiry
@@ -380,7 +437,7 @@ project/
 ├── agents/
 │   ├── shared/                 # Bundled utilities (from extension)
 │   │   ├── __init__.py
-│   │   └── gateway_auth.py     # OAuth token manager for MCP Gateway
+│   │   └── gateway_client.py   # MCP Gateway integration (OAuth + session lifecycle)
 │   ├── main.py                 # Local orchestrator (Kiro generated)
 │   ├── analyzer.py             # Agent handlers (Kiro generated, deploy to AgentCore)
 │   ├── responder.py
