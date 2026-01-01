@@ -76,17 +76,22 @@ cdk/                              # PRE-EXISTING — DO NOT MODIFY
 
 The `gateway_tools.py` stack automatically discovers any handlers in `cdk/gateway/handlers/*/` during deployment. Kiro's job is to CREATE handler directories inside this existing structure.
 
-### 4. Roadmap Items (Multiple Sections)
+### 4. Pre-bundled Shared Utilities (Explain This)
+
+**CRITICAL:** The `agents/shared/` module is pre-bundled by the Agentify extension. Kiro should NOT create these files — they already exist:
+
+- `agents/shared/__init__.py` — Module exports
+- `agents/shared/instrumentation.py` — `@instrument_tool` decorator for observability
+- `agents/shared/dynamodb_client.py` — Fire-and-forget event persistence
+- `agents/shared/gateway_auth.py` — `GatewayTokenManager` for OAuth
+
+Explain this clearly in the roadmap so users know to IMPORT from these modules, not recreate them.
+
+### 5. Roadmap Items (Multiple Sections)
 
 Generate items in this order:
 
-#### Item 1: Shared Utilities and Instrumentation
-- Prompt for Kiro to create `agents/shared/` module with observability infrastructure
-- Creates: `instrumentation.py` (@instrument_tool decorator), `dynamodb_client.py` (fire-and-forget writes)
-- This MUST be created first as all agents depend on it for tool instrumentation
-- Acceptance: Module exists, @instrument_tool decorator defined, DynamoDB client with fire-and-forget pattern
-
-#### Item 2: Gateway Lambda Handlers (Shared Tools) — if any shared tools exist
+#### Item 1: Gateway Lambda Handlers (Shared Tools) — if any shared tools exist
 - Prompt for Kiro to create Python Lambda handlers by **injecting them into the existing CDK structure**
 - Path: `cdk/gateway/handlers/{tool_name}/handler.py` (MUST be inside `cdk/` folder)
 - Each handler directory contains its own `mock_data.json` (bundled with Lambda at deploy time)
@@ -95,15 +100,15 @@ Generate items in this order:
 - NOTE: Gateway setup scripts already exist — Kiro does NOT create them
 - Acceptance: Handler files exist in correct path, `cdk deploy` succeeds (auto-discovers handlers)
 
-#### Items 3-N: One Item Per Agent
+#### Items 2-N: One Item Per Agent
 For each agent in the design:
 - Prompt for Kiro to create agent module: `agents/{agent_id}/` with agent.py, prompts.py, tools/
 - Prompt for Kiro to create handler: `agents/{agent_id}_handler.py` (AgentCore entry point)
 - LOCAL tools defined with BOTH decorators: `@instrument_tool` ON TOP, `@tool` BOTTOM (closest to function)
 - SHARED tools accessed via Gateway MCP client (not imported locally)
 - MUST mention AgentCore deployment in the prompt
-- MUST require importing @instrument_tool from `agents.shared.instrumentation`
-- Each agent depends on Item 1 (shared utilities)
+- MUST require importing @instrument_tool from `agents.shared.instrumentation` (pre-bundled)
+- Each agent depends on Item 1 (Gateway handlers) if using shared tools
 
 #### Final Item: Main Orchestrator
 - Prompt for Kiro to create `agents/main.py` — the LOCAL entry point
@@ -174,8 +179,8 @@ This is an Agentify demo project. Follow these rules strictly:
    - `cdk/app.py`, `cdk/config.py` — CDK configuration (already exist)
    - Gateway setup scripts (already exist)
 
-8. **Where to Create Files**:
-   - Shared utilities: `agents/shared/` directory (instrumentation, DynamoDB client)
+8. **Where to Create Files** (and what's pre-bundled):
+   - Shared utilities: `agents/shared/` — PRE-BUNDLED, import only (instrumentation, DynamoDB client, gateway_auth)
    - Gateway Lambda handlers: `cdk/gateway/handlers/{tool_name}/` (inject into existing CDK structure)
    - Agent modules: `agents/{agent_id}/` (agent.py, prompts.py, tools/)
    - Agent handlers: `agents/{agent_id}_handler.py` (AgentCore entry points)
@@ -268,11 +273,25 @@ cdk/                              # PRE-EXISTING — DO NOT MODIFY
 
 ---
 
+## Pre-bundled Shared Utilities
+
+The `agents/shared/` module is **pre-bundled** by the Agentify extension during project initialization. These files already exist — do NOT recreate them:
+
+| File | Purpose | Import Example |
+|------|---------|----------------|
+| `agents/shared/instrumentation.py` | `@instrument_tool` decorator | `from agents.shared.instrumentation import instrument_tool` |
+| `agents/shared/dynamodb_client.py` | Fire-and-forget event persistence | `from agents.shared.dynamodb_client import write_tool_event` |
+| `agents/shared/gateway_auth.py` | OAuth token management | `from agents.shared.gateway_auth import GatewayTokenManager` |
+
+All agents should **import from** these modules, not create new implementations.
+
+---
+
 ## Item 1: Gateway Lambda Handlers (Shared Tools)
 
 **Purpose:** Create Python Lambda handlers for shared tools by injecting them into the existing CDK structure.
 
-**Depends on:** None
+**Depends on:** None (shared utilities are pre-bundled)
 
 **Files to be created (inject into existing CDK structure):**
 - `cdk/gateway/handlers/zendesk_get_ticket/handler.py` — Lambda handler (Python 3.11)
@@ -393,7 +412,7 @@ cdk/gateway/handlers/
 
 **Purpose:** Create the Ticket Analyzer agent with local tools and Gateway connection.
 
-**Depends on:** Item 1 (Gateway Lambda Handlers must be deployed first)
+**Depends on:** Item 1 (Gateway Lambda Handlers must be deployed first), Pre-bundled shared utilities
 
 **Files to be created:**
 - `agents/ticket_analyzer.py` — Agent with local and Gateway tools
@@ -552,8 +571,8 @@ Before outputting the roadmap, verify:
 5. [ ] The main.py item's prompt specifies CLI contract (--prompt, --workflow-id, --trace-id)
 
 ### Instrumentation & Observability
-6. [ ] Item 1 creates shared utilities (`agents/shared/`) before any agents
-7. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation
+6. [ ] Pre-bundled shared utilities section explains `agents/shared/` is already installed
+7. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation (pre-bundled)
 8. [ ] Every agent item shows correct decorator order: @instrument_tool ON TOP, @tool BOTTOM (closest to function)
 9. [ ] Agent handlers (agents/{agent_id}_handler.py) set/clear instrumentation context
 
@@ -567,7 +586,7 @@ Before outputting the roadmap, verify:
 16. [ ] No references to external `mocks/` directory for Lambda handlers
 
 ### Dependencies & Order
-17. [ ] Items are ordered: shared utilities → Gateway handlers → agents → orchestrator
+17. [ ] Items are ordered: Gateway handlers → agents → orchestrator (shared utilities are pre-bundled)
 18. [ ] No item assumes local-only execution for agents
 19. [ ] All tools are mocks (demo system)
 20. [ ] Event emission patterns are referenced in each prompt

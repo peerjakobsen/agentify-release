@@ -4,13 +4,15 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 ## Your Responsibilities
 
-1. **Define the Instrumentation Decorator**: Document the `@instrument_tool` decorator that wraps all tool functions for real-time monitoring.
+1. **Explain Pre-Bundled Utilities**: Document that `agents/shared/` is pre-bundled and should be IMPORTED, not recreated.
 
-2. **Establish Context Management**: Document the `set_instrumentation_context()` pattern for correlating events across agent invocations.
+2. **Document Import Patterns**: Show how to import `@instrument_tool`, context management functions, and DynamoDB client.
 
 3. **Document AgentCore Handler Pattern**: Define how agents expose entry points using `@app.entrypoint`.
 
 4. **Specify DynamoDB Event Schema**: Document the event schema for tool calls stored in DynamoDB and polled by the Demo Viewer.
+
+5. **Emphasize "Import, Don't Create"**: Clearly communicate that Kiro should never recreate these utilities.
 
 ## Input Schema
 
@@ -57,17 +59,25 @@ inclusion: always
 
 [Explain the DynamoDB-based observability architecture: tool events polled by Demo Viewer for real-time visualization.]
 
-## Instrumentation Context
+## Pre-Bundled Shared Utilities (DO NOT RECREATE)
 
-[Document set_instrumentation_context(), get_instrumentation_context(), clear_instrumentation_context() functions.]
+[CRITICAL: Document that agents/shared/ is pre-bundled by Agentify extension. Include table of files and import examples. Emphasize "IMPORT, don't create".]
 
-## @instrument_tool Decorator
+## Import Patterns
 
-[Document the decorator pattern for tool observability with started/completed/error events.]
+[Show import statements for instrument_tool, context management, and DynamoDB client.]
+
+## @instrument_tool Decorator Usage
+
+[Document HOW TO USE the decorator (not how to implement it). Show decorator order with @tool.]
+
+## Instrumentation Context Usage
+
+[Document HOW TO USE set_instrumentation_context() and clear_instrumentation_context().]
 
 ## AgentCore Handler Pattern
 
-[Document @app.entrypoint pattern for remote agents.]
+[Document @app.entrypoint pattern for remote agents, showing context setup/cleanup.]
 
 ## DynamoDB Event Schema
 
@@ -103,355 +113,106 @@ The Demo Viewer polls DynamoDB for tool call events to visualize workflow execut
 
 **Key Principle**: Tool execution is never blocked by monitoring. All DynamoDB writes are fire-and-forget.
 
+## Pre-Bundled Shared Utilities
+
+**CRITICAL:** The `agents/shared/` module is **pre-bundled** by the Agentify extension during project initialization. These utilities already exist — **DO NOT recreate them**.
+
+### Available Modules
+
+| File | Purpose | Key Exports |
+|------|---------|-------------|
+| `agents/shared/instrumentation.py` | Tool observability | `instrument_tool`, `set_instrumentation_context`, `clear_instrumentation_context` |
+| `agents/shared/dynamodb_client.py` | Event persistence | `write_tool_event`, `query_tool_events`, `get_tool_events_table_name` |
+| `agents/shared/gateway_auth.py` | OAuth for Gateway | `GatewayTokenManager` |
+
+### Import Pattern
+
+```python
+# Import instrumentation utilities (PRE-BUNDLED - do not recreate)
+from agents.shared.instrumentation import (
+    instrument_tool,
+    set_instrumentation_context,
+    clear_instrumentation_context
+)
+
+# Import DynamoDB client (PRE-BUNDLED - do not recreate)
+from agents.shared.dynamodb_client import write_tool_event
+
+# Import Gateway auth (PRE-BUNDLED - do not recreate)
+from agents.shared.gateway_auth import GatewayTokenManager
+```
+
 ## Instrumentation Context Pattern
 
 The instrumentation context correlates events across tool invocations within a single workflow execution.
 
-### Module: `agents/shared/instrumentation.py`
+### How to Use Context Management
 
 ```python
-"""
-Instrumentation context management for Agentify observability.
+from agents.shared.instrumentation import (
+    set_instrumentation_context,
+    clear_instrumentation_context
+)
 
-AgentCore containers handle one request at a time, so module-level globals
-are safe for storing context without thread-local storage.
-"""
+# In your agent handler:
+try:
+    # Set context BEFORE any tools execute
+    set_instrumentation_context(session_id, 'analyzer')
 
-import functools
-import json
-import logging
-import time
-import uuid
-from typing import Any, Callable, ParamSpec, TypeVar
+    # Execute agent logic - tools will emit events automatically
+    result = invoke_agent(prompt)
 
-from agents.shared.dynamodb_client import write_tool_event
-
-logger = logging.getLogger(__name__)
-
-P = ParamSpec('P')
-R = TypeVar('R')
-
-# Module-level globals for instrumentation context
-_session_id: str | None = None
-_agent_name: str | None = None
-
-
-def set_instrumentation_context(session_id: str, agent_name: str) -> None:
-    """
-    Set the instrumentation context for the current request.
-
-    Call this at the start of each agent handler invocation,
-    before any tools are invoked.
-
-    Args:
-        session_id: UUID identifying the workflow execution
-        agent_name: Logical agent name (e.g., 'analyzer', 'responder')
-    """
-    global _session_id, _agent_name
-    _session_id = session_id
-    _agent_name = agent_name
-    logger.debug(f'Set instrumentation context: session={session_id[:8]}..., agent={agent_name}')
-
-
-def get_instrumentation_context() -> tuple[str | None, str | None]:
-    """Get the current instrumentation context (session_id, agent_name)."""
-    return _session_id, _agent_name
-
-
-def clear_instrumentation_context() -> None:
-    """Clear the instrumentation context after request completes."""
-    global _session_id, _agent_name
-    _session_id = None
-    _agent_name = None
-    logger.debug('Cleared instrumentation context')
-
-
-def _get_timestamp() -> str:
-    """Get current timestamp in ISO format with microseconds."""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec='microseconds')
-
-
-def _truncate_params(params: dict[str, Any], max_length: int = 200) -> str:
-    """Truncate parameters JSON to max length for storage."""
-    try:
-        params_str = json.dumps(params)
-        if len(params_str) > max_length:
-            return params_str[:max_length - 3] + '...'
-        return params_str
-    except Exception:
-        return '{}'
-
-
-def _truncate_error(error: str, max_length: int = 500) -> str:
-    """Truncate error message to max length."""
-    if len(error) > max_length:
-        return error[:max_length - 3] + '...'
-    return error
-
-
-def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
-    """
-    Decorator to instrument tool functions for real-time monitoring.
-
-    Writes 'started' event before tool execution and 'completed' or 'error'
-    event after, with duration_ms. Events are only written if instrumentation
-    context is set (session_id and agent_name available).
-
-    Usage:
-        @instrument_tool         # ON TOP = outer wrapper (captures events)
-        @tool                    # BOTTOM = inner wrapper (Strands SDK)
-        def my_tool(param: str) -> dict:
-            ...
-
-    IMPORTANT: @tool must be BOTTOM (closest to function), @instrument_tool ON TOP.
-    Python applies decorators bottom-up: @tool registers first, then @instrument_tool wraps.
-    """
-    tool_name = func.__name__
-
-    @functools.wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        # Get context - if not set, skip instrumentation
-        session_id, agent_name = get_instrumentation_context()
-
-        if not session_id or not agent_name:
-            # No context = no events (graceful degradation)
-            return func(*args, **kwargs)
-
-        # Generate unique event ID for this invocation
-        event_id = str(uuid.uuid4())
-
-        # Capture parameters for logging
-        params = {}
-        if args:
-            params['args'] = [str(a)[:100] for a in args]
-        if kwargs:
-            params['kwargs'] = {k: str(v)[:100] for k, v in kwargs.items()}
-
-        # Record start time
-        start_time = time.time()
-        start_timestamp = _get_timestamp()
-
-        # Write 'started' event (fire-and-forget)
-        started_event = {
-            'session_id': session_id,
-            'timestamp': start_timestamp,
-            'event_id': event_id,
-            'agent': agent_name,
-            'tool_name': tool_name,
-            'parameters': _truncate_params(params),
-            'status': 'started',
-        }
-        write_tool_event(started_event)
-
-        try:
-            # Execute the actual tool function
-            result = func(*args, **kwargs)
-
-            # Calculate duration
-            duration_ms = int((time.time() - start_time) * 1000)
-
-            # Write 'completed' event (fire-and-forget)
-            completed_event = {
-                'session_id': session_id,
-                'timestamp': _get_timestamp(),
-                'event_id': event_id,
-                'agent': agent_name,
-                'tool_name': tool_name,
-                'status': 'completed',
-                'duration_ms': duration_ms,
-            }
-            write_tool_event(completed_event)
-
-            return result
-
-        except Exception as e:
-            # Calculate duration even on error
-            duration_ms = int((time.time() - start_time) * 1000)
-
-            # Write 'error' event (fire-and-forget)
-            error_event = {
-                'session_id': session_id,
-                'timestamp': _get_timestamp(),
-                'event_id': event_id,
-                'agent': agent_name,
-                'tool_name': tool_name,
-                'status': 'error',
-                'duration_ms': duration_ms,
-                'error_message': _truncate_error(str(e)),
-            }
-            write_tool_event(error_event)
-
-            # Re-raise the exception (don't swallow errors)
-            raise
-
-    return wrapper
+finally:
+    # Always clear context to prevent leakage
+    clear_instrumentation_context()
 ```
 
-## DynamoDB Client Pattern
+### Context Functions
 
-### Module: `agents/shared/dynamodb_client.py`
+| Function | When to Call | Purpose |
+|----------|--------------|---------|
+| `set_instrumentation_context(session_id, agent_name)` | Start of handler | Enable event emission |
+| `get_instrumentation_context()` | Internal use | Returns `(session_id, agent_name)` |
+| `clear_instrumentation_context()` | End of handler (finally block) | Prevent context leakage |
+
+## DynamoDB Client Usage
+
+The `agents/shared/dynamodb_client.py` module provides fire-and-forget event persistence. **This module is pre-bundled — DO NOT recreate it.**
+
+### Available Functions
+
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `write_tool_event(event)` | Write event to DynamoDB (fire-and-forget) | `bool` (success) |
+| `query_tool_events(session_id, limit)` | Query events for a session | `list[dict]` |
+| `get_tool_events_table_name()` | Get DynamoDB table name | `str | None` |
+
+### Configuration Resolution
+
+The module resolves the DynamoDB table name using this priority:
+1. **SSM Parameter Store**: `/agentify/services/dynamodb/tool-events-table` (preferred)
+2. **Environment Variable**: `AGENTIFY_TABLE_NAME` (fallback)
+3. **Graceful degradation**: Returns `None` if not configured
+
+### Usage Example
 
 ```python
-"""
-DynamoDB client for writing tool call events.
+# The DynamoDB client is already used internally by @instrument_tool
+# You typically don't need to call it directly
 
-All writes are fire-and-forget - monitoring should never block tool execution.
-"""
+# If you need to write custom events:
+from agents.shared.dynamodb_client import write_tool_event
 
-import logging
-import os
-import time
-from typing import Any, TypedDict
-
-import boto3
-from botocore.exceptions import ClientError
-
-logger = logging.getLogger(__name__)
-
-# Environment variables
-AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-
-# SSM parameter path for tool events table name
-TOOL_EVENTS_TABLE_PARAM = '/agentify/services/dynamodb/tool-events-table'
-
-# TTL duration in seconds (2 hours for demo, adjust as needed)
-TTL_DURATION_SECONDS = 7200
-
-# Cached table name
-_table_name: str | None = None
-
-
-class ToolEvent(TypedDict, total=False):
-    """Schema for tool call events stored in DynamoDB."""
-    session_id: str          # UUID for workflow correlation (partition key)
-    timestamp: str           # ISO format with microseconds (sort key)
-    event_id: str           # UUID for event deduplication
-    agent: str              # Agent name that invoked the tool
-    tool_name: str          # Function name of the tool
-    parameters: str         # JSON string of input params (truncated)
-    status: str             # 'started', 'completed', or 'error'
-    duration_ms: int        # Execution time (for completed/error)
-    error_message: str      # Error description (for error events)
-    ttl: int                # Unix timestamp for automatic deletion
-
-
-def get_tool_events_table_name() -> str | None:
-    """
-    Get the DynamoDB table name from SSM Parameter Store.
-
-    Caches the result to avoid repeated SSM calls.
-    Returns None if parameter is not configured.
-    """
-    global _table_name
-
-    if _table_name is not None:
-        return _table_name
-
-    # Also check environment variable as fallback
-    env_table = os.environ.get('AGENTIFY_TABLE_NAME')
-    if env_table:
-        _table_name = env_table
-        return _table_name
-
-    try:
-        ssm = boto3.client('ssm', region_name=AWS_REGION)
-        response = ssm.get_parameter(Name=TOOL_EVENTS_TABLE_PARAM)
-        _table_name = response['Parameter']['Value']
-        logger.debug(f'Retrieved table name from SSM: {_table_name}')
-        return _table_name
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-        logger.warning(f'Failed to get table name from SSM ({error_code})')
-        return None
-    except Exception as e:
-        logger.warning(f'Unexpected error getting table name: {e}')
-        return None
-
-
-def write_tool_event(event: dict[str, Any]) -> bool:
-    """
-    Write a tool call event to DynamoDB.
-
-    This is a fire-and-forget operation that logs warnings on failure
-    but NEVER raises exceptions. Tool execution must not be blocked
-    by monitoring failures.
-
-    Args:
-        event: Event data matching ToolEvent schema
-
-    Returns:
-        True if write succeeded, False otherwise
-    """
-    table_name = get_tool_events_table_name()
-    if not table_name:
-        logger.warning('Cannot write tool event: table not configured')
-        return False
-
-    try:
-        # Add TTL if not present
-        if 'ttl' not in event:
-            event['ttl'] = int(time.time()) + TTL_DURATION_SECONDS
-
-        # Get DynamoDB table
-        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
-        table = dynamodb.Table(table_name)
-
-        # Write event (fire-and-forget)
-        table.put_item(Item=event)
-
-        logger.debug(
-            f"Wrote tool event: {event.get('tool_name', 'unknown')} "
-            f"[{event.get('status', 'unknown')}]"
-        )
-        return True
-
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-        logger.warning(f'DynamoDB write failed ({error_code}): {e}')
-        return False
-    except Exception as e:
-        logger.warning(f'Unexpected error writing tool event: {e}')
-        return False
-
-
-def query_tool_events(session_id: str, limit: int = 100) -> list[dict[str, Any]]:
-    """
-    Query tool events for a session from DynamoDB.
-
-    Returns events sorted by timestamp in ascending order (oldest first).
-    Handles errors gracefully by returning an empty list.
-
-    Args:
-        session_id: The session ID to query
-        limit: Maximum number of events to return
-
-    Returns:
-        List of event dictionaries, or empty list on error
-    """
-    table_name = get_tool_events_table_name()
-    if not table_name:
-        return []
-
-    try:
-        from boto3.dynamodb.conditions import Key
-
-        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
-        table = dynamodb.Table(table_name)
-
-        # Query by session_id (partition key), sorted by timestamp (sort key)
-        response = table.query(
-            KeyConditionExpression=Key('session_id').eq(session_id),
-            Limit=limit,
-            ScanIndexForward=True,  # Ascending order by timestamp
-        )
-
-        items: list[dict[str, Any]] = response.get('Items', [])
-        return items
-
-    except Exception as e:
-        logger.warning(f'Error querying tool events: {e}')
-        return []
+success = write_tool_event({
+    'session_id': session_id,
+    'timestamp': '2024-01-15T10:30:00.123456+00:00',
+    'event_id': 'evt-123',
+    'agent': 'analyzer',
+    'tool_name': 'custom_operation',
+    'status': 'completed',
+    'duration_ms': 150
+})
+# success is True/False - errors are logged but never raised
 ```
 
 ## AgentCore Handler Pattern

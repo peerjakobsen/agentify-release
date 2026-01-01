@@ -6,15 +6,14 @@
  * 1. Checks for existing config (idempotency)
  * 2. Prompts for AWS profile selection
  * 3. Prompts for AWS region selection
- * 4. Checks for existing CDK folder
- * 5. Extracts bundled CDK and scripts resources
+ * 4. Detects existing file groups and shows selection modal
+ * 5. Extracts selected file groups (or all if fresh project)
  * 5b. Ensures .gitignore has entries for sensitive files
- * 5c. Creates pyproject.toml for agent dependencies
+ * 5c. Creates/updates pyproject.toml if selected
  * 6. Generates .agentify/config.json
  * 7. Creates .kiro/steering/agentify-integration.md
- * 8. Installs Agentify Power to .kiro/powers/agentify/
- * 9. Auto-opens cdk/README.md for deployment instructions
- * 10. Shows success notification with summary
+ * 8. Auto-opens cdk/README.md for deployment instructions
+ * 9. Shows success notification with summary
  */
 
 import * as vscode from 'vscode';
@@ -23,12 +22,21 @@ import * as fs from 'fs';
 import { getProfileDiscoveryService } from '../services/profileDiscoveryService';
 import { getConfigService } from '../services/configService';
 import {
-  extractBundledResources,
-  extractPowerResources,
-  checkExistingCdkFolder,
-  showOverwritePrompt,
+  extractGroups,
+  extractAllGroups,
   CDK_DEST_PATH,
+  GroupExtractionResult,
 } from '../services/resourceExtractionService';
+import {
+  detectExistingGroups,
+  hasExistingFiles,
+  getGroupsWithExistingFiles,
+  FILE_GROUPS,
+} from '../services/fileGroupDetectionService';
+import {
+  showInitializationModal,
+  showFreshInitializationConfirm,
+} from '../panels/InitializationModal';
 import { createSteeringFile } from '../templates/steeringFile';
 import { createPyprojectToml } from '../templates/pyprojectTemplate';
 import type { AgentifyConfig } from '../types';
@@ -71,11 +79,9 @@ type IdempotencyResult = 'continue' | 'reinitialize' | 'skip' | 'cancelled';
 export interface InitializationResult {
   success: boolean;
   region?: string;
-  cdkExtracted?: boolean;
-  scriptsExtracted?: boolean;
+  extractedGroups?: string[];
   pyprojectCreated?: boolean;
   steeringFileCreated?: boolean;
-  powerInstalled?: boolean;
 }
 
 /**
@@ -98,7 +104,7 @@ export async function checkExistingConfig(): Promise<IdempotencyResult> {
   const items = [
     {
       label: 'Reinitialize project',
-      description: 'Re-extract CDK files and update config (existing stack will remain)',
+      description: 'Choose which file groups to update (infrastructure, utilities, patterns)',
     },
     {
       label: 'Skip initialization',
@@ -327,30 +333,30 @@ async function openReadme(workspaceRoot: string): Promise<void> {
 
 /**
  * Show success notification with initialization summary
- * Includes region and offers to open the CDK README
  * @param region AWS region
- * @param cdkExtracted Whether CDK files were extracted
- * @param scriptsExtracted Whether script files were extracted
+ * @param extractedGroups IDs of groups that were extracted
  * @param workspaceRoot Workspace root path for opening README
  */
 export async function showSuccessNotification(
   region: string,
-  cdkExtracted: boolean,
-  scriptsExtracted: boolean,
+  extractedGroups: string[],
   workspaceRoot: string | null
 ): Promise<void> {
   // Build summary message based on extraction results
+  const hasInfrastructure = extractedGroups.includes('infrastructure');
+  const groupCount = extractedGroups.length;
+
   let summaryMessage: string;
-  if (cdkExtracted && scriptsExtracted) {
-    summaryMessage = `Agentify: Infrastructure files extracted successfully! Region: '${region}'. Run ./scripts/setup.sh to deploy.`;
-  } else if (cdkExtracted || scriptsExtracted) {
-    summaryMessage = `Agentify: Partial extraction complete. Region: '${region}'. Check cdk/ and scripts/ folders.`;
+  if (groupCount === 0) {
+    summaryMessage = `Agentify: Project initialized. Region: '${region}'. No file groups updated.`;
+  } else if (hasInfrastructure) {
+    summaryMessage = `Agentify: ${groupCount} file group(s) updated! Region: '${region}'. Run ./scripts/setup.sh to deploy.`;
   } else {
-    summaryMessage = `Agentify: Project initialized. Region: '${region}'. Existing CDK files preserved.`;
+    summaryMessage = `Agentify: ${groupCount} file group(s) updated. Region: '${region}'.`;
   }
 
-  // Always offer to open CDK README
-  const actions: string[] = ['Open CDK README'];
+  // Offer to open CDK README if infrastructure was extracted
+  const actions: string[] = hasInfrastructure ? ['Open CDK README'] : [];
 
   // Show message with action
   const selection = await vscode.window.showInformationMessage(
@@ -406,35 +412,64 @@ export async function handleInitializeProject(
     return { success: false };
   }
 
-  // Step 4: Check for existing CDK folder and prompt if exists
-  const cdkFolderExists = await checkExistingCdkFolder(workspaceRoot);
-  let shouldOverwrite = true;
+  // Step 4: Detect existing file groups and show selection modal
+  const detectedGroups = await detectExistingGroups(workspaceRoot);
+  const existingGroupsFound = hasExistingFiles(detectedGroups);
 
-  if (cdkFolderExists) {
-    const overwriteChoice = await showOverwritePrompt();
-    if (overwriteChoice === null) {
+  let groupsToExtract: string[] = [];
+
+  if (existingGroupsFound) {
+    // Show modal with existing groups for user selection
+    const existingGroups = getGroupsWithExistingFiles(detectedGroups);
+    const modalResult = await showInitializationModal(existingGroups);
+
+    if (modalResult === null) {
       // User cancelled
       return { success: false };
     }
-    shouldOverwrite = overwriteChoice === 'overwrite';
+
+    // User selected which groups to update
+    // Also extract groups that don't exist yet (fresh install for those)
+    const nonExistingGroupIds = detectedGroups
+      .filter(g => !g.exists)
+      .map(g => g.id);
+
+    groupsToExtract = [...modalResult.selectedGroupIds, ...nonExistingGroupIds];
+    console.log(`[Agentify] Groups to extract: ${groupsToExtract.join(', ')}`);
+  } else {
+    // Fresh project - confirm and extract all
+    const confirmed = await showFreshInitializationConfirm();
+    if (!confirmed) {
+      return { success: false };
+    }
+    groupsToExtract = FILE_GROUPS.map(g => g.id);
+    console.log('[Agentify] Fresh project - extracting all groups');
   }
 
-  // Step 5: Extract bundled CDK and scripts resources
-  let extractionResult;
+  // Step 5: Extract selected file groups
+  let extractionResults: GroupExtractionResult[] = [];
+  const extractedGroups: string[] = [];
+
   try {
-    extractionResult = await extractBundledResources(
-      context.extensionPath,
-      workspaceRoot,
-      shouldOverwrite
-    );
+    if (groupsToExtract.length > 0) {
+      extractionResults = await extractGroups(
+        context.extensionPath,
+        workspaceRoot,
+        groupsToExtract
+      );
+
+      // Track successfully extracted groups
+      for (const result of extractionResults) {
+        if (result.success) {
+          extractedGroups.push(result.groupId);
+        } else {
+          console.warn(`[Agentify] Failed to extract ${result.groupId}: ${result.message}`);
+        }
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     vscode.window.showErrorMessage(`Extraction error: ${message}`);
-    return { success: false };
-  }
-
-  if (!extractionResult.success) {
-    vscode.window.showErrorMessage(`Failed to extract infrastructure files: ${extractionResult.message}`);
     return { success: false };
   }
 
@@ -446,19 +481,21 @@ export async function handleInitializeProject(
     console.warn('[Agentify] Failed to update .gitignore:', error);
   }
 
-  // Step 5c: Create pyproject.toml for agent dependencies (if not exists)
+  // Step 5c: Handle pyproject.toml based on whether dependencies group was selected
   let pyprojectCreated = false;
   const pyprojectPath = path.join(workspaceRoot, 'pyproject.toml');
+  const dependenciesSelected = groupsToExtract.includes('dependencies');
+
   try {
-    if (!fs.existsSync(pyprojectPath)) {
-      // Get project name from workspace folder name
+    if (dependenciesSelected || !fs.existsSync(pyprojectPath)) {
+      // Create/overwrite if selected, or create if doesn't exist
       const projectName = path.basename(workspaceRoot);
       const pyprojectContent = createPyprojectToml(projectName);
       fs.writeFileSync(pyprojectPath, pyprojectContent, 'utf8');
       pyprojectCreated = true;
-      console.log('[Agentify] Created pyproject.toml for agent dependencies');
+      console.log('[Agentify] Created/updated pyproject.toml for agent dependencies');
     } else {
-      console.log('[Agentify] pyproject.toml already exists, skipping creation');
+      console.log('[Agentify] pyproject.toml exists and not selected for update');
     }
   } catch (error) {
     // Non-blocking - log but continue
@@ -485,32 +522,15 @@ export async function handleInitializeProject(
     console.warn('[Agentify] Steering file creation error:', message);
   }
 
-  // Step 8: Install Agentify Power (non-blocking - errors don't fail initialization)
-  let powerInstalled = false;
-  try {
-    const powerResult = await extractPowerResources(context.extensionPath, workspaceRoot);
-    if (powerResult.success) {
-      powerInstalled = true;
-      console.log('[Agentify] Power installed:', powerResult.message);
-    } else {
-      console.warn('[Agentify] Power installation failed:', powerResult.message);
-    }
-  } catch (error) {
-    // Log error but don't fail initialization
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.warn('[Agentify] Power installation error:', message);
-  }
-
-  // Step 9: Auto-open README.md if CDK was extracted
-  if (extractionResult.cdkExtracted) {
+  // Step 8: Auto-open README.md if infrastructure was extracted
+  if (extractedGroups.includes('infrastructure')) {
     await openReadme(workspaceRoot);
   }
 
-  // Step 10: Show success notification with summary
+  // Step 9: Show success notification with summary
   await showSuccessNotification(
     region,
-    extractionResult.cdkExtracted,
-    extractionResult.scriptsExtracted,
+    extractedGroups,
     workspaceRoot
   );
 
@@ -518,10 +538,8 @@ export async function handleInitializeProject(
   return {
     success: true,
     region,
-    cdkExtracted: extractionResult.cdkExtracted,
-    scriptsExtracted: extractionResult.scriptsExtracted,
+    extractedGroups,
     pyprojectCreated,
     steeringFileCreated,
-    powerInstalled,
   };
 }

@@ -15,6 +15,7 @@ import * as fs from 'fs';
  */
 export const CDK_SOURCE_PATH = 'resources/cdk';
 export const SCRIPTS_SOURCE_PATH = 'resources/scripts';
+export const AGENTS_SHARED_SOURCE_PATH = 'resources/agents/shared';
 export const POWER_SOURCE_PATH = 'resources/agentify-power';
 export const HOOKS_SOURCE_PATH = 'resources/agentify-hooks';
 
@@ -25,6 +26,7 @@ export const HOOKS_SOURCE_PATH = 'resources/agentify-hooks';
 export const CDK_DEST_PATH = 'cdk';
 export const SCRIPTS_DEST_PATH = 'scripts';
 export const GATEWAY_DEST_PATH = 'cdk/gateway';
+export const AGENTS_SHARED_DEST_PATH = 'agents/shared';
 export const POWER_DEST_PATH = '.kiro/powers/agentify';
 export const POWERS_DIR_PATH = '.kiro/powers';
 export const HOOKS_DEST_PATH = '.kiro/hooks';
@@ -487,4 +489,244 @@ export async function extractPowerResources(
     hooksPath,
     message,
   };
+}
+
+/**
+ * Result of group-based extraction
+ */
+export interface GroupExtractionResult {
+  success: boolean;
+  groupId: string;
+  message: string;
+}
+
+/**
+ * Extract a specific file group to the workspace
+ *
+ * @param extensionPath Absolute path to extension root
+ * @param workspaceRoot Absolute path to workspace root
+ * @param groupId ID of the group to extract ('infrastructure', 'agent-utilities', 'kiro-patterns', 'dependencies')
+ * @returns Extraction result
+ */
+export async function extractGroup(
+  extensionPath: string,
+  workspaceRoot: string,
+  groupId: string
+): Promise<GroupExtractionResult> {
+  console.log(`[ResourceExtraction] Extracting group: ${groupId}`);
+
+  try {
+    switch (groupId) {
+      case 'infrastructure': {
+        // Preserve Kiro-generated gateway content (handlers + schemas) before deleting CDK
+        const gatewayHandlersPath = path.join(workspaceRoot, 'cdk/gateway/handlers');
+        const gatewaySchemasPath = path.join(workspaceRoot, 'cdk/gateway/schemas');
+        const tempHandlersPath = path.join(workspaceRoot, '.agentify-temp-handlers');
+        const tempSchemasPath = path.join(workspaceRoot, '.agentify-temp-schemas');
+        let hadHandlers = false;
+        let hadSchemas = false;
+
+        // Back up handlers
+        try {
+          const handlersUri = vscode.Uri.file(gatewayHandlersPath);
+          await vscode.workspace.fs.stat(handlersUri);
+          hadHandlers = true;
+          await copyDirectoryRecursive(handlersUri, vscode.Uri.file(tempHandlersPath));
+          console.log('[ResourceExtraction] Backed up gateway handlers');
+        } catch {
+          // No handlers to preserve
+        }
+
+        // Back up schemas
+        try {
+          const schemasUri = vscode.Uri.file(gatewaySchemasPath);
+          await vscode.workspace.fs.stat(schemasUri);
+          hadSchemas = true;
+          await copyDirectoryRecursive(schemasUri, vscode.Uri.file(tempSchemasPath));
+          console.log('[ResourceExtraction] Backed up gateway schemas');
+        } catch {
+          // No schemas to preserve
+        }
+
+        // Delete existing folders
+        const cdkExists = await checkFolderExists(workspaceRoot, CDK_DEST_PATH);
+        if (cdkExists) {
+          await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, CDK_DEST_PATH)));
+        }
+        const scriptsExists = await checkFolderExists(workspaceRoot, SCRIPTS_DEST_PATH);
+        if (scriptsExists) {
+          await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, SCRIPTS_DEST_PATH)));
+        }
+
+        // Extract CDK
+        const cdkPath = await extractResourceDirectory(
+          extensionPath,
+          workspaceRoot,
+          CDK_SOURCE_PATH,
+          CDK_DEST_PATH
+        );
+
+        // Restore Kiro-generated gateway handlers
+        if (hadHandlers && cdkPath) {
+          try {
+            const restoredHandlersPath = path.join(cdkPath, 'gateway/handlers');
+            await copyDirectoryRecursive(
+              vscode.Uri.file(tempHandlersPath),
+              vscode.Uri.file(restoredHandlersPath)
+            );
+            await deleteDirectory(vscode.Uri.file(tempHandlersPath));
+            console.log('[ResourceExtraction] Restored gateway handlers');
+          } catch (error) {
+            console.warn('[ResourceExtraction] Failed to restore handlers:', error);
+          }
+        }
+
+        // Restore Kiro-generated gateway schemas
+        if (hadSchemas && cdkPath) {
+          try {
+            const restoredSchemasPath = path.join(cdkPath, 'gateway/schemas');
+            await copyDirectoryRecursive(
+              vscode.Uri.file(tempSchemasPath),
+              vscode.Uri.file(restoredSchemasPath)
+            );
+            await deleteDirectory(vscode.Uri.file(tempSchemasPath));
+            console.log('[ResourceExtraction] Restored gateway schemas');
+          } catch (error) {
+            console.warn('[ResourceExtraction] Failed to restore schemas:', error);
+          }
+        }
+
+        // Extract scripts
+        const scriptsPath = await extractResourceDirectory(
+          extensionPath,
+          workspaceRoot,
+          SCRIPTS_SOURCE_PATH,
+          SCRIPTS_DEST_PATH
+        );
+
+        // Make shell scripts executable
+        if (scriptsPath) {
+          await makeScriptsExecutable(scriptsPath);
+        }
+
+        // Make gateway Python scripts executable
+        if (cdkPath) {
+          await makePythonScriptsExecutable(path.join(cdkPath, 'gateway'));
+        }
+
+        return {
+          success: cdkPath !== null && scriptsPath !== null,
+          groupId,
+          message: cdkPath && scriptsPath ? 'Infrastructure extracted' : 'Failed to extract infrastructure',
+        };
+      }
+
+      case 'agent-utilities': {
+        // Create agents/ directory if needed
+        const agentsDirPath = path.join(workspaceRoot, 'agents');
+        try {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.file(agentsDirPath));
+        } catch {
+          // Directory might already exist
+        }
+
+        // Delete existing agents/shared if exists
+        const sharedExists = await checkFolderExists(workspaceRoot, AGENTS_SHARED_DEST_PATH);
+        if (sharedExists) {
+          await deleteDirectory(vscode.Uri.file(path.join(workspaceRoot, AGENTS_SHARED_DEST_PATH)));
+        }
+
+        // Extract agents/shared
+        const sharedPath = await extractResourceDirectory(
+          extensionPath,
+          workspaceRoot,
+          AGENTS_SHARED_SOURCE_PATH,
+          AGENTS_SHARED_DEST_PATH
+        );
+
+        return {
+          success: sharedPath !== null,
+          groupId,
+          message: sharedPath ? 'Agent utilities extracted' : 'Failed to extract agent utilities',
+        };
+      }
+
+      case 'kiro-patterns': {
+        // Use existing power extraction function
+        const result = await extractPowerResources(extensionPath, workspaceRoot);
+        return {
+          success: result.success,
+          groupId,
+          message: result.message,
+        };
+      }
+
+      case 'dependencies': {
+        // This is handled separately in initializeProject.ts via pyprojectTemplate
+        // Just return success - the caller will handle pyproject.toml
+        return {
+          success: true,
+          groupId,
+          message: 'Dependencies group marked for update',
+        };
+      }
+
+      default:
+        return {
+          success: false,
+          groupId,
+          message: `Unknown group: ${groupId}`,
+        };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[ResourceExtraction] Failed to extract group ${groupId}: ${message}`);
+    return {
+      success: false,
+      groupId,
+      message: `Failed to extract ${groupId}: ${message}`,
+    };
+  }
+}
+
+/**
+ * Extract multiple file groups
+ *
+ * @param extensionPath Absolute path to extension root
+ * @param workspaceRoot Absolute path to workspace root
+ * @param groupIds Array of group IDs to extract
+ * @returns Array of extraction results
+ */
+export async function extractGroups(
+  extensionPath: string,
+  workspaceRoot: string,
+  groupIds: string[]
+): Promise<GroupExtractionResult[]> {
+  const results: GroupExtractionResult[] = [];
+
+  for (const groupId of groupIds) {
+    const result = await extractGroup(extensionPath, workspaceRoot, groupId);
+    results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * Extract all file groups (for fresh initialization)
+ *
+ * @param extensionPath Absolute path to extension root
+ * @param workspaceRoot Absolute path to workspace root
+ * @returns Array of extraction results
+ */
+export async function extractAllGroups(
+  extensionPath: string,
+  workspaceRoot: string
+): Promise<GroupExtractionResult[]> {
+  return extractGroups(extensionPath, workspaceRoot, [
+    'infrastructure',
+    'agent-utilities',
+    'kiro-patterns',
+    'dependencies',
+  ]);
 }

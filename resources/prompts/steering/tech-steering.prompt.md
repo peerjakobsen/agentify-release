@@ -110,20 +110,25 @@ For each agent, deploy using the AgentCore runtime:
 
 AgentCore supports two distinct patterns for tool deployment. Choose based on whether tools are agent-specific or shared across agents.
 
-### Prerequisite: Shared Utilities
+### Pre-Bundled Shared Utilities (DO NOT RECREATE)
 
-All agents depend on the `agents/shared/` module for observability:
+**CRITICAL:** The `agents/shared/` module is **pre-bundled** by the Agentify extension during project initialization. These files already exist — import from them, do not recreate them:
 
 ```
-agents/shared/
-├── __init__.py
-├── instrumentation.py     # @instrument_tool decorator, context management
-├── dynamodb_client.py     # Fire-and-forget event persistence
-└── utils/
-    └── __init__.py
+agents/shared/                     # PRE-BUNDLED — DO NOT MODIFY
+├── __init__.py                    # Module exports
+├── instrumentation.py             # @instrument_tool decorator, context management
+├── dynamodb_client.py             # Fire-and-forget event persistence
+└── gateway_auth.py                # GatewayTokenManager for OAuth
 ```
 
-The `@instrument_tool` decorator emits tool events to DynamoDB for Demo Viewer visualization. This module MUST be created before any agents.
+Import pattern:
+```python
+from agents.shared.instrumentation import instrument_tool, set_instrumentation_context
+from agents.shared.gateway_auth import GatewayTokenManager
+```
+
+The `@instrument_tool` decorator emits tool events to DynamoDB for Demo Viewer visualization. All agents should IMPORT from this module.
 
 ### Pattern 1: Local Tools (Agent-Specific)
 
@@ -235,72 +240,27 @@ def lambda_handler(event, context):
 
 Agents connect to Gateway tools via MCP client with OAuth authentication. The Gateway uses Cognito OAuth2 with client credentials grant for authentication.
 
-#### Gateway Token Manager
+#### Gateway Token Manager (Pre-Bundled)
 
-Create `agents/shared/gateway_auth.py` for OAuth token management:
+The `GatewayTokenManager` class is **pre-bundled** in `agents/shared/gateway_auth.py`. Import it — do not recreate:
 
 ```python
-"""OAuth token manager for MCP Gateway authentication."""
+from agents.shared.gateway_auth import GatewayTokenManager
 
-import logging
-import os
-from datetime import datetime, timedelta
+# Initialize with environment variables (automatically reads GATEWAY_* vars)
+token_manager = GatewayTokenManager()
 
-import httpx
-
-logger = logging.getLogger(__name__)
-
-
-class GatewayTokenManager:
-    """Manages OAuth tokens for MCP Gateway authentication."""
-
-    def __init__(
-        self,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-        token_endpoint: str | None = None,
-        scope: str | None = None,
-    ):
-        self.client_id = client_id or os.environ.get('GATEWAY_CLIENT_ID')
-        self.client_secret = client_secret or os.environ.get('GATEWAY_CLIENT_SECRET')
-        self.token_endpoint = token_endpoint or os.environ.get('GATEWAY_TOKEN_ENDPOINT')
-        self.scope = scope or os.environ.get('GATEWAY_SCOPE')
-        self._token: str | None = None
-        self._expires_at: datetime | None = None
-
-    def is_configured(self) -> bool:
-        """Check if OAuth credentials are configured."""
-        return all([self.client_id, self.client_secret, self.token_endpoint, self.scope])
-
-    def get_token(self) -> str:
-        """Get a valid OAuth token, refreshing if necessary."""
-        if self._token and self._expires_at and self._expires_at > datetime.now():
-            return self._token
-
-        if not self.is_configured():
-            raise ValueError('Gateway OAuth credentials not configured')
-
-        logger.info('Fetching new OAuth token from %s', self.token_endpoint)
-        response = httpx.post(
-            self.token_endpoint,
-            data={
-                'grant_type': 'client_credentials',
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
-                'scope': self.scope,
-            },
-            headers={'Content-Type': 'application/x-www-form-urlencoded'},
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        self._token = data['access_token']
-        expires_in = data.get('expires_in', 3600) - 300  # Refresh 5 min early
-        self._expires_at = datetime.now() + timedelta(seconds=expires_in)
-
-        logger.info('OAuth token obtained, expires in %d seconds', expires_in)
-        return self._token
+# Check if OAuth is configured
+if token_manager.is_configured():
+    token = token_manager.get_token()  # Returns cached or refreshed token
 ```
+
+| Method | Purpose |
+|--------|---------|
+| `is_configured()` | Check if OAuth credentials are available |
+| `get_token()` | Get valid token (caches, auto-refreshes 5min before expiry) |
+
+Environment variables (set by `setup.sh`): `GATEWAY_CLIENT_ID`, `GATEWAY_CLIENT_SECRET`, `GATEWAY_TOKEN_ENDPOINT`, `GATEWAY_SCOPE`
 
 #### Authenticated Gateway Connection
 
