@@ -258,7 +258,7 @@ def main() -> None:
                 response = invoke_agent_remotely(current_agent, current_prompt, session_id)
                 agents_invoked.append(current_agent)
 
-                # Emit node_stop event (success)
+                # Emit node_stop event (success) with response content
                 emit_event({
                     "event_type": "node_stop",
                     "timestamp": get_timestamp(),
@@ -267,7 +267,8 @@ def main() -> None:
                     "trace_id": args.trace_id,
                     "node_id": current_agent,
                     "node_name": agent_name,
-                    "status": "completed"
+                    "status": "completed",
+                    "response": response.get('response', '')
                 })
 
                 response_preview = str(response.get('response', ''))[:100]

@@ -1237,7 +1237,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 
 ## Phase 3.5: Conversational Workflows
 
-35. [ ] Demo Viewer Chat UI — Replace single prompt textarea with chat-style conversation (reuse Ideation Wizard Step 2 patterns):
+35. [x] Demo Viewer Chat UI — Replace single prompt textarea with chat-style conversation (reuse Ideation Wizard Step 2 patterns):
 
 **UI Layout:**
 - Message bubbles (user right-aligned, agent left-aligned)
@@ -1255,46 +1255,83 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerPanel.ts` — Replace prompt section with chat UI
 - New CSS in webview for message bubbles `M`
 
-36. [ ] Workflow Session Continuation — Enable same workflow session across multiple main.py calls:
+35.1. [ ] Dual-Pane Conversation UI — Split Demo Viewer chat into side-by-side panes for clearer conversation flow:
 
-**Extension Changes:**
-- `WorkflowTriggerService` maintains session state: `{workflowId, sessionId, turns[], agentsInvoked[]}`
-- Reuse same `workflow_id` and `session_id` for follow-up prompts
-- Track which agents have been invoked per session
-- DynamoDB events linked by same workflow_id across turns
+**Left Pane: Human ↔ Entry Agent**
+- User messages (blue, right-aligned) labeled "Human"
+- Entry agent responses only (gray, left-aligned)
+- Entry agent identified from `get_entry_agent()` / first node_start
 
-**main.py Template Changes:**
-- New `--conversation-context` arg: JSON array of previous messages
-- Orchestrator builds combined prompt from conversation history
-- AgentCore sessions use same `runtimeSessionId` for memory continuity
+**Right Pane: Agent ↔ Agent Collaboration**
+- Agent handoff prompts (blue, right-aligned) labeled with sending agent name
+- Receiving agent responses (gray, left-aligned)
+- Shows internal collaboration invisible to end users
 
-**Session Lifecycle:**
-- Start: User sends first prompt → generate workflow_id/session_id
-- Continue: User sends follow-up → reuse same IDs, append to turns
-- Complete: workflow_complete event or user clicks "New Conversation"
+**Event Changes:**
+- Add `handoff_prompt` to `node_start` event (the prompt sent to agent)
+- Add `from_agent` to `node_start` event (null for entry agent)
+
+**Routing Logic:**
+- Entry agent responses → Left pane (user-facing)
+- All other agent responses → Right pane (internal)
+- Agent-to-agent prompts visible in right pane
 
 **Files:**
-- `src/services/workflowTriggerService.ts` — Session state management
-- `resources/agents/shared/orchestrator_utils.py` — Parse conversation context arg `L`
+- `src/types/chatPanel.ts`, `src/utils/chatStateUtils.ts`, `src/panels/demoViewerChatLogic.ts`
+- `src/panels/demoViewerChatStyles.ts`, `src/utils/chatPanelHtmlGenerator.ts`
+- `resources/agents/main_*.py` templates (add handoff_prompt, from_agent fields) `M`
 
 37. [ ] Partial Execution Detection — Detect and handle "needs more info" workflow pauses:
 
-**Detection Strategy:**
-- Primary: Check if workflow completes without terminal agent (e.g., only triage ran, not specialist)
-- Secondary: Parse agent response for question patterns (LLM-based heuristic)
-- Track `agentsInvoked[]` to show progress inline
+**Detection Strategy (simplified by 35.1):**
+- Entry agent identified from first `node_start` (per 35.1)
+- Partial execution = entry agent's `node_stop` received WITHOUT subsequent `workflow_complete`
+- This means: entry agent responded (asking for info) but workflow paused
 
 **Behavior:**
-- If partial execution detected: Display agent response in chat, enable follow-up input
-- If full execution: Show final result, keep chat open for new queries
+- Partial: Entry agent response in LEFT pane, input enabled, "Awaiting your response..." indicator
+- Complete: Final result shown, input enabled for new queries
 
-**Integration with Graph (future):**
-- Item 37 works with text-based status before items 25-26
-- After graph visualization: Integrate with node state display
+**UI Indicators:**
+- Partial: Subtle "..." or typing indicator in left pane after entry agent bubble
+- Complete: Green checkmark or "Complete" badge
+
+**Integration with Dual-Pane (35.1):**
+- Partial execution naturally shows in LEFT pane (entry agent asking for info)
+- RIGHT pane may show some internal processing before pause
+- Follow-up continues the same session (item 38)
 
 **Files:**
-- `src/services/workflowTriggerService.ts` — Partial execution detection
-- `src/panels/demoViewerPanel.ts` — Progress display `M`
+- `src/panels/demoViewerChatLogic.ts` — Partial execution detection in event handlers
+- `src/utils/chatStateUtils.ts` — Partial state tracking `S`
+
+38. [ ] Workflow Session Continuation — Enable multi-turn conversations within same workflow session:
+
+**Session State (builds on 35.1 dual-pane):**
+- `WorkflowTriggerService` maintains: `{workflowId, sessionId, conversationTurns[]}`
+- Each turn = `{userPrompt, entryAgentResponse, timestamp}`
+- Internal agent collaboration (right pane) NOT included in conversation context
+- DynamoDB events linked by same workflow_id across turns
+
+**main.py Template Changes:**
+- New `--conversation-context` arg: JSON array of human ↔ entry agent exchanges only
+- Orchestrator builds combined prompt from conversation history
+- Entry agent sees full conversation; internal agents see current context only
+
+**Session Lifecycle:**
+- Start: User sends first prompt → generate workflow_id/session_id
+- Continue: User sends follow-up → same IDs, append to conversationTurns
+- Complete: workflow_complete with no pending question OR user clicks "New Conversation"
+
+**Integration with Dual-Pane UI:**
+- Follow-up user messages appear in LEFT pane
+- New agent collaboration appears in RIGHT pane (fresh per turn)
+- Turn indicator shows: "Turn: 2" in session bar
+
+**Files:**
+- `src/services/workflowTriggerService.ts` — Session state management
+- `src/utils/chatStateUtils.ts` — Turn tracking utilities
+- `resources/agents/shared/orchestrator_utils.py` — Parse conversation context arg `L`
 
 ## Phase 4: Visual Polish
 

@@ -82,6 +82,12 @@ import {
 // Task 8.2: Import steering file creation function
 import { createSteeringFile } from '../templates/steeringFile';
 
+// Demo Viewer Chat UI imports (Task Group 4: Service Integration)
+import { DemoViewerChatLogic } from './demoViewerChatLogic';
+import { getDemoViewerChatStyles } from './demoViewerChatStyles';
+import { generateChatPanelHtml } from '../utils/chatPanelHtmlGenerator';
+import { generateChatPanelJs } from '../utils/chatPanelJsGenerator';
+
 /**
  * View ID for the Tabbed Panel
  */
@@ -137,6 +143,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   private _step7Handler?: Step7LogicHandler;
   // Task 6.7: Step 8 handler for generation
   private _step8Handler?: Step8LogicHandler;
+
+  // Demo Viewer Chat Logic Handler (Task Group 4)
+  private _chatHandler?: DemoViewerChatLogic;
 
   // Task 6.2: Persistence service and resume banner state
   private _persistenceService: WizardStatePersistenceService | null = null;
@@ -247,13 +256,36 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         getContext: () => this._context,
       }
     );
+
+    // Initialize Demo Viewer Chat Logic Handler (Task Group 4)
+    this._chatHandler = new DemoViewerChatLogic(
+      this._context,
+      {
+        updateWebviewContent: () => this.updateWebviewContent(),
+        syncStateToWebview: () => this.syncStateToWebview(),
+        postStreamingToken: (content: string) => this.postDemoStreamingToken(content),
+      }
+    );
   }
 
   /**
-   * Post streaming token to webview
+   * Post streaming token to webview (Ideation Wizard)
    */
   private postStreamingToken(content: string): void {
     if (this._view) {
+      this._view.webview.postMessage({
+        type: 'streamingToken',
+        content,
+      });
+    }
+  }
+
+  /**
+   * Post streaming token to webview (Demo Viewer Chat)
+   * Task Group 4: Separate method for demo chat streaming
+   */
+  private postDemoStreamingToken(content: string): void {
+    if (this._view && this._activeTab === 'demo') {
       this._view.webview.postMessage({
         type: 'streamingToken',
         content,
@@ -1264,6 +1296,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Handle Demo Viewer messages
+   * Task Group 4: Updated to handle chat UI messages
    */
   private handleDemoMessage(message: { command: string; [key: string]: unknown }): void {
     const { command } = message;
@@ -1272,6 +1305,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       case 'initializeProject':
         vscode.commands.executeCommand('agentify.initializeProject');
         break;
+
+      // Legacy workflow commands (kept for backward compatibility)
       case 'runWorkflow':
         this._demoState.promptText = message.prompt as string;
         vscode.commands.executeCommand('agentify.runWorkflow', { prompt: this._demoState.promptText });
@@ -1279,6 +1314,20 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       case 'updatePrompt':
         this._demoState.promptText = message.value as string;
         this.syncStateToWebview();
+        break;
+
+      // =========================================================================
+      // Demo Viewer Chat UI Commands (Task Group 4)
+      // =========================================================================
+
+      case 'sendMessage':
+        // Button-only submission handler (no Enter key for demo safety)
+        this._chatHandler?.handleSendMessage(message.content as string);
+        break;
+
+      case 'newConversation':
+        // Reset chat state for new conversation
+        this._chatHandler?.handleNewConversation();
         break;
     }
   }
@@ -1745,6 +1794,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    */
   private updateWebviewContent(): void {
     if (this._view) {
+      // Debug: Log chat state when updating demo viewer
+      if (this._activeTab === 'demo' && this._chatHandler) {
+        const chatState = this._chatHandler.getChatPanelState();
+        console.log('[TabbedPanel] updateWebviewContent - chat state:', {
+          pipelineStages: chatState.session.pipelineStages.length,
+          messages: chatState.session.messages.length,
+          isWorkflowRunning: chatState.ui.isWorkflowRunning,
+          errorMessage: chatState.ui.errorMessage,
+        });
+      }
       this._view.webview.html = this.getHtmlContent();
     }
   }
@@ -1765,6 +1824,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       },
       demo: {
         state: this._demoState,
+        // Task Group 4: Include chat state when in demo tab
+        chat: this._chatHandler?.getChatPanelState(),
       },
     });
   }
@@ -1911,9 +1972,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Get Demo styles
+   * Task Group 4: Include chat UI styles when project is initialized
    */
   private getDemoStyles(): string {
-    return `
+    const baseStyles = `
       .demo-container {
         display: flex;
         flex-direction: column;
@@ -2006,17 +2068,25 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         background: var(--vscode-button-hoverBackground);
       }
     `;
+
+    // Include chat UI styles when project is initialized
+    if (this._demoState.isProjectInitialized) {
+      return baseStyles + getDemoViewerChatStyles();
+    }
+
+    return baseStyles;
   }
 
 
   /**
    * Get Demo content HTML
+   * Task Group 4: Use chat UI when project is initialized
    */
   private getDemoContentHtml(): string {
     if (!this._demoState.isProjectInitialized) {
       return `
         <div class="get-started-container">
-          <div class="get-started-icon">🚀</div>
+          <div class="get-started-icon">&#128640;</div>
           <div class="get-started-title">Welcome to Agentify</div>
           <div class="get-started-desc">Initialize your project to start observing AI agent workflows.</div>
           <button class="get-started-btn" onclick="initializeProject()">Get Started</button>
@@ -2024,6 +2094,12 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       `;
     }
 
+    // Task Group 4: Use chat panel HTML when project is initialized
+    if (this._chatHandler) {
+      return generateChatPanelHtml(this._chatHandler.getChatPanelState());
+    }
+
+    // Fallback to legacy UI if chat handler not available
     return `
       <div class="demo-container">
         <div class="prompt-section">
@@ -2034,7 +2110,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           >${escapeHtml(this._demoState.promptText)}</textarea>
         </div>
         <button class="run-btn" onclick="runWorkflow()">
-          ▶ Run Workflow
+          &#9654; Run Workflow
         </button>
         <div class="placeholder-panel">
           AGENT GRAPH (COMING SOON)
@@ -2049,9 +2125,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Get Demo script
+   * Task Group 4: Include chat panel JS when project is initialized
    */
   private getDemoScript(): string {
-    return `
+    const baseScript = `
       function initializeProject() {
         vscode.postMessage({ command: 'initializeProject' });
       }
@@ -2063,9 +2140,27 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         vscode.postMessage({ command: 'updatePrompt', value });
       }
       function handleStateSync(message) {
-        // State sync handled by full re-render
+        // Update elapsed time from chat state
+        if (message.demo && message.demo.chat && message.demo.chat.ui) {
+          const elapsedMs = message.demo.chat.ui.elapsedTimeMs;
+          const elapsedElement = document.getElementById('elapsed-time');
+          if (elapsedElement && elapsedMs !== null && elapsedMs !== undefined) {
+            const totalSeconds = elapsedMs / 1000;
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = Math.floor(totalSeconds % 60);
+            const formatted = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+            elapsedElement.textContent = formatted;
+          }
+        }
       }
     `;
+
+    // Include chat panel JS when project is initialized
+    if (this._demoState.isProjectInitialized) {
+      return baseScript + generateChatPanelJs();
+    }
+
+    return baseScript;
   }
 
 
@@ -2116,6 +2211,8 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
     this._step7Handler?.dispose();
     // Task 6.7: Dispose Step 8 handler
     this._step8Handler?.dispose();
+    // Task Group 4: Dispose chat handler
+    this._chatHandler?.dispose();
     this._persistenceService?.dispose(); // Task 6.2: Clean up persistence service
   }
 }

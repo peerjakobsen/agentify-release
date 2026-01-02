@@ -178,6 +178,18 @@ export class WorkflowTriggerService implements vscode.Disposable {
       ...process.env,
     };
 
+    // Add AWS profile from config
+    const awsProfile = config?.aws?.profile;
+    if (awsProfile) {
+      env.AWS_PROFILE = awsProfile;
+    }
+
+    // Add AWS region from config
+    const awsRegion = config?.aws?.region;
+    if (awsRegion) {
+      env.AWS_REGION = awsRegion;
+    }
+
     // Add DynamoDB configuration to environment
     const tableName = config?.infrastructure?.dynamodb?.tableName;
     const region = config?.infrastructure?.dynamodb?.region;
