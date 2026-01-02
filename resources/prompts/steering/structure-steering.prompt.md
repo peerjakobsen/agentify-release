@@ -169,7 +169,21 @@ project-root/
 
 ## Package Management
 
-This project uses **uv** for Python package management with `pyproject.toml`:
+**CRITICAL: NEVER use pip.** This project uses **uv** exclusively for Python package management.
+
+### Prohibited Commands (NEVER USE)
+
+| DO NOT USE | USE INSTEAD |
+|------------|-------------|
+| `pip install X` | `uv add X` |
+| `pip install -r requirements.txt` | `uv sync` |
+| `pip freeze` | `uv lock` |
+| `python script.py` | `uv run python script.py` |
+| `requirements.txt` | `pyproject.toml` |
+
+### pyproject.toml Configuration
+
+This project uses `pyproject.toml` for dependency management:
 
 ### Root pyproject.toml
 

@@ -292,7 +292,17 @@ Register Lambda targets with AgentCore Gateway:
 
 ## Package Management with uv
 
-This project uses **uv** for Python package management. uv provides fast dependency resolution, lock file support, and is compatible with the pyproject.toml standard.
+**CRITICAL: NEVER use pip.** This project uses **uv** exclusively for Python package management.
+
+### Prohibited Commands (NEVER USE)
+
+| DO NOT USE | USE INSTEAD | Why |
+|------------|-------------|-----|
+| `pip install X` | `uv add X` | uv manages pyproject.toml |
+| `pip install -r requirements.txt` | `uv sync` | uv uses uv.lock |
+| `pip freeze` | `uv lock` | Automatic with uv |
+| `python script.py` | `uv run python script.py` | Ensures correct venv |
+| `requirements.txt` | `pyproject.toml` | Modern standard |
 
 ### Why uv over pip
 
