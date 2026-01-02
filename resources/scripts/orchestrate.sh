@@ -211,11 +211,13 @@ STDERR_FILE=$(mktemp)
 
 # Run main.py: stdout (JSON) to file, stderr (human) to both terminal and temp file
 # Use process substitution to capture stderr while also displaying it
+# Always turn-number 1 for fresh runs (multi-turn handled by Demo Viewer extension)
 set +e  # Don't exit on error - we want to capture exit code
 uv run python agents/main.py \
     --prompt "$PROMPT" \
     --workflow-id "$WORKFLOW_ID" \
     --trace-id "$TRACE_ID" \
+    --turn-number 1 \
     > "$JSON_OUTPUT" 2> >(tee "$STDERR_FILE" >&2)
 EXIT_CODE=$?
 set -e

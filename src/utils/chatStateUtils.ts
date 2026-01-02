@@ -16,6 +16,9 @@ import type {
   ChatPanelState,
   MessagePane,
   WorkflowStatus,
+  ConversationTurn,
+  ConversationTurnRole,
+  ConversationContext,
 } from '../types/chatPanel';
 import type { ToolCallEvent } from '../types/events';
 
@@ -61,6 +64,7 @@ export function createInitialChatState(): ChatSessionState {
     streamingContent: '',
     entryAgentName: null,
     activeMessagePane: null,
+    conversationTurns: [],
   };
 }
 
@@ -147,6 +151,85 @@ export function addUserMessage(state: ChatSessionState, content: string): ChatSe
     ...state,
     messages: [...state.messages, userMessage],
     turnCount: state.turnCount + 1,
+  };
+}
+
+/**
+ * Adds a conversation turn to the session state for CLI context building.
+ * Used to track human messages and entry agent responses for multi-turn conversations.
+ *
+ * @param state - Current chat session state
+ * @param role - Role of the turn ('human' or 'entry_agent')
+ * @param content - Content of the turn
+ * @returns Updated chat session state with the new conversation turn
+ */
+export function addConversationTurn(
+  state: ChatSessionState,
+  role: ConversationTurnRole,
+  content: string
+): ChatSessionState {
+  const turn: ConversationTurn = {
+    role,
+    content: content.trim(),
+  };
+
+  return {
+    ...state,
+    conversationTurns: [...state.conversationTurns, turn],
+  };
+}
+
+/**
+ * Builds the conversation context JSON for passing to Python CLI.
+ * Returns null if there are no conversation turns (turn 1 case).
+ *
+ * @param state - Current chat session state
+ * @returns ConversationContext object or null if no turns exist
+ *
+ * @example
+ * ```json
+ * {
+ *   "entry_agent": "triage_agent",
+ *   "turns": [
+ *     {"role": "human", "content": "I need help with my order"},
+ *     {"role": "entry_agent", "content": "I'd be happy to help. What's your order number?"}
+ *   ]
+ * }
+ * ```
+ */
+export function buildConversationContext(state: ChatSessionState): ConversationContext | null {
+  // Return null if no conversation turns (turn 1 case)
+  if (state.conversationTurns.length === 0) {
+    return null;
+  }
+
+  // Return null if entry agent is not yet identified
+  if (!state.entryAgentName) {
+    return null;
+  }
+
+  return {
+    entry_agent: state.entryAgentName,
+    turns: [...state.conversationTurns],
+  };
+}
+
+/**
+ * Clears messages from the collaboration pane (right pane) while preserving
+ * conversation pane messages (left pane).
+ * Used when starting a follow-up turn to clear internal agent collaboration.
+ *
+ * @param state - Current chat session state
+ * @returns Updated chat session state with collaboration pane messages removed
+ */
+export function clearCollaborationMessages(state: ChatSessionState): ChatSessionState {
+  return {
+    ...state,
+    messages: state.messages.filter((message) => message.pane !== 'collaboration'),
+    pipelineStages: [],
+    activeAgentName: null,
+    streamingContent: '',
+    activeMessagePane: null,
   };
 }
 
@@ -316,6 +399,7 @@ export function setWorkflowStartTime(state: ChatSessionState): ChatSessionState 
 /**
  * Resets the chat state for a new conversation
  * Generates new workflow_id and session_id
+ * Clears conversationTurns array for fresh multi-turn context
  *
  * @returns Fresh chat session state with new IDs
  */

@@ -9,7 +9,7 @@ This orchestrator coordinates remote agents using a Workflow pattern:
 - Maximizes throughput by executing independent tasks concurrently
 
 USAGE:
-    python agents/main.py --prompt "User request" --workflow-id "wf-123" --trace-id "32-char-hex"
+    python agents/main.py --prompt "User request" --workflow-id "wf-123" --trace-id "32-char-hex" --turn-number 1
 
 ARCHITECTURE:
     main.py (local orchestrator)
@@ -280,13 +280,19 @@ def main() -> None:
         env_config = setup_environment()
         session_id = generate_session_id()
 
+        # Extract turn_number for inclusion in all events
+        turn_number = args.turn_number
+
         print("Starting Workflow execution:", file=sys.stderr)
         print(f"  Workflow ID: {args.workflow_id}", file=sys.stderr)
         print(f"  Session ID: {session_id}", file=sys.stderr)
         print(f"  Trace ID: {args.trace_id}", file=sys.stderr)
+        print(f"  Turn Number: {turn_number}", file=sys.stderr)
         print(f"  Prompt: {args.prompt[:100]}{'...' if len(args.prompt) > 100 else ''}", file=sys.stderr)
         print(f"  Environment: table_name={env_config['table_name']}, region={env_config['aws_region']}", file=sys.stderr)
         print("  Pattern: Workflow (parallel DAG execution)", file=sys.stderr)
+        if args.conversation_context:
+            print(f"  Conversation Context: (provided)", file=sys.stderr)
         print("", file=sys.stderr)
 
         # Load and validate DAG
@@ -305,8 +311,37 @@ def main() -> None:
             "session_id": session_id,
             "workflow_id": args.workflow_id,
             "trace_id": args.trace_id,
+            "turn_number": turn_number,
             "graph": graph_structure
         })
+
+        # Build base prompt with conversation context for multi-turn sessions
+        if args.conversation_context:
+            import json
+            context = json.loads(args.conversation_context)
+            # Build conversation history string
+            history_lines = []
+            for turn in context.get('turns', []):
+                role = turn.get('role', 'unknown')
+                content = turn.get('content', '')
+                if role == 'human':
+                    history_lines.append(f"Human: {content}")
+                elif role == 'entry_agent':
+                    history_lines.append(f"Assistant: {content}")
+
+            if history_lines:
+                conversation_history = '\n'.join(history_lines)
+                base_prompt = f"""Previous conversation:
+{conversation_history}
+
+Current message from human: {args.prompt}
+
+Continue the conversation naturally, remembering the context from previous messages."""
+                print(f"Built prompt with {len(context.get('turns', []))} turns of context", file=sys.stderr)
+            else:
+                base_prompt = args.prompt
+        else:
+            base_prompt = args.prompt
 
         # Track execution state
         completed: Set[str] = set()
@@ -341,7 +376,7 @@ def main() -> None:
 
                     # Build prompt with dependency results
                     dep_results = {dep: results[dep] for dep in dag[task_id] if dep in results}
-                    task_prompt = build_task_prompt(task_id, args.prompt, dep_results)
+                    task_prompt = build_task_prompt(task_id, base_prompt, dep_results)
 
                     # Determine from_agent based on dependencies
                     from_agent = get_from_agent_for_task(task_id, dag)
@@ -353,6 +388,7 @@ def main() -> None:
                         "session_id": session_id,
                         "workflow_id": args.workflow_id,
                         "trace_id": args.trace_id,
+                        "turn_number": turn_number,
                         "node_id": task_id,
                         "node_name": agent_name,
                         "from_agent": from_agent,
@@ -384,6 +420,7 @@ def main() -> None:
                             "session_id": session_id,
                             "workflow_id": args.workflow_id,
                             "trace_id": args.trace_id,
+                            "turn_number": turn_number,
                             "node_id": task_id,
                             "node_name": agent_name,
                             "status": "completed",
@@ -401,6 +438,7 @@ def main() -> None:
                             "session_id": session_id,
                             "workflow_id": args.workflow_id,
                             "trace_id": args.trace_id,
+                            "turn_number": turn_number,
                             "node_id": task_id,
                             "node_name": agent_name,
                             "status": "error",
@@ -415,7 +453,8 @@ def main() -> None:
         # Check for failures
         if failed_task:
             error_msg = f"Task {failed_task} failed: {failed_error}"
-            emit_workflow_error(session_id, args.workflow_id, args.trace_id, error_msg)
+            emit_workflow_error(session_id, args.workflow_id, args.trace_id, error_msg,
+                               turn_number=turn_number)
             print_workflow_error_summary(session_id, args.workflow_id, args.trace_id,
                                        start_time, error_msg, agents_invoked)
             sys.exit(1)
@@ -438,6 +477,7 @@ def main() -> None:
             "session_id": session_id,
             "workflow_id": args.workflow_id,
             "trace_id": args.trace_id,
+            "turn_number": turn_number,
             "final_agent": agents_invoked[-1] if agents_invoked else None,
             "status": "success"
         })
@@ -451,7 +491,8 @@ def main() -> None:
         print("\nWorkflow interrupted by user", file=sys.stderr)
         if session_id and args:
             emit_workflow_error(session_id, args.workflow_id, args.trace_id,
-                              "Workflow interrupted by user", "interrupted")
+                              "Workflow interrupted by user", "interrupted",
+                              turn_number=args.turn_number if args else None)
             print_workflow_error_summary(session_id, args.workflow_id, args.trace_id,
                                        start_time, "Workflow interrupted by user", agents_invoked)
         sys.exit(130)
@@ -463,7 +504,8 @@ def main() -> None:
         error_msg = f"Fatal error: {e}"
         print(error_msg, file=sys.stderr)
         if session_id and args:
-            emit_workflow_error(session_id, args.workflow_id, args.trace_id, str(e))
+            emit_workflow_error(session_id, args.workflow_id, args.trace_id, str(e),
+                               turn_number=args.turn_number if args else None)
             print_workflow_error_summary(session_id, args.workflow_id, args.trace_id,
                                        start_time, str(e), agents_invoked)
         sys.exit(1)

@@ -35,7 +35,11 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python agents/main.py --prompt "Process this request" --workflow-id "wf-001" --trace-id "a1b2c3d4e5f6789012345678901234ab"
+  # First turn
+  python agents/main.py --prompt "Process this request" --workflow-id "wf-001" --trace-id "a1b2c3d4e5f6789012345678901234ab" --turn-number 1
+
+  # Follow-up turn with conversation context
+  python agents/main.py --prompt "Follow up" --workflow-id "wf-001" --trace-id "a1b2c3d4e5f6789012345678901234ab" --turn-number 2 --conversation-context '{"entry_agent":"triage","turns":[...]}'
         """
     )
 
@@ -55,6 +59,20 @@ Examples:
         '--trace-id',
         required=True,
         help='32-character hex OpenTelemetry trace ID'
+    )
+
+    parser.add_argument(
+        '--turn-number',
+        required=True,
+        type=int,
+        help='Turn number in the conversation (starts at 1)'
+    )
+
+    parser.add_argument(
+        '--conversation-context',
+        required=False,
+        default=None,
+        help='JSON string containing conversation history for multi-turn sessions'
     )
 
     return parser.parse_args()
@@ -78,6 +96,29 @@ def validate_arguments(args: argparse.Namespace) -> None:
     if not all(c in '0123456789abcdef' for c in trace_id):
         print("Error: --trace-id must contain only hexadecimal characters (0-9, a-f)", file=sys.stderr)
         sys.exit(1)
+
+    # Validate turn_number is a positive integer >= 1
+    if args.turn_number < 1:
+        print("Error: --turn-number must be a positive integer >= 1", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate conversation_context is valid JSON if provided
+    if args.conversation_context is not None:
+        try:
+            parsed_context = json.loads(args.conversation_context)
+            if not isinstance(parsed_context, dict):
+                print("Error: --conversation-context must be a JSON object", file=sys.stderr)
+                sys.exit(1)
+            # Validate structure has required fields
+            if 'entry_agent' not in parsed_context:
+                print("Error: --conversation-context must contain 'entry_agent' field", file=sys.stderr)
+                sys.exit(1)
+            if 'turns' not in parsed_context or not isinstance(parsed_context['turns'], list):
+                print("Error: --conversation-context must contain 'turns' array", file=sys.stderr)
+                sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error: --conversation-context is not valid JSON: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 # ============================================================================
@@ -298,9 +339,10 @@ def invoke_agent_remotely(agent_id: str, prompt: str, session_id: str) -> Dict[s
 
 
 def emit_workflow_error(session_id: str, workflow_id: str, trace_id: str,
-                        error_message: str, error_type: str = "failed") -> None:
+                        error_message: str, error_type: str = "failed",
+                        turn_number: Optional[int] = None) -> None:
     """Emit a workflow_error event."""
-    emit_event({
+    event = {
         "event_type": "workflow_error",
         "timestamp": get_timestamp(),
         "session_id": session_id,
@@ -308,7 +350,10 @@ def emit_workflow_error(session_id: str, workflow_id: str, trace_id: str,
         "trace_id": trace_id,
         "error": error_message,
         "status": error_type
-    })
+    }
+    if turn_number is not None:
+        event["turn_number"] = turn_number
+    emit_event(event)
 
 
 def print_workflow_summary(session_id: str, workflow_id: str, trace_id: str,

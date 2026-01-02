@@ -5,13 +5,26 @@
  * vscode.EventEmitter pattern for real-time streaming of raw subprocess I/O.
  * Replaces the callback-based WorkflowExecutor with an event-driven approach.
  *
+ * Supports multi-turn conversations by tracking session state (workflowId,
+ * traceId, turnNumber) across conversation turns.
+ *
  * Usage:
  *   const service = getWorkflowTriggerService();
  *   service.onStdoutLine((line) => handleLine(line));
  *   service.onStderr((data) => handleError(data));
  *   service.onProcessStateChange((state) => handleStateChange(state));
  *   service.onProcessExit((info) => handleExit(info));
+ *
+ *   // First turn
  *   const { workflowId, traceId } = await service.start(prompt);
+ *
+ *   // Follow-up turns
+ *   if (service.hasActiveSession()) {
+ *     await service.continue(followUpPrompt, conversationContext);
+ *   }
+ *
+ *   // New conversation
+ *   service.resetSession();
  */
 
 import * as vscode from 'vscode';
@@ -20,6 +33,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { getConfigService } from './configService';
 import { generateWorkflowId, generateTraceId } from '../utils/idGenerator';
+import type { ConversationContext } from '../types/chatPanel';
 
 // ============================================================================
 // Types
@@ -75,6 +89,19 @@ export class WorkflowTriggerService implements vscode.Disposable {
   private _killTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // -------------------------------------------------------------------------
+  // Session State Fields (for multi-turn conversations)
+  // -------------------------------------------------------------------------
+
+  /** Current workflow ID for the session (null if no active session) */
+  private _currentWorkflowId: string | null = null;
+
+  /** Current trace ID for the session (null if no active session) */
+  private _currentTraceId: string | null = null;
+
+  /** Current turn number in the conversation (0 if no active session) */
+  private _currentTurnNumber: number = 0;
+
+  // -------------------------------------------------------------------------
   // EventEmitters (VS Code pattern)
   // -------------------------------------------------------------------------
 
@@ -113,12 +140,46 @@ export class WorkflowTriggerService implements vscode.Disposable {
     return this._state;
   }
 
+  /**
+   * Returns whether there is an active session (workflow in progress or partial).
+   * Used to determine whether to call start() or continue().
+   *
+   * @returns true if there is an active session with a workflowId
+   */
+  public hasActiveSession(): boolean {
+    return this._currentWorkflowId !== null;
+  }
+
+  /**
+   * Returns the current turn number in the conversation.
+   *
+   * @returns Current turn number (0 if no active session)
+   */
+  public getCurrentTurnNumber(): number {
+    return this._currentTurnNumber;
+  }
+
+  // -------------------------------------------------------------------------
+  // Session Management Methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resets the session state for a new conversation.
+   * Clears workflowId, traceId, and turnNumber.
+   * Called when user starts a new conversation.
+   */
+  public resetSession(): void {
+    this._currentWorkflowId = null;
+    this._currentTraceId = null;
+    this._currentTurnNumber = 0;
+  }
+
   // -------------------------------------------------------------------------
   // Process Lifecycle Methods
   // -------------------------------------------------------------------------
 
   /**
-   * Start a workflow subprocess
+   * Start a workflow subprocess (first turn of a conversation)
    *
    * @param prompt - The user prompt to pass to the workflow
    * @returns Promise resolving to { workflowId, traceId }
@@ -130,10 +191,148 @@ export class WorkflowTriggerService implements vscode.Disposable {
       await this.kill();
     }
 
-    // Generate IDs
+    // Generate IDs for new session
     const workflowId = generateWorkflowId();
     const traceId = generateTraceId();
 
+    // Store session state
+    this._currentWorkflowId = workflowId;
+    this._currentTraceId = traceId;
+    this._currentTurnNumber = 1;
+
+    // Build CLI arguments with turn number
+    const args = await this._buildBaseArgs(prompt, workflowId, traceId);
+    args.push('--turn-number', '1');
+
+    // Spawn the subprocess
+    await this._spawnProcess(args);
+
+    return { workflowId, traceId };
+  }
+
+  /**
+   * Continue a workflow subprocess (follow-up turn in a conversation)
+   * Reuses the existing workflowId and traceId from the session.
+   *
+   * @param prompt - The follow-up user prompt
+   * @param conversationContext - The conversation history for context
+   * @returns Promise resolving to { workflowId, traceId } (existing IDs)
+   * @throws Error if no active session or validation fails
+   */
+  public async continue(
+    prompt: string,
+    conversationContext: ConversationContext
+  ): Promise<StartResult> {
+    // Validate active session
+    if (!this._currentWorkflowId || !this._currentTraceId) {
+      throw new Error('No active session to continue. Call start() first.');
+    }
+
+    // Synchronous kill if process is already running
+    if (this._activeProcess) {
+      await this.kill();
+    }
+
+    // Increment turn number
+    this._currentTurnNumber += 1;
+
+    // Build CLI arguments with turn number and conversation context
+    const args = await this._buildBaseArgs(
+      prompt,
+      this._currentWorkflowId,
+      this._currentTraceId
+    );
+    args.push('--turn-number', String(this._currentTurnNumber));
+    args.push('--conversation-context', JSON.stringify(conversationContext));
+
+    // Spawn the subprocess
+    await this._spawnProcess(args);
+
+    return {
+      workflowId: this._currentWorkflowId,
+      traceId: this._currentTraceId,
+    };
+  }
+
+  /**
+   * Kill the currently running subprocess
+   * Sends SIGTERM first, then SIGKILL after 1-second timeout if still running
+   *
+   * @returns Promise that resolves when process terminates
+   */
+  public async kill(): Promise<void> {
+    // Guard: return immediately if no active process
+    if (!this._activeProcess) {
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      // Store resolver for use in close handler
+      this._killResolver = resolve;
+
+      // Send SIGTERM
+      this._activeProcess?.kill('SIGTERM');
+
+      // Set timeout for SIGKILL
+      this._killTimeoutId = setTimeout(() => {
+        if (this._activeProcess) {
+          this._activeProcess.kill('SIGKILL');
+        }
+      }, 1000);
+    });
+  }
+
+  /**
+   * Dispose of all resources
+   * Implements vscode.Disposable
+   */
+  public dispose(): void {
+    // Kill any active process
+    if (this._activeProcess) {
+      this._activeProcess.kill('SIGKILL');
+      this._activeProcess = null;
+    }
+
+    // Clear timeout
+    if (this._killTimeoutId) {
+      clearTimeout(this._killTimeoutId);
+      this._killTimeoutId = null;
+    }
+
+    // Dispose all EventEmitters
+    this._onStdoutLine.dispose();
+    this._onStderr.dispose();
+    this._onProcessStateChange.dispose();
+    this._onProcessExit.dispose();
+
+    // Reset state
+    this._state = 'idle';
+    this._stdoutBuffer = '';
+    this._killResolver = null;
+
+    // Reset session state
+    this._currentWorkflowId = null;
+    this._currentTraceId = null;
+    this._currentTurnNumber = 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private Methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds the base CLI arguments array (without turn-specific args)
+   *
+   * @param prompt - User prompt
+   * @param workflowId - Workflow ID
+   * @param traceId - Trace ID
+   * @returns Promise resolving to args array
+   */
+  private async _buildBaseArgs(
+    prompt: string,
+    workflowId: string,
+    traceId: string
+  ): Promise<string[]> {
     // Get configuration
     const configService = getConfigService();
     const config = await configService?.getConfig();
@@ -159,11 +358,8 @@ export class WorkflowTriggerService implements vscode.Disposable {
       throw new Error(`Workflow entry script not found at: ${entryScriptPath}`);
     }
 
-    // Get pythonPath from config (default to 'python')
-    const pythonPath = config?.workflow?.pythonPath || 'python';
-
     // Build CLI arguments
-    const args = [
+    return [
       entryScriptPath,
       '--prompt',
       prompt,
@@ -172,6 +368,27 @@ export class WorkflowTriggerService implements vscode.Disposable {
       '--trace-id',
       traceId,
     ];
+  }
+
+  /**
+   * Spawns the subprocess with the given arguments
+   *
+   * @param args - CLI arguments array
+   */
+  private async _spawnProcess(args: string[]): Promise<void> {
+    // Get configuration
+    const configService = getConfigService();
+    const config = await configService?.getConfig();
+
+    // Get workspace root
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      throw new Error('No workspace folder open');
+    }
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+    // Get pythonPath from config (default to 'python')
+    const pythonPath = config?.workflow?.pythonPath || 'python';
 
     // Build environment variables
     const env: NodeJS.ProcessEnv = {
@@ -232,70 +449,7 @@ export class WorkflowTriggerService implements vscode.Disposable {
     this._activeProcess.on('error', (error: Error) => {
       this._handleProcessError(error);
     });
-
-    return { workflowId, traceId };
   }
-
-  /**
-   * Kill the currently running subprocess
-   * Sends SIGTERM first, then SIGKILL after 1-second timeout if still running
-   *
-   * @returns Promise that resolves when process terminates
-   */
-  public async kill(): Promise<void> {
-    // Guard: return immediately if no active process
-    if (!this._activeProcess) {
-      return;
-    }
-
-    return new Promise<void>((resolve) => {
-      // Store resolver for use in close handler
-      this._killResolver = resolve;
-
-      // Send SIGTERM
-      this._activeProcess?.kill('SIGTERM');
-
-      // Set timeout for SIGKILL
-      this._killTimeoutId = setTimeout(() => {
-        if (this._activeProcess) {
-          this._activeProcess.kill('SIGKILL');
-        }
-      }, 1000);
-    });
-  }
-
-  /**
-   * Dispose of all resources
-   * Implements vscode.Disposable
-   */
-  public dispose(): void {
-    // Kill any active process
-    if (this._activeProcess) {
-      this._activeProcess.kill('SIGKILL');
-      this._activeProcess = null;
-    }
-
-    // Clear timeout
-    if (this._killTimeoutId) {
-      clearTimeout(this._killTimeoutId);
-      this._killTimeoutId = null;
-    }
-
-    // Dispose all EventEmitters
-    this._onStdoutLine.dispose();
-    this._onStderr.dispose();
-    this._onProcessStateChange.dispose();
-    this._onProcessExit.dispose();
-
-    // Reset state
-    this._state = 'idle';
-    this._stdoutBuffer = '';
-    this._killResolver = null;
-  }
-
-  // -------------------------------------------------------------------------
-  // Private Methods
-  // -------------------------------------------------------------------------
 
   /**
    * Set the process state and fire state change event

@@ -35,6 +35,51 @@ export type WorkflowStatus = 'running' | 'partial' | 'complete' | 'error';
 export type MessagePane = 'conversation' | 'collaboration';
 
 /**
+ * Role within a conversation turn for CLI context passing
+ * - 'human': User message
+ * - 'entry_agent': Response from the entry agent
+ */
+export type ConversationTurnRole = 'human' | 'entry_agent';
+
+/**
+ * Represents a single turn in the conversation history.
+ * Used for building the conversation context JSON passed to the Python CLI.
+ * This is separate from ChatMessage which is used for UI display.
+ *
+ * Note: Only includes human messages and entry agent responses (left pane content).
+ * Internal agent collaboration (right pane) is NOT included.
+ */
+export interface ConversationTurn {
+  /** Role of the message author in the conversation */
+  role: ConversationTurnRole;
+  /** Content of the message */
+  content: string;
+}
+
+/**
+ * Conversation context structure passed to Python CLI via --conversation-context argument.
+ * Contains the entry agent name and the conversation history for multi-turn sessions.
+ *
+ * @example
+ * ```json
+ * {
+ *   "entry_agent": "triage_agent",
+ *   "turns": [
+ *     {"role": "human", "content": "I need help with my order"},
+ *     {"role": "entry_agent", "content": "I'd be happy to help. What's your order number?"},
+ *     {"role": "human", "content": "ORD-12345"}
+ *   ]
+ * }
+ * ```
+ */
+export interface ConversationContext {
+  /** Name/ID of the entry agent (first agent in the workflow) */
+  entry_agent: string;
+  /** Array of conversation turns in chronological order */
+  turns: ConversationTurn[];
+}
+
+/**
  * Individual chat message in the conversation
  */
 export interface ChatMessage {
@@ -100,7 +145,11 @@ export interface ChatSessionState {
   workflowId: string;
   /** Session identifier for tracking */
   sessionId: string;
-  /** Turn count (always 1 for this phase, multi-turn is Item 36) */
+  /**
+   * Turn count in the conversation.
+   * Incremented each time the user sends a message.
+   * Starts at 0 and becomes 1 after the first user message.
+   */
   turnCount: number;
   /** Timestamp when the workflow started */
   startTime: number;
@@ -126,6 +175,12 @@ export interface ChatSessionState {
    * - null: No message currently streaming
    */
   activeMessagePane: MessagePane | null;
+  /**
+   * Array of conversation turns for building CLI context.
+   * Contains only human messages and entry agent responses (left pane content).
+   * Used by buildConversationContext() to create the JSON for --conversation-context.
+   */
+  conversationTurns: ConversationTurn[];
 }
 
 /**

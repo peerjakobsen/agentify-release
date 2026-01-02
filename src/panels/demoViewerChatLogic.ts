@@ -4,6 +4,11 @@
  *
  * Follows patterns from ideationStep2Logic.ts for streaming token handling
  * and service integration.
+ *
+ * Supports multi-turn conversations by:
+ * - Tracking conversation turns in conversationTurns[]
+ * - Building conversation context for follow-up turns
+ * - Clearing collaboration pane on follow-ups while preserving conversation history
  */
 
 import * as vscode from 'vscode';
@@ -22,12 +27,16 @@ import {
   addHandoffMessage,
   matchToolEventsToMessages,
   setWorkflowStatus,
+  addConversationTurn,
+  buildConversationContext,
+  clearCollaborationMessages,
 } from '../utils/chatStateUtils';
 import type {
   ChatSessionState,
   ChatUiState,
   ChatPanelState,
   WorkflowStatus,
+  ConversationContext,
 } from '../types/chatPanel';
 import {
   getWorkflowTriggerService,
@@ -155,9 +164,13 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   // -------------------------------------------------------------------------
 
   /**
-   * Handles sending a user message and starting workflow
+   * Handles sending a user message and starting/continuing workflow
    * Button-only trigger (no Enter key handling for demo safety)
    * Resets workflowStatus to 'running' on follow-up messages
+   *
+   * Multi-turn behavior:
+   * - First message (no active session): Calls start()
+   * - Follow-up messages (active session): Calls continue() with conversation context
    *
    * @param content - User message content
    */
@@ -168,6 +181,9 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
     // Add user message to state
     this._sessionState = addUserMessage(this._sessionState, content);
+
+    // Add to conversation turns for CLI context
+    this._sessionState = addConversationTurn(this._sessionState, 'human', content);
 
     // Update UI state to show running
     // Reset workflowStatus to 'running' (handles partial -> running transition)
@@ -190,17 +206,53 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     this._callbacks.syncStateToWebview();
 
     try {
-      // Start workflow via WorkflowTriggerService
       const service = getWorkflowTriggerService();
-      const { workflowId, traceId } = await service.start(content);
 
-      // Update workflow ID in session state
-      this._sessionState = {
-        ...this._sessionState,
-        workflowId,
-      };
+      // Check if we have an active session (follow-up turn)
+      if (service.hasActiveSession()) {
+        // Follow-up turn: clear collaboration pane and continue
+        this._sessionState = clearCollaborationMessages(this._sessionState);
 
-      console.log(`[DemoViewerChatLogic] Workflow started: ${workflowId}, trace: ${traceId}`);
+        // Reset tool events for new turn
+        this._toolEvents = [];
+
+        // Reset stdout parser for new turn
+        if (this._stdoutParser) {
+          this._stdoutParser.reset();
+        }
+
+        // Build conversation context
+        const conversationContext = buildConversationContext(this._sessionState);
+
+        if (conversationContext) {
+          // Continue the workflow with conversation context
+          const { workflowId, traceId } = await service.continue(content, conversationContext);
+
+          console.log(`[DemoViewerChatLogic] Workflow continued: ${workflowId}, trace: ${traceId}, turn: ${service.getCurrentTurnNumber()}`);
+        } else {
+          // Edge case: no context available, start fresh
+          console.warn('[DemoViewerChatLogic] No conversation context available, starting new workflow');
+          const { workflowId, traceId } = await service.start(content);
+
+          this._sessionState = {
+            ...this._sessionState,
+            workflowId,
+          };
+
+          console.log(`[DemoViewerChatLogic] Workflow started (fallback): ${workflowId}, trace: ${traceId}`);
+        }
+      } else {
+        // First turn: start new workflow
+        const { workflowId, traceId } = await service.start(content);
+
+        // Update workflow ID in session state
+        this._sessionState = {
+          ...this._sessionState,
+          workflowId,
+        };
+
+        console.log(`[DemoViewerChatLogic] Workflow started: ${workflowId}, trace: ${traceId}`);
+      }
     } catch (error) {
       // Handle workflow start error
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -223,7 +275,11 @@ export class DemoViewerChatLogic implements vscode.Disposable {
       dynamoDbService.stopPolling();
     }
 
-    // Reset session state
+    // Reset workflow trigger service session
+    const workflowService = getWorkflowTriggerService();
+    workflowService.resetSession();
+
+    // Reset session state (includes clearing conversationTurns)
     this._sessionState = resetChatState();
 
     // Reset UI state (includes workflowStatus: 'running')
@@ -461,6 +517,9 @@ export class DemoViewerChatLogic implements vscode.Disposable {
    * - If the stopped agent is the entry agent AND workflow is still running,
    *   set workflowStatus to 'partial' (optimistic detection)
    * - This may be overridden by workflow_complete arriving immediately after
+   *
+   * Multi-turn Support:
+   * - If the stopped agent is the entry agent, capture the response in conversationTurns
    */
   private handleNodeStopEvent(event: NodeStopEvent): void {
     // Python emits node_name for display, node_id for identification
@@ -485,9 +544,17 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     const status = event.status === 'completed' ? 'completed' : 'pending';
     this._sessionState = updatePipelineStage(this._sessionState, agentName, status);
 
+    // Check if the stopped agent is the entry agent
+    const isEntryAgent = agentName === this._sessionState.entryAgentName;
+
+    // Multi-turn Support: Capture entry agent response in conversationTurns
+    if (isEntryAgent && response) {
+      this._sessionState = addConversationTurn(this._sessionState, 'entry_agent', response);
+      console.log(`[DemoViewerChatLogic] Captured entry agent response in conversationTurns`);
+    }
+
     // Partial Execution Detection:
     // Check if the stopped agent is the entry agent AND workflow is still running
-    const isEntryAgent = agentName === this._sessionState.entryAgentName;
     const isWorkflowRunning = this._uiState.isWorkflowRunning;
 
     if (isEntryAgent && isWorkflowRunning) {

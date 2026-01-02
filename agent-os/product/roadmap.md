@@ -1346,7 +1346,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerChatLogic.ts` — Partial execution detection in event handlers
 - `src/utils/chatStateUtils.ts` — Partial state tracking `S`
 
-38. [ ] Workflow Session Continuation — Enable multi-turn conversations within same workflow session:
+38. [x] Workflow Session Continuation — Enable multi-turn conversations within same workflow session:
 
 **Session State (builds on 35.1 dual-pane):**
 - `WorkflowTriggerService` maintains: `{workflowId, sessionId, conversationTurns[]}`
