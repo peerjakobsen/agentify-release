@@ -2639,16 +2639,11 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
             <span>ROADMAP.md generated successfully!</span>
           </div>
           <div class="roadmap-instructions">
-            <p><strong>How to implement with Kiro:</strong></p>
-            <ol>
-              <li>Open ROADMAP.md</li>
-              <li>Copy the prompt from Item 1</li>
-              <li>Paste into Kiro chat</li>
-              <li>Kiro creates spec.md → requirements → design → tasks → implementation</li>
-              <li>Verify the acceptance criteria</li>
-              <li>Repeat with Item 2, 3, ... in order</li>
-            </ol>
-            <p class="roadmap-note">Each item builds on previous ones. Complete them sequentially.</p>
+            <p><strong>Next Step — Ask Kiro:</strong></p>
+            <div class="kiro-prompt-hint">
+              <code>"Create specs for item 1 in ROADMAP.md"</code>
+            </div>
+            <p class="roadmap-note">Then follow Kiro's spec-driven development flow. Repeat for each item in order.</p>
           </div>
           <div class="roadmap-actions">
             <button

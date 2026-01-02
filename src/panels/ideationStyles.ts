@@ -2671,6 +2671,18 @@ export function getIdeationStyles(): string {
       .roadmap-instructions li {
         margin-bottom: 4px;
       }
+      .kiro-prompt-hint {
+        background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.2));
+        padding: 12px 16px;
+        border-radius: 4px;
+        margin: 12px 0;
+        text-align: center;
+      }
+      .kiro-prompt-hint code {
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 13px;
+        color: var(--vscode-textPreformat-foreground, #d7ba7d);
+      }
       .roadmap-note {
         margin-top: 12px;
         font-style: italic;

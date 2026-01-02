@@ -478,46 +478,6 @@ interface ProposedEdge {
 **Output:**
 - Stored in wizard state for `demo-strategy.md` generation in Phase 4 `M`
 
-23.5. [ ] Demo Script Export — Add ability to export demo strategy as a presenter-ready markdown file:
-
-**Export Button:**
-- "📄 Export Demo Script" button in Step 7 UI (near Generate All)
-- Disabled until at least one section has content (persona, moments, or scenes)
-
-**Generated Markdown Format:**
-- Header with business objective from Step 1
-- Demo Persona section: name, role, pain point
-- Aha Moments section: numbered list with title, trigger, and talking point as blockquote
-- Narrative Flow section: ordered scenes with descriptions and highlighted agents
-- Footer with generation timestamp
-
-**File Output:**
-- Creates `demo-script.md` in workspace root (or `.agentify/demo-script.md`)
-- Auto-opens file in editor after creation
-- Overwrites existing file with confirmation if present
-
-**Example Output:**
-```md
-# Demo Script: Reduce customer support response time by 40%
-
-## Persona
-**Maria, Regional Inventory Manager** — Reviews morning replenishment recommendations...
-Pain Point: Currently spends 2 hours manually checking stock levels
-
-## Aha Moments
-### 1. Real-time VIP customer detection
-**Trigger:** Ticket Analyzer
-> Watch as the system instantly recognizes this is a VIP customer...
-
-## Narrative Flow
-### Scene 1: Opening Context
-...
-```
-
-**Future Enhancement (Pro Tier):**
-- PDF export with polished formatting
-- PPTX export for slide-ready presentation `S`
-
 24. [x] Generate Step (Wizard Step 8) — Build the final wizard step that orchestrates steering file generation and Kiro handoff:
 
 **Pre-Generation Checklist Display:**
@@ -911,7 +871,7 @@ This is an Agentify demo project. Follow these rules strictly:
 - Ensure `resources/cdk/` and `resources/scripts/` included in VSIX package
 - Add `cdk/README.md` with comprehensive deployment instructions `M`
 
-28.6. [ ] Shared Utilities Bundling — Bundle generic observability infrastructure as pre-existing resources (like CDK), not Kiro-generated:
+28.6. [x] Shared Utilities Bundling — Bundle generic observability infrastructure as pre-existing resources (like CDK), not Kiro-generated:
 
 **Background:**
 The `agents/shared/` module contains generic observability infrastructure that is identical across all Agentify demos:
@@ -1275,33 +1235,66 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - Validate hooks are syntactically correct
 - Show notification: "Agentify Power installed - enforcement hooks active" `S`
 
-34. [ ] Kiro Spec Trigger — Implement seamless handoff from Ideation Wizard to Kiro spec mode:
+## Phase 3.5: Conversational Workflows
 
-**Pre-Flight Checks:**
-1. Verify all steering files exist in `.kiro/steering/`
-2. Verify Agentify Power installed (item 33)
-3. Verify `.agentify/config.json` exists with valid DynamoDB config
+35. [ ] Demo Viewer Chat UI — Replace single prompt textarea with chat-style conversation (reuse Ideation Wizard Step 2 patterns):
 
-**Trigger Flow:**
-1. User clicks "Generate Code with Kiro" button in wizard
-2. Run pre-flight checks, show errors if any fail
-3. Build initial prompt from wizard context:
-```
-   Create a multi-agent workflow based on the steering files in .kiro/steering/.
+**UI Layout:**
+- Message bubbles (user right-aligned, agent left-aligned)
+- Streaming response display during agent execution
+- Inline agent status: "Triage ✓ → Technical (pending)" (text-based before graph)
+- Session info bar: workflow_id, turn count, elapsed time
+- "New Conversation" button to reset session
 
-   Business objective: {from product.md}
-   Orchestration pattern: {from tech.md}
-   Agents: {from agent design}
+**Reuse from Ideation Wizard:**
+- Streaming token handling from Step 2 (`handleStreamingToken`)
+- Message bubble styling from Step 2 conversation UI
+- "Send" button pattern (no Enter shortcut)
 
-   Start with agents/main.py following the CLI contract in agentify-integration.md.
-```
-4. Execute Kiro command: `kiro.startSpecFlow` with prompt
-5. Show confirmation: "Kiro spec mode started. Enforcement hooks are active."
+**Files:**
+- `src/panels/demoViewerPanel.ts` — Replace prompt section with chat UI
+- New CSS in webview for message bubbles `M`
 
-**VS Code Fallback:**
-- Detect if running in VS Code (not Kiro) via `vscode.env.appName`
-- Show message: "Code generation requires Kiro IDE. Steering files have been generated in .kiro/steering/. Open this project in Kiro to continue."
-- Offer "Learn More" link to Kiro download page `S`
+36. [ ] Workflow Session Continuation — Enable same workflow session across multiple main.py calls:
+
+**Extension Changes:**
+- `WorkflowTriggerService` maintains session state: `{workflowId, sessionId, turns[], agentsInvoked[]}`
+- Reuse same `workflow_id` and `session_id` for follow-up prompts
+- Track which agents have been invoked per session
+- DynamoDB events linked by same workflow_id across turns
+
+**main.py Template Changes:**
+- New `--conversation-context` arg: JSON array of previous messages
+- Orchestrator builds combined prompt from conversation history
+- AgentCore sessions use same `runtimeSessionId` for memory continuity
+
+**Session Lifecycle:**
+- Start: User sends first prompt → generate workflow_id/session_id
+- Continue: User sends follow-up → reuse same IDs, append to turns
+- Complete: workflow_complete event or user clicks "New Conversation"
+
+**Files:**
+- `src/services/workflowTriggerService.ts` — Session state management
+- `resources/agents/shared/orchestrator_utils.py` — Parse conversation context arg `L`
+
+37. [ ] Partial Execution Detection — Detect and handle "needs more info" workflow pauses:
+
+**Detection Strategy:**
+- Primary: Check if workflow completes without terminal agent (e.g., only triage ran, not specialist)
+- Secondary: Parse agent response for question patterns (LLM-based heuristic)
+- Track `agentsInvoked[]` to show progress inline
+
+**Behavior:**
+- If partial execution detected: Display agent response in chat, enable follow-up input
+- If full execution: Show final result, keep chat open for new queries
+
+**Integration with Graph (future):**
+- Item 37 works with text-based status before items 25-26
+- After graph visualization: Integrate with node state display
+
+**Files:**
+- `src/services/workflowTriggerService.ts` — Partial execution detection
+- `src/panels/demoViewerPanel.ts` — Progress display `M`
 
 ## Phase 4: Visual Polish
 
@@ -1353,56 +1346,23 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - Graph state synced with Execution Log scroll position
 - Clicking log entry highlights corresponding node `M`
 
-27. [ ] Enhanced Log Formatting — Improve Execution Log panel with advanced formatting and filtering:
+## Phase 5: Templates and Examples
 
-**Collapsible Sections:**
-- Group events by agent (collapsible agent sections)
-- Tool calls collapsed by default, expandable to show input/output
-- "Expand All" / "Collapse All" toolbar buttons
+38. [ ] Industry Example Library — Expand bundled wizard-state.json examples (3 per industry: Retail, FSI, Healthcare, Manufacturing). Improve example picker UI for 12+ demos (current UI shows 3). Examples load via existing initialization flow. `M`
 
-**Syntax Highlighting:**
-- JSON payloads with syntax highlighting (use existing `tokenizeJson()`)
-- SQL queries highlighted if detected in tool input
-- Markdown rendering for text content
-
-**Filtering:**
-- Filter dropdown: "All Events", "Agent Events Only", "Tool Calls Only", "Errors Only"
-- Agent filter: multi-select to show only specific agents
-- Search box: text search across event content
-
-**Performance:**
-- Virtual scrolling for large event lists (>100 events)
-- Lazy render expanded payload content `M`
-
-## Phase 5: Templates and Patterns
-
-38. [ ] Industry Template Framework — Build template system for storing and loading pre-built agent patterns with metadata `M`
-
-39. [ ] Retail Industry Template — Create agent patterns for common retail scenarios: inventory optimization, customer service, demand forecasting `M`
-
-40. [ ] FSI Industry Template — Create agent patterns for financial services: fraud detection, customer onboarding, risk assessment `M`
-
-41. [ ] Healthcare Industry Template — Create agent patterns for healthcare: patient scheduling, claims processing, clinical decision support `M`
-
-42. [ ] Manufacturing Industry Template — Create agent patterns for manufacturing: predictive maintenance, quality control, supply chain optimization `M`
-
-43. [ ] Value Map Template Framework — Build storage and loading system for value map templates with metadata schema including recommended orchestration pattern `M`
-
-44. [ ] Common Value Map Templates — Create templates for common value maps, each with suggested agent teams and recommended Strands pattern: Cost Reduction (typically Workflow for deterministic optimization pipeline), Revenue Growth (typically Graph for conditional customer journey routing), Operational Efficiency (typically Workflow for parallel automation tasks), Customer Experience (typically Swarm for collaborative issue resolution), Risk Mitigation (typically Graph for decision trees with approval gates) `L`
-
-45. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
+39. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
 
 ## Phase 6: Enterprise Features
 
-46. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
+40. [ ] Demo Library Storage — Implement cloud storage for saving completed demos with metadata, tags, and search capability `L`
 
-47. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
+41. [ ] Demo Sharing — Add team sharing functionality with permissions and version tracking for collaborative demo development `M`
 
-48. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
+42. [ ] Demo Analytics — Build tracking for demo usage metrics: runs, customer reactions, conversion correlation `L`
 
-49. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
+43. [ ] Multi-Region Deployment — Add region selector and deployment automation for production deployments in us-east-1, us-west-2, eu-west-1 `M`
 
-50. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
+44. [ ] Demo Export — Create export functionality for packaging demos as standalone artifacts for offline or customer-site execution `M`
 
 ---
 
@@ -1424,6 +1384,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - Phase 1 establishes core infrastructure before building features that depend on it
 - Phase 2 AI features require Bedrock integration from earlier items
 - Phase 3 Kiro integration depends on wizard outputs from Phase 2
+- Phase 3.5 Conversational Workflows enables multi-turn demo execution (chat UI, session continuation, partial execution detection)
 - Phase 4 Visual Polish can be deferred until after Kiro integration is working
 - Phase 5-6 are enhancement phases that can be prioritized based on customer feedback
 - **Agentify Power**: Bundles steering guidance and enforcement hooks into a Kiro Power package that activates on-demand during agent development
