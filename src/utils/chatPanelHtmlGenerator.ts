@@ -15,6 +15,7 @@ import type {
   AgentPipelineStage,
   ChatPanelState,
   MessagePane,
+  WorkflowStatus,
 } from '../types/chatPanel';
 import type { ToolCallEvent } from '../types/events';
 
@@ -32,20 +33,85 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => escapeMap[char] || char);
 }
 
+// ============================================================================
+// Partial Execution Detection HTML Generation Functions
+// ============================================================================
+
+/**
+ * Generates HTML for the partial execution indicator
+ * Shows "Awaiting your response..." below entry agent message
+ *
+ * @returns HTML string for partial execution indicator
+ */
+export function generatePartialIndicatorHtml(): string {
+  return `
+    <div class="partial-execution-indicator">
+      Awaiting your response<span class="ellipsis-animation"></span>
+    </div>
+  `;
+}
+
+/**
+ * Generates HTML for the workflow status badge
+ * Displays in session info bar with status-specific icon and color
+ *
+ * @param status - Current workflow status
+ * @returns HTML string for workflow status badge
+ */
+export function generateWorkflowStatusBadgeHtml(status: WorkflowStatus): string {
+  let statusIcon: string;
+  let statusLabel: string;
+
+  switch (status) {
+    case 'running':
+      statusIcon = '<span class="status-spinner"></span>';
+      statusLabel = 'Running';
+      break;
+    case 'partial':
+      // Hourglass not done (U+23F3)
+      statusIcon = '<span class="status-icon">\u23F3</span>';
+      statusLabel = 'Awaiting Input';
+      break;
+    case 'complete':
+      // Check mark (U+2713)
+      statusIcon = '<span class="status-icon">\u2713</span>';
+      statusLabel = 'Complete';
+      break;
+    case 'error':
+      // Ballot X (U+2717)
+      statusIcon = '<span class="status-icon">\u2717</span>';
+      statusLabel = 'Error';
+      break;
+    default:
+      statusIcon = '<span class="status-spinner"></span>';
+      statusLabel = 'Running';
+  }
+
+  return `<span class="workflow-status-badge ${status}">${statusIcon}<span class="status-label">${statusLabel}</span></span>`;
+}
+
+// ============================================================================
+// Session and Status Bar HTML Generation Functions
+// ============================================================================
+
 /**
  * Generates the session info bar HTML
- * Displays workflow_id, turn count, and elapsed time
+ * Displays workflow_id, turn count, elapsed time, and workflow status
  *
  * @param workflowId - Workflow identifier (short format)
  * @param turnCount - Number of conversation turns
  * @param elapsedTime - Elapsed time formatted string
+ * @param workflowStatus - Current workflow status (optional, defaults to 'running')
  * @returns HTML string for session info bar
  */
 export function generateSessionInfoBarHtml(
   workflowId: string,
   turnCount: number,
-  elapsedTime: string
+  elapsedTime: string,
+  workflowStatus: WorkflowStatus = 'running'
 ): string {
+  const statusBadge = generateWorkflowStatusBadgeHtml(workflowStatus);
+
   return `
     <div class="session-info-bar">
       <div class="session-info-item">
@@ -61,6 +127,11 @@ export function generateSessionInfoBarHtml(
       <div class="session-info-item">
         <span class="session-info-label">Elapsed:</span>
         <span class="session-info-value" id="elapsed-time">${escapeHtml(elapsedTime)}</span>
+      </div>
+      <div class="session-info-divider"></div>
+      <div class="session-info-item">
+        <span class="session-info-label">Status:</span>
+        ${statusBadge}
       </div>
     </div>
   `;
@@ -115,6 +186,10 @@ export function generateAgentStatusBarHtml(pipelineStages: AgentPipelineStage[])
 
   return `<div class="agent-status-bar">${stagesHtml}</div>`;
 }
+
+// ============================================================================
+// Message Bubble HTML Generation Functions
+// ============================================================================
 
 /**
  * Generates HTML for a single message bubble
@@ -254,6 +329,10 @@ export function generateChatInputAreaHtml(disabled: boolean): string {
   `;
 }
 
+// ============================================================================
+// Dual-Pane HTML Generation Functions
+// ============================================================================
+
 /**
  * Generates HTML for a pane header
  * Simple reusable function for both pane headers
@@ -268,16 +347,19 @@ export function generatePaneHeaderHtml(label: string): string {
 /**
  * Generates HTML for the conversation pane (left pane)
  * Filters messages where pane === 'conversation'
+ * Shows partial execution indicator when workflowStatus is 'partial'
  *
  * @param messages - Array of all chat messages
  * @param streamingContent - Current streaming content (if any)
  * @param activeAgentName - Name of the currently active agent
+ * @param workflowStatus - Current workflow status (optional)
  * @returns HTML string for conversation pane
  */
 export function generateConversationPaneHtml(
   messages: ChatMessage[],
   streamingContent: string,
-  activeAgentName: string | null
+  activeAgentName: string | null,
+  workflowStatus?: WorkflowStatus
 ): string {
   const header = generatePaneHeaderHtml('Conversation');
 
@@ -302,11 +384,15 @@ export function generateConversationPaneHtml(
     .map((message) => generateMessageBubbleHtml(message))
     .join('');
 
+  // Only show partial indicator when status is explicitly 'partial'
+  const partialIndicator = workflowStatus === 'partial' ? generatePartialIndicatorHtml() : '';
+
   return `
     <div class="pane-left">
       ${header}
       <div class="pane-messages">
         ${messagesHtml}
+        ${partialIndicator}
       </div>
     </div>
   `;
@@ -370,15 +456,17 @@ export function generateCollaborationPaneHtml(
  * @param streamingContent - Current streaming content (if any)
  * @param activeAgentName - Name of the currently active agent
  * @param activeMessagePane - Which pane the streaming message belongs to
+ * @param workflowStatus - Current workflow status (optional)
  * @returns HTML string for dual-pane container
  */
 export function generateDualPaneContainerHtml(
   messages: ChatMessage[],
   streamingContent: string,
   activeAgentName: string | null,
-  activeMessagePane: MessagePane | null
+  activeMessagePane: MessagePane | null,
+  workflowStatus?: WorkflowStatus
 ): string {
-  const leftPane = generateConversationPaneHtml(messages, streamingContent, activeAgentName);
+  const leftPane = generateConversationPaneHtml(messages, streamingContent, activeAgentName, workflowStatus);
   const rightPane = generateCollaborationPaneHtml(messages, streamingContent, activeAgentName, activeMessagePane);
 
   return `
@@ -405,21 +493,23 @@ export function generateChatPanelHtml(state: ChatPanelState): string {
     ? formatTime(ui.elapsedTimeMs)
     : formatTime(null);
 
-  // Generate components
+  // Generate components with workflow status
   const sessionInfoBar = generateSessionInfoBarHtml(
     session.workflowId,
     session.turnCount,
-    elapsedTime
+    elapsedTime,
+    ui.workflowStatus
   );
 
   const statusBar = generateAgentStatusBarHtml(session.pipelineStages);
 
-  // Use dual-pane container instead of single chat messages
+  // Use dual-pane container with workflow status for partial indicator
   const dualPaneContainer = generateDualPaneContainerHtml(
     session.messages,
     session.streamingContent,
     session.activeAgentName,
-    session.activeMessagePane
+    session.activeMessagePane,
+    ui.workflowStatus
   );
 
   const errorHtml = ui.errorMessage

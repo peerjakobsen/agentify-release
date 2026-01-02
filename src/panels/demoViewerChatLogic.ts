@@ -21,11 +21,13 @@ import {
   determineMessagePane,
   addHandoffMessage,
   matchToolEventsToMessages,
+  setWorkflowStatus,
 } from '../utils/chatStateUtils';
 import type {
   ChatSessionState,
   ChatUiState,
   ChatPanelState,
+  WorkflowStatus,
 } from '../types/chatPanel';
 import {
   getWorkflowTriggerService,
@@ -135,12 +137,27 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   }
 
   // -------------------------------------------------------------------------
+  // Private Workflow Status Helper
+  // -------------------------------------------------------------------------
+
+  /**
+   * Updates the workflow status in UI state
+   * Helper method for consistent status updates across event handlers
+   *
+   * @param status - New workflow status to set
+   */
+  private updateWorkflowStatus(status: WorkflowStatus): void {
+    this._uiState = setWorkflowStatus(this._uiState, status);
+  }
+
+  // -------------------------------------------------------------------------
   // Public Message Handlers
   // -------------------------------------------------------------------------
 
   /**
    * Handles sending a user message and starting workflow
    * Button-only trigger (no Enter key handling for demo safety)
+   * Resets workflowStatus to 'running' on follow-up messages
    *
    * @param content - User message content
    */
@@ -153,12 +170,14 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     this._sessionState = addUserMessage(this._sessionState, content);
 
     // Update UI state to show running
+    // Reset workflowStatus to 'running' (handles partial -> running transition)
     this._uiState = {
       ...this._uiState,
       inputDisabled: true,
       isWorkflowRunning: true,
       errorMessage: null,
     };
+    this.updateWorkflowStatus('running');
 
     // Set workflow start time
     this._sessionState = setWorkflowStartTime(this._sessionState);
@@ -192,6 +211,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   /**
    * Handles starting a new conversation
    * Resets chat state and generates new IDs
+   * workflowStatus is reset to 'running' via createInitialUiState()
    */
   public handleNewConversation(): void {
     // Stop any running timer
@@ -206,7 +226,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Reset session state
     this._sessionState = resetChatState();
 
-    // Reset UI state
+    // Reset UI state (includes workflowStatus: 'running')
     this._uiState = createInitialUiState();
 
     // Reset stdout parser for new workflow
@@ -436,6 +456,11 @@ export class DemoViewerChatLogic implements vscode.Disposable {
    * Streaming content routes to the same pane as the corresponding node_start
    * Python provides both node_id and node_name - use node_name for display
    * Python also sends the full response in node_stop (not via streaming)
+   *
+   * Partial Execution Detection:
+   * - If the stopped agent is the entry agent AND workflow is still running,
+   *   set workflowStatus to 'partial' (optimistic detection)
+   * - This may be overridden by workflow_complete arriving immediately after
    */
   private handleNodeStopEvent(event: NodeStopEvent): void {
     // Python emits node_name for display, node_id for identification
@@ -460,6 +485,18 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     const status = event.status === 'completed' ? 'completed' : 'pending';
     this._sessionState = updatePipelineStage(this._sessionState, agentName, status);
 
+    // Partial Execution Detection:
+    // Check if the stopped agent is the entry agent AND workflow is still running
+    const isEntryAgent = agentName === this._sessionState.entryAgentName;
+    const isWorkflowRunning = this._uiState.isWorkflowRunning;
+
+    if (isEntryAgent && isWorkflowRunning) {
+      // Optimistically set status to 'partial'
+      // This will be overridden to 'complete' if workflow_complete arrives immediately
+      this.updateWorkflowStatus('partial');
+      console.log(`[DemoViewerChatLogic] Entry agent stopped, set workflowStatus to 'partial'`);
+    }
+
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
   }
@@ -482,8 +519,13 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
   /**
    * Handles workflow_complete event
+   * Sets workflowStatus to 'complete', overriding any 'partial' status
    */
   private handleWorkflowCompleteEvent(event: WorkflowCompleteEvent): void {
+    // Set workflow status to 'complete' BEFORE setting isWorkflowRunning to false
+    // This overrides any 'partial' status that was set optimistically
+    this.updateWorkflowStatus('complete');
+
     // Finalize any pending streaming message
     if (this._sessionState.activeAgentName) {
       this._sessionState = finalizeAgentMessage(this._sessionState);
@@ -508,14 +550,18 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
 
-    console.log(`[DemoViewerChatLogic] Workflow complete: ${event.status}, time: ${event.execution_time_ms}ms`);
+    console.log(`[DemoViewerChatLogic] Workflow complete: ${event.status}, time: ${event.execution_time_ms}ms, workflowStatus: ${this._uiState.workflowStatus}`);
   }
 
   /**
    * Handles workflow_error event
    * Python emits 'error' field, TypeScript type expects 'error_message'
+   * Sets workflowStatus to 'error'
    */
   private handleWorkflowErrorEvent(event: WorkflowErrorEvent): void {
+    // Set workflow status to 'error'
+    this.updateWorkflowStatus('error');
+
     // Handle both 'error' and 'error_message' fields
     const eventAny = event as unknown as { error?: string };
     const errorMessage = event.error_message || eventAny.error || 'Unknown workflow error';
@@ -529,6 +575,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     console.log(`[DemoViewerChatLogic] Process state changed: ${state}`);
 
     if (state === 'failed' || state === 'killed') {
+      this.updateWorkflowStatus('error');
       this.handleWorkflowError(`Workflow process ${state}`);
     }
   }
@@ -544,6 +591,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
     // If non-zero exit code and no explicit error, show generic error
     if (code !== 0 && code !== null && !this._uiState.errorMessage) {
+      this.updateWorkflowStatus('error');
       this.handleWorkflowError(`Workflow exited with code ${code}`);
     } else if (!this._uiState.isWorkflowRunning) {
       // Normal completion, just update UI
@@ -565,7 +613,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Add error message to chat
     this._sessionState = addErrorMessage(this._sessionState, errorMessage);
 
-    // Update UI state
+    // Update UI state (workflowStatus should already be set to 'error')
     this._uiState = {
       ...this._uiState,
       inputDisabled: false,

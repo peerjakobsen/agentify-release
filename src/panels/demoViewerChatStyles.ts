@@ -14,7 +14,7 @@ export function getDemoViewerChatStyles(): string {
   return `
     /* =========================================================================
      * Session Info Bar Styles
-     * Top bar showing workflow_id, turn count, elapsed time
+     * Top bar showing workflow_id, turn count, elapsed time, workflow status
      * ========================================================================= */
 
     .session-info-bar {
@@ -52,6 +52,96 @@ export function getDemoViewerChatStyles(): string {
       height: 16px;
       background: var(--vscode-editorWidget-border);
       margin: 0 8px;
+    }
+
+    /* =========================================================================
+     * Workflow Status Badge Styles
+     * Status indicator in session info bar with state variants
+     * ========================================================================= */
+
+    .workflow-status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    /* Running state - spinner animation */
+    .workflow-status-badge.running {
+      color: var(--vscode-foreground);
+    }
+
+    .workflow-status-badge.running .status-spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid var(--vscode-descriptionForeground);
+      border-top-color: var(--vscode-button-background);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    /* Partial state - hourglass icon, amber/yellow tint */
+    .workflow-status-badge.partial {
+      color: var(--vscode-editorWarning-foreground, #cca700);
+      background: rgba(204, 167, 0, 0.1);
+    }
+
+    .workflow-status-badge.partial .status-icon {
+      font-size: 12px;
+    }
+
+    /* Complete state - checkmark icon, green */
+    .workflow-status-badge.complete {
+      color: var(--vscode-testing-iconPassed, #73c991);
+      background: rgba(115, 201, 145, 0.1);
+    }
+
+    .workflow-status-badge.complete .status-icon {
+      font-size: 12px;
+    }
+
+    /* Error state - X mark icon, red */
+    .workflow-status-badge.error {
+      color: var(--vscode-errorForeground, #f48771);
+      background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+    }
+
+    .workflow-status-badge.error .status-icon {
+      font-size: 12px;
+    }
+
+    /* =========================================================================
+     * Partial Execution Indicator Styles
+     * "Awaiting your response..." indicator below entry agent message
+     * ========================================================================= */
+
+    .partial-execution-indicator {
+      text-align: left;
+      font-size: 11px;
+      font-style: italic;
+      color: var(--vscode-descriptionForeground);
+      padding: 8px 4px;
+      opacity: 0.9;
+    }
+
+    /* Animated ellipsis effect */
+    .ellipsis-animation {
+      display: inline-block;
+    }
+
+    .ellipsis-animation::after {
+      content: '';
+      animation: ellipsis 1.5s infinite;
+    }
+
+    @keyframes ellipsis {
+      0% { content: ''; }
+      25% { content: '.'; }
+      50% { content: '..'; }
+      75% { content: '...'; }
+      100% { content: ''; }
     }
 
     /* =========================================================================

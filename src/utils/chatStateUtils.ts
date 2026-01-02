@@ -15,6 +15,7 @@ import type {
   ChatUiState,
   ChatPanelState,
   MessagePane,
+  WorkflowStatus,
 } from '../types/chatPanel';
 import type { ToolCallEvent } from '../types/events';
 
@@ -65,6 +66,7 @@ export function createInitialChatState(): ChatSessionState {
 
 /**
  * Creates default UI state for the chat panel
+ * Initializes workflowStatus to 'running' as the default state
  *
  * @returns Default ChatUiState
  */
@@ -74,6 +76,7 @@ export function createInitialUiState(): ChatUiState {
     isWorkflowRunning: false,
     errorMessage: null,
     elapsedTimeMs: null,
+    workflowStatus: 'running',
   };
 }
 
@@ -86,6 +89,28 @@ export function createInitialChatPanelState(): ChatPanelState {
   return {
     session: createInitialChatState(),
     ui: createInitialUiState(),
+  };
+}
+
+/**
+ * Sets the workflow status for partial execution detection
+ * Returns a new ChatUiState with the updated status, preserving other fields.
+ *
+ * State transitions:
+ * - running + node_stop(entry_agent) -> 'partial' (optimistic detection)
+ * - partial + workflow_complete -> 'complete' (override)
+ * - partial + workflow_error -> 'error' (override)
+ * - partial + user_sends_follow_up -> 'running'
+ * - any + new_conversation -> 'running' (reset via createInitialUiState)
+ *
+ * @param uiState - Current UI state
+ * @param status - New workflow status to set
+ * @returns Updated ChatUiState with new status
+ */
+export function setWorkflowStatus(uiState: ChatUiState, status: WorkflowStatus): ChatUiState {
+  return {
+    ...uiState,
+    workflowStatus: status,
   };
 }
 

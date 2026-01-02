@@ -19,6 +19,15 @@ export type ChatMessageRole = 'user' | 'agent';
 export type AgentPipelineStatus = 'pending' | 'active' | 'completed';
 
 /**
+ * Workflow execution status for partial execution detection
+ * - 'running': Workflow is actively processing
+ * - 'partial': Entry agent stopped, awaiting user input (partial execution)
+ * - 'complete': Workflow finished successfully
+ * - 'error': Workflow encountered an error
+ */
+export type WorkflowStatus = 'running' | 'partial' | 'complete' | 'error';
+
+/**
  * Pane routing for dual-pane conversation UI
  * - 'conversation': Left pane - User messages and entry agent responses
  * - 'collaboration': Right pane - Agent-to-agent handoffs and responses
@@ -131,6 +140,15 @@ export interface ChatUiState {
   errorMessage: string | null;
   /** Elapsed time in milliseconds since workflow start */
   elapsedTimeMs: number | null;
+  /**
+   * Current workflow execution status for partial execution detection.
+   * Used to show visual feedback when workflow is awaiting user input.
+   * - 'running': Workflow is actively processing
+   * - 'partial': Entry agent stopped, awaiting user input
+   * - 'complete': Workflow finished successfully
+   * - 'error': Workflow encountered an error
+   */
+  workflowStatus: WorkflowStatus;
 }
 
 /**

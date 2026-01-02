@@ -1322,7 +1322,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerChatStyles.ts` — Tool chip CSS styles
 - `src/utils/chatPanelHtmlGenerator.ts` — Render tool chips inline `M`
 
-37. [ ] Partial Execution Detection — Detect and handle "needs more info" workflow pauses:
+37. [x] Partial Execution Detection — Detect and handle "needs more info" workflow pauses:
 
 **Detection Strategy (simplified by 35.1):**
 - Entry agent identified from first `node_start` (per 35.1)
