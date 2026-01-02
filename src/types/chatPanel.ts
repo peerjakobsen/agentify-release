@@ -17,6 +17,13 @@ export type ChatMessageRole = 'user' | 'agent';
 export type AgentPipelineStatus = 'pending' | 'active' | 'completed';
 
 /**
+ * Pane routing for dual-pane conversation UI
+ * - 'conversation': Left pane - User messages and entry agent responses
+ * - 'collaboration': Right pane - Agent-to-agent handoffs and responses
+ */
+export type MessagePane = 'conversation' | 'collaboration';
+
+/**
  * Individual chat message in the conversation
  */
 export interface ChatMessage {
@@ -32,6 +39,24 @@ export interface ChatMessage {
   timestamp: number;
   /** Whether the message is currently streaming */
   isStreaming: boolean;
+  /**
+   * Target pane for this message in the dual-pane layout.
+   * - 'conversation': Displays in left pane (user + entry agent)
+   * - 'collaboration': Displays in right pane (agent-to-agent)
+   *
+   * Routing logic:
+   * - User messages always route to 'conversation'
+   * - Messages with from_agent === null route to 'conversation' (entry agent)
+   * - Messages with from_agent !== null route to 'collaboration' (internal agents)
+   */
+  pane: MessagePane;
+  /**
+   * Whether this is a sender message (handoff prompt) in the collaboration pane.
+   * When true, displays with right-aligned styling like user messages.
+   * Used for handoff prompts where the sending agent's prompt appears before
+   * the receiving agent's response.
+   */
+  isSender?: boolean;
 }
 
 /**
@@ -64,6 +89,20 @@ export interface ChatSessionState {
   activeAgentName: string | null;
   /** Accumulated streaming content for the active agent */
   streamingContent: string;
+  /**
+   * Name of the entry agent (first agent to receive user prompt).
+   * Identified from the first node_start event received in the workflow.
+   * null until the first node_start event is processed.
+   */
+  entryAgentName: string | null;
+  /**
+   * Which pane the currently streaming message belongs to.
+   * Used to route streaming content to the correct pane during agent execution.
+   * - 'conversation': Streaming content displays in left pane
+   * - 'collaboration': Streaming content displays in right pane
+   * - null: No message currently streaming
+   */
+  activeMessagePane: MessagePane | null;
 }
 
 /**

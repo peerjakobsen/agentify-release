@@ -12,6 +12,7 @@ import type {
   ChatSessionState,
   AgentPipelineStage,
   ChatPanelState,
+  MessagePane,
 } from '../types/chatPanel';
 
 /**
@@ -129,7 +130,10 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
     `;
   }
 
-  // Agent message
+  // Agent message - check if it's a sender message (handoff prompt)
+  const isSender = message.isSender === true;
+  const messageClass = isSender ? 'sender-message' : 'agent-message';
+
   const agentLabel = message.agentName
     ? `<div class="agent-name-label">${escapeHtml(message.agentName)}</div>`
     : '';
@@ -137,7 +141,7 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
   if (message.isStreaming) {
     // Streaming message - will be updated via JS
     return `
-      <div class="chat-message agent-message streaming" data-agent="${escapeHtml(message.agentName || '')}">
+      <div class="chat-message ${messageClass} streaming" data-agent="${escapeHtml(message.agentName || '')}">
         ${agentLabel}
         <div class="message-content">
           <div class="typing-indicator">
@@ -152,7 +156,7 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
   }
 
   return `
-    <div class="chat-message agent-message">
+    <div class="chat-message ${messageClass}">
       ${agentLabel}
       <div class="message-content">
         <div class="message-text">${escapeHtml(message.content)}</div>
@@ -177,7 +181,8 @@ export function generateTypingIndicatorHtml(): string {
 }
 
 /**
- * Generates HTML for all chat messages
+ * Generates HTML for all chat messages (legacy single-pane)
+ * Kept for backward compatibility with existing tests
  *
  * @param messages - Array of chat messages
  * @param streamingContent - Current streaming content (if any)
@@ -240,8 +245,144 @@ export function generateChatInputAreaHtml(disabled: boolean): string {
 }
 
 /**
+ * Generates HTML for a pane header
+ * Simple reusable function for both pane headers
+ *
+ * @param label - Header label text ("Conversation" or "Agent Collaboration")
+ * @returns HTML string for pane header
+ */
+export function generatePaneHeaderHtml(label: string): string {
+  return `<div class="pane-header">${escapeHtml(label)}</div>`;
+}
+
+/**
+ * Generates HTML for the conversation pane (left pane)
+ * Filters messages where pane === 'conversation'
+ *
+ * @param messages - Array of all chat messages
+ * @param streamingContent - Current streaming content (if any)
+ * @param activeAgentName - Name of the currently active agent
+ * @returns HTML string for conversation pane
+ */
+export function generateConversationPaneHtml(
+  messages: ChatMessage[],
+  streamingContent: string,
+  activeAgentName: string | null
+): string {
+  const header = generatePaneHeaderHtml('Conversation');
+
+  // Filter messages for conversation pane
+  const conversationMessages = messages.filter((msg) => msg.pane === 'conversation');
+
+  if (conversationMessages.length === 0) {
+    return `
+      <div class="pane-left">
+        ${header}
+        <div class="pane-messages">
+          <div class="chat-empty-state">
+            <div class="chat-empty-icon">💬</div>
+            <div class="chat-empty-text">Enter a prompt to start the conversation</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const messagesHtml = conversationMessages
+    .map((message) => generateMessageBubbleHtml(message))
+    .join('');
+
+  return `
+    <div class="pane-left">
+      ${header}
+      <div class="pane-messages">
+        ${messagesHtml}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Generates HTML for the collaboration pane (right pane)
+ * Filters messages where pane === 'collaboration'
+ * Shows empty state when no collaboration messages exist
+ *
+ * @param messages - Array of all chat messages
+ * @param streamingContent - Current streaming content (if any)
+ * @param activeAgentName - Name of the currently active agent
+ * @param activeMessagePane - Which pane the streaming message belongs to
+ * @returns HTML string for collaboration pane
+ */
+export function generateCollaborationPaneHtml(
+  messages: ChatMessage[],
+  streamingContent: string,
+  activeAgentName: string | null,
+  activeMessagePane: MessagePane | null
+): string {
+  const header = generatePaneHeaderHtml('Agent Collaboration');
+
+  // Filter messages for collaboration pane
+  const collaborationMessages = messages.filter((msg) => msg.pane === 'collaboration');
+
+  if (collaborationMessages.length === 0) {
+    return `
+      <div class="pane-right">
+        ${header}
+        <div class="pane-messages">
+          <div class="collaboration-empty-state">
+            <div class="collaboration-empty-icon">🤝</div>
+            <div>No agent collaboration in this workflow</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const messagesHtml = collaborationMessages
+    .map((message) => generateMessageBubbleHtml(message))
+    .join('');
+
+  return `
+    <div class="pane-right">
+      ${header}
+      <div class="pane-messages">
+        ${messagesHtml}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Generates HTML for the dual-pane container
+ * Wraps both conversation and collaboration panes
+ *
+ * @param messages - Array of all chat messages
+ * @param streamingContent - Current streaming content (if any)
+ * @param activeAgentName - Name of the currently active agent
+ * @param activeMessagePane - Which pane the streaming message belongs to
+ * @returns HTML string for dual-pane container
+ */
+export function generateDualPaneContainerHtml(
+  messages: ChatMessage[],
+  streamingContent: string,
+  activeAgentName: string | null,
+  activeMessagePane: MessagePane | null
+): string {
+  const leftPane = generateConversationPaneHtml(messages, streamingContent, activeAgentName);
+  const rightPane = generateCollaborationPaneHtml(messages, streamingContent, activeAgentName, activeMessagePane);
+
+  return `
+    <div class="dual-pane-container">
+      ${leftPane}
+      ${rightPane}
+    </div>
+  `;
+}
+
+/**
  * Generates the complete chat panel HTML
  * Assembles all components into a full chat interface
+ * Uses dual-pane layout for conversation and collaboration panes
  *
  * @param state - Chat panel state
  * @returns Complete HTML string for chat panel
@@ -263,10 +404,12 @@ export function generateChatPanelHtml(state: ChatPanelState): string {
 
   const statusBar = generateAgentStatusBarHtml(session.pipelineStages);
 
-  const chatMessages = generateChatMessagesHtml(
+  // Use dual-pane container instead of single chat messages
+  const dualPaneContainer = generateDualPaneContainerHtml(
     session.messages,
     session.streamingContent,
-    session.activeAgentName
+    session.activeAgentName,
+    session.activeMessagePane
   );
 
   const errorHtml = ui.errorMessage
@@ -279,7 +422,7 @@ export function generateChatPanelHtml(state: ChatPanelState): string {
     <div class="chat-panel">
       ${sessionInfoBar}
       ${statusBar}
-      ${chatMessages}
+      ${dualPaneContainer}
       ${errorHtml}
       ${inputArea}
     </div>

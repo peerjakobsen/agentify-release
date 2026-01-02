@@ -17,6 +17,8 @@ import {
   resetChatState,
   addErrorMessage,
   hasActiveStreaming,
+  determineMessagePane,
+  addHandoffMessage,
 } from '../../utils/chatStateUtils';
 import type {
   ChatMessage,
@@ -45,7 +47,7 @@ describe('Task Group 1: Chat State Types and Data Structures', () => {
 
     it('should create an agent message with agent name and streaming flag', () => {
       const state = createInitialChatState();
-      const updatedState = addAgentMessage(state, 'Triage Agent');
+      const updatedState = addAgentMessage(state, 'Triage Agent', 'conversation');
 
       const message = updatedState.messages[0];
       expect(message).toBeDefined();
@@ -131,7 +133,7 @@ describe('Task Group 1: Chat State Types and Data Structures', () => {
   describe('Test 4: State utilities correctly manipulate messages and streaming content', () => {
     it('should accumulate streaming tokens with appendToStreamingContent()', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Technical Agent');
+      state = addAgentMessage(state, 'Technical Agent', 'conversation');
 
       state = appendToStreamingContent(state, 'Hello ');
       expect(state.streamingContent).toBe('Hello ');
@@ -142,7 +144,7 @@ describe('Task Group 1: Chat State Types and Data Structures', () => {
 
     it('should finalize agent message by moving streaming content', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Technical Agent');
+      state = addAgentMessage(state, 'Technical Agent', 'conversation');
       state = appendToStreamingContent(state, 'Analysis complete.');
 
       expect(state.messages[0].isStreaming).toBe(true);
@@ -161,7 +163,7 @@ describe('Task Group 1: Chat State Types and Data Structures', () => {
       const originalWorkflowId = state.workflowId;
 
       state = addUserMessage(state, 'Test');
-      state = addAgentMessage(state, 'Agent');
+      state = addAgentMessage(state, 'Agent', 'conversation');
       state = updatePipelineStage(state, 'Triage', 'completed');
 
       const resetState = resetChatState();
@@ -187,11 +189,207 @@ describe('Task Group 1: Chat State Types and Data Structures', () => {
       let state = createInitialChatState();
       expect(hasActiveStreaming(state)).toBe(false);
 
-      state = addAgentMessage(state, 'Agent');
+      state = addAgentMessage(state, 'Agent', 'conversation');
       expect(hasActiveStreaming(state)).toBe(true);
 
       state = finalizeAgentMessage(state);
       expect(hasActiveStreaming(state)).toBe(false);
+    });
+  });
+});
+
+// ============================================================================
+// Task 4.1: 5-7 Focused Tests for Message Routing and State Management
+// ============================================================================
+
+describe('Task Group 4: Message Routing and State Management', () => {
+  describe('Test 1: User messages always route to conversation pane', () => {
+    it('should always set pane to conversation for user messages', () => {
+      const state = createInitialChatState();
+      const updatedState = addUserMessage(state, 'Hello agent');
+
+      expect(updatedState.messages[0].pane).toBe('conversation');
+    });
+
+    it('should route multiple user messages to conversation pane', () => {
+      let state = createInitialChatState();
+      state = addUserMessage(state, 'First message');
+      state = addUserMessage(state, 'Second message');
+
+      expect(state.messages[0].pane).toBe('conversation');
+      expect(state.messages[1].pane).toBe('conversation');
+    });
+  });
+
+  describe('Test 2: determineMessagePane helper function', () => {
+    it('should return conversation when fromAgent is null', () => {
+      const pane = determineMessagePane(null);
+      expect(pane).toBe('conversation');
+    });
+
+    it('should return collaboration when fromAgent is a string', () => {
+      const pane = determineMessagePane('Triage Agent');
+      expect(pane).toBe('collaboration');
+    });
+
+    it('should return collaboration for any non-null fromAgent', () => {
+      expect(determineMessagePane('Agent A')).toBe('collaboration');
+      expect(determineMessagePane('Coordinator')).toBe('collaboration');
+      expect(determineMessagePane('')).toBe('collaboration');
+    });
+  });
+
+  describe('Test 3: addAgentMessage routes to correct pane based on parameter', () => {
+    it('should route agent message to conversation pane when pane is conversation', () => {
+      const state = createInitialChatState();
+      const updatedState = addAgentMessage(state, 'Entry Agent', 'conversation');
+
+      expect(updatedState.messages[0].pane).toBe('conversation');
+      expect(updatedState.activeMessagePane).toBe('conversation');
+    });
+
+    it('should route agent message to collaboration pane when pane is collaboration', () => {
+      const state = createInitialChatState();
+      const updatedState = addAgentMessage(state, 'Internal Agent', 'collaboration');
+
+      expect(updatedState.messages[0].pane).toBe('collaboration');
+      expect(updatedState.activeMessagePane).toBe('collaboration');
+    });
+
+    it('should set activeMessagePane to match the pane parameter', () => {
+      let state = createInitialChatState();
+
+      state = addAgentMessage(state, 'Agent 1', 'conversation');
+      expect(state.activeMessagePane).toBe('conversation');
+
+      state = finalizeAgentMessage(state);
+      state = addAgentMessage(state, 'Agent 2', 'collaboration');
+      expect(state.activeMessagePane).toBe('collaboration');
+    });
+  });
+
+  describe('Test 4: addHandoffMessage creates sender-style message in collaboration pane', () => {
+    it('should create a handoff message with sender agent name', () => {
+      const state = createInitialChatState();
+      const updatedState = addHandoffMessage(state, 'Triage Agent', 'Please analyze this data');
+
+      expect(updatedState.messages).toHaveLength(1);
+      expect(updatedState.messages[0].agentName).toBe('Triage Agent');
+      expect(updatedState.messages[0].content).toBe('Please analyze this data');
+    });
+
+    it('should set isSender flag to true for handoff messages', () => {
+      const state = createInitialChatState();
+      const updatedState = addHandoffMessage(state, 'Coordinator', 'Handle this request');
+
+      expect(updatedState.messages[0].isSender).toBe(true);
+    });
+
+    it('should route handoff messages to collaboration pane', () => {
+      const state = createInitialChatState();
+      const updatedState = addHandoffMessage(state, 'Agent A', 'Handoff prompt');
+
+      expect(updatedState.messages[0].pane).toBe('collaboration');
+    });
+
+    it('should set role to agent for handoff messages', () => {
+      const state = createInitialChatState();
+      const updatedState = addHandoffMessage(state, 'Agent', 'Prompt');
+
+      expect(updatedState.messages[0].role).toBe('agent');
+    });
+
+    it('should not set isStreaming for handoff messages', () => {
+      const state = createInitialChatState();
+      const updatedState = addHandoffMessage(state, 'Agent', 'Prompt');
+
+      expect(updatedState.messages[0].isStreaming).toBe(false);
+    });
+  });
+
+  describe('Test 5: Initial state includes entryAgentName and activeMessagePane', () => {
+    it('should initialize entryAgentName to null', () => {
+      const state = createInitialChatState();
+      expect(state.entryAgentName).toBeNull();
+    });
+
+    it('should initialize activeMessagePane to null', () => {
+      const state = createInitialChatState();
+      expect(state.activeMessagePane).toBeNull();
+    });
+
+    it('should reset entryAgentName and activeMessagePane on state reset', () => {
+      let state = createInitialChatState();
+      state = {
+        ...state,
+        entryAgentName: 'Some Agent',
+        activeMessagePane: 'collaboration',
+      };
+
+      const resetState = resetChatState();
+
+      expect(resetState.entryAgentName).toBeNull();
+      expect(resetState.activeMessagePane).toBeNull();
+    });
+  });
+
+  describe('Test 6: Complete pane routing flow simulation', () => {
+    it('should correctly route messages in a multi-agent workflow', () => {
+      let state = createInitialChatState();
+
+      // User sends message -> conversation pane
+      state = addUserMessage(state, 'Analyze this data');
+      expect(state.messages[0].pane).toBe('conversation');
+
+      // Entry agent response (from_agent === null) -> conversation pane
+      const entryPane = determineMessagePane(null);
+      state = addAgentMessage(state, 'Triage Agent', entryPane);
+      state = appendToStreamingContent(state, 'Routing to technical...');
+      state = finalizeAgentMessage(state);
+      expect(state.messages[1].pane).toBe('conversation');
+
+      // Handoff prompt -> collaboration pane
+      state = addHandoffMessage(state, 'Triage Agent', 'Please perform technical analysis');
+      expect(state.messages[2].pane).toBe('collaboration');
+      expect(state.messages[2].isSender).toBe(true);
+
+      // Internal agent response (from_agent !== null) -> collaboration pane
+      const internalPane = determineMessagePane('Triage Agent');
+      state = addAgentMessage(state, 'Technical Agent', internalPane);
+      state = appendToStreamingContent(state, 'Analysis complete.');
+      state = finalizeAgentMessage(state);
+      expect(state.messages[3].pane).toBe('collaboration');
+
+      // Verify message count and pane distribution
+      expect(state.messages).toHaveLength(4);
+      const conversationMessages = state.messages.filter(m => m.pane === 'conversation');
+      const collaborationMessages = state.messages.filter(m => m.pane === 'collaboration');
+      expect(conversationMessages).toHaveLength(2);
+      expect(collaborationMessages).toHaveLength(2);
+    });
+  });
+
+  describe('Test 7: activeMessagePane tracks streaming message pane', () => {
+    it('should clear activeMessagePane when message is finalized', () => {
+      let state = createInitialChatState();
+      state = addAgentMessage(state, 'Agent', 'conversation');
+      expect(state.activeMessagePane).toBe('conversation');
+
+      state = finalizeAgentMessage(state);
+      expect(state.activeMessagePane).toBeNull();
+    });
+
+    it('should track correct pane during streaming in collaboration', () => {
+      let state = createInitialChatState();
+      state = addAgentMessage(state, 'Internal Agent', 'collaboration');
+
+      expect(state.activeMessagePane).toBe('collaboration');
+
+      state = appendToStreamingContent(state, 'Token 1');
+      expect(state.activeMessagePane).toBe('collaboration');
+
+      state = appendToStreamingContent(state, ' Token 2');
+      expect(state.activeMessagePane).toBe('collaboration');
     });
   });
 });

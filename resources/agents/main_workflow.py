@@ -34,7 +34,7 @@ CUSTOMIZATION:
 import concurrent.futures
 import sys
 import time
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Set, Optional
 
 # Import common orchestrator utilities (DO NOT MODIFY)
 from agents.shared.orchestrator_utils import (
@@ -233,6 +233,27 @@ def get_ready_tasks(dag: Dict[str, List[str]], completed: Set[str]) -> List[str]
     return ready
 
 
+def get_from_agent_for_task(task_id: str, dag: Dict[str, List[str]]) -> Optional[str]:
+    """
+    Determine the from_agent value for a task based on its dependencies.
+
+    For tasks with no dependencies (entry tasks), returns None.
+    For tasks with dependencies, returns the display name of the first dependency.
+
+    Args:
+        task_id: The task being started
+        dag: Task dependency graph
+
+    Returns:
+        Name of the first dependency agent, or None if no dependencies
+    """
+    deps = dag.get(task_id, [])
+    if not deps:
+        return None
+    # Return the display name of the first dependency
+    return get_agent_display_name(deps[0])
+
+
 # ============================================================================
 # MAIN EXECUTION (DO NOT MODIFY)
 # ============================================================================
@@ -293,6 +314,10 @@ def main() -> None:
         failed_task = None
         failed_error = None
 
+        # Track previous agent for from_agent field in node_start events
+        # In workflow pattern, this is determined by task dependencies
+        previous_agent_name = None
+
         # Execute tasks in parallel waves
         max_workers = min(8, len(dag))  # Limit concurrent invocations
 
@@ -314,7 +339,14 @@ def main() -> None:
                 for task_id in ready_tasks:
                     agent_name = get_agent_display_name(task_id)
 
-                    # Emit node_start event
+                    # Build prompt with dependency results
+                    dep_results = {dep: results[dep] for dep in dag[task_id] if dep in results}
+                    task_prompt = build_task_prompt(task_id, args.prompt, dep_results)
+
+                    # Determine from_agent based on dependencies
+                    from_agent = get_from_agent_for_task(task_id, dag)
+
+                    # Emit node_start event with from_agent and handoff_prompt for dual-pane UI
                     emit_event({
                         "event_type": "node_start",
                         "timestamp": get_timestamp(),
@@ -322,12 +354,10 @@ def main() -> None:
                         "workflow_id": args.workflow_id,
                         "trace_id": args.trace_id,
                         "node_id": task_id,
-                        "node_name": agent_name
+                        "node_name": agent_name,
+                        "from_agent": from_agent,
+                        "handoff_prompt": task_prompt
                     })
-
-                    # Build prompt with dependency results
-                    dep_results = {dep: results[dep] for dep in dag[task_id] if dep in results}
-                    task_prompt = build_task_prompt(task_id, args.prompt, dep_results)
 
                     # Submit task
                     future = executor.submit(invoke_agent_remotely, task_id, task_prompt, session_id)
@@ -343,6 +373,9 @@ def main() -> None:
                         results[task_id] = response
                         completed.add(task_id)
                         agents_invoked.append(task_id)
+
+                        # Update previous_agent_name for tracking (used by dependent tasks)
+                        previous_agent_name = agent_name
 
                         # Emit node_stop event (success) with response content
                         emit_event({

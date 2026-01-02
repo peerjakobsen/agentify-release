@@ -1255,7 +1255,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerPanel.ts` — Replace prompt section with chat UI
 - New CSS in webview for message bubbles `M`
 
-35.1. [ ] Dual-Pane Conversation UI — Split Demo Viewer chat into side-by-side panes for clearer conversation flow:
+35.1. [x] Dual-Pane Conversation UI — Split Demo Viewer chat into side-by-side panes for clearer conversation flow:
 
 **Left Pane: Human ↔ Entry Agent**
 - User messages (blue, right-aligned) labeled "Human"
@@ -1427,6 +1427,66 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - **Agentify Power**: Bundles steering guidance and enforcement hooks into a Kiro Power package that activates on-demand during agent development
 - **Enforcement Hooks**: Automatically validate generated code follows Agentify patterns (event emission, CLI contract, mock tool structure) as files are saved
 - Hooks reference steering files for validation rules, creating a closed loop between documentation and enforcement
+
+## Future Ideas
+
+### Human-in-the-Loop with Step Functions
+
+**Problem:** Long-running agent orchestrations may require human approval (e.g., high-value transactions, sensitive operations). Strands has an Interrupt system, but the orchestration process can't wait hours/days for approval.
+
+**Proposed Architecture:** Step Functions as a thin durability layer around Strands orchestration:
+
+```
+Step Functions (Durability Layer)
+    │
+    ├── Invoke Strands Orchestration (Lambda/AgentCore)
+    │       │
+    │       └── Strands handles all agent routing (Graph/Swarm/Workflow)
+    │           │
+    │           └── Agent raises interrupt → returns to Step Functions
+    │
+    ├── CheckForInterrupt (Choice state)
+    │       │
+    │       └── If interrupt: WaitForTaskToken (pauses indefinitely)
+    │
+    ├── EventBridge event emitted → Human notified (Slack/Email/UI)
+    │
+    ├── Human approves → EventBridge callback → SendTaskSuccess(token)
+    │
+    └── Resume Strands with approval response (same session_id)
+```
+
+**Key Components:**
+
+1. **Strands Interrupts** (`tool_context.interrupt()` or hook-based):
+   - Agent detects approval needed
+   - Returns `{stop_reason: "interrupt", session_id, interrupts: [...]}`
+
+2. **Step Functions `.waitForTaskToken`**:
+   - Pauses execution up to 1 year
+   - Stores task token for callback resume
+
+3. **Strands Session Persistence** (DynamoDB):
+   - Saves orchestration state on interrupt
+   - Resumes from exact point with approval response
+
+4. **EventBridge Integration**:
+   - Decoupled notification delivery
+   - Targets: Slack, SNS, Demo Viewer UI, custom webhooks
+
+**Benefits:**
+- Strands owns all agent logic (routing, handoffs, tools)
+- Step Functions provides durability (state, retries, timeouts)
+- EventBridge enables flexible notification routing
+- Demo Viewer can show pending approvals and approval history
+
+**Wizard Integration (Step 4: Security & Guardrails):**
+- Human Approval Gates checkboxes generate Step Functions states
+- Each gate becomes a `WaitForTaskToken` checkpoint in the state machine
+
+**Reference:** Strands Interrupts documentation: https://strandsagents.com/latest/documentation/docs/user-guide/concepts/interrupts/
+
+---
 
 ## Technical References
 

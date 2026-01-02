@@ -16,6 +16,8 @@ import {
   finalizeAgentMessage,
   updatePipelineStage,
   addErrorMessage,
+  determineMessagePane,
+  addHandoffMessage,
 } from '../../utils/chatStateUtils';
 import type { ChatSessionState, ChatUiState } from '../../types/chatPanel';
 
@@ -107,7 +109,7 @@ describe('Task Group 4: Service Integration Tests', () => {
   describe('Test 3: Streaming tokens accumulate correctly via node_stream events', () => {
     it('should accumulate streaming tokens', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Technical Agent');
+      state = addAgentMessage(state, 'Technical Agent', 'conversation');
 
       state = appendToStreamingContent(state, 'Hello');
       expect(state.streamingContent).toBe('Hello');
@@ -121,7 +123,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should create new agent message with streaming flag true', () => {
       const state = createInitialChatState();
-      const updatedState = addAgentMessage(state, 'Technical Agent');
+      const updatedState = addAgentMessage(state, 'Technical Agent', 'conversation');
 
       expect(updatedState.messages).toHaveLength(1);
       expect(updatedState.messages[0].isStreaming).toBe(true);
@@ -131,10 +133,10 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should reset streaming content on new agent message', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Agent 1');
+      state = addAgentMessage(state, 'Agent 1', 'conversation');
       state = appendToStreamingContent(state, 'First content');
       state = finalizeAgentMessage(state);
-      state = addAgentMessage(state, 'Agent 2');
+      state = addAgentMessage(state, 'Agent 2', 'conversation');
 
       expect(state.streamingContent).toBe('');
       expect(state.activeAgentName).toBe('Agent 2');
@@ -144,7 +146,7 @@ describe('Task Group 4: Service Integration Tests', () => {
   describe('Test 4: Agent message finalizes correctly on node_stop', () => {
     it('should move streaming content to message content', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Technical Agent');
+      state = addAgentMessage(state, 'Technical Agent', 'conversation');
       state = appendToStreamingContent(state, 'Analysis complete.');
 
       expect(state.messages[0].content).toBe('');
@@ -158,7 +160,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should clear activeAgentName after finalization', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Technical Agent');
+      state = addAgentMessage(state, 'Technical Agent', 'conversation');
       state = appendToStreamingContent(state, 'Content');
 
       expect(state.activeAgentName).toBe('Technical Agent');
@@ -170,7 +172,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should clear streaming content after finalization', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Agent');
+      state = addAgentMessage(state, 'Agent', 'conversation');
       state = appendToStreamingContent(state, 'Test content');
 
       expect(state.streamingContent).toBe('Test content');
@@ -184,12 +186,12 @@ describe('Task Group 4: Service Integration Tests', () => {
       let state = createInitialChatState();
 
       // Add first agent message and finalize
-      state = addAgentMessage(state, 'Agent 1');
+      state = addAgentMessage(state, 'Agent 1', 'conversation');
       state = appendToStreamingContent(state, 'First message');
       state = finalizeAgentMessage(state);
 
       // Add second agent message
-      state = addAgentMessage(state, 'Agent 2');
+      state = addAgentMessage(state, 'Agent 2', 'conversation');
       state = appendToStreamingContent(state, 'Second message');
       state = finalizeAgentMessage(state);
 
@@ -226,7 +228,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should clear activeAgentName on error', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Agent');
+      state = addAgentMessage(state, 'Agent', 'conversation');
       state = appendToStreamingContent(state, 'Partial content');
 
       expect(state.activeAgentName).toBe('Agent');
@@ -238,7 +240,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
     it('should clear streaming content on error', () => {
       let state = createInitialChatState();
-      state = addAgentMessage(state, 'Agent');
+      state = addAgentMessage(state, 'Agent', 'conversation');
       state = appendToStreamingContent(state, 'Partial');
 
       state = addErrorMessage(state, 'Error');
@@ -252,7 +254,7 @@ describe('Task Group 4: Service Integration Tests', () => {
       // Simulate the streaming token flow
       const state = createInitialChatState();
       const updatedState = appendToStreamingContent(
-        addAgentMessage(state, 'Agent'),
+        addAgentMessage(state, 'Agent', 'conversation'),
         'Token'
       );
 
@@ -325,7 +327,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
       // 3. First agent starts
       state = updatePipelineStage(state, 'Triage', 'active');
-      state = addAgentMessage(state, 'Triage');
+      state = addAgentMessage(state, 'Triage', 'conversation');
 
       // 4. First agent streams tokens
       state = appendToStreamingContent(state, 'Routing');
@@ -337,7 +339,7 @@ describe('Task Group 4: Service Integration Tests', () => {
 
       // 6. Second agent starts
       state = updatePipelineStage(state, 'Technical', 'active');
-      state = addAgentMessage(state, 'Technical');
+      state = addAgentMessage(state, 'Technical', 'conversation');
 
       // 7. Second agent streams tokens
       state = appendToStreamingContent(state, 'Analysis complete.');
@@ -358,6 +360,177 @@ describe('Task Group 4: Service Integration Tests', () => {
       expect(state.pipelineStages[0].status).toBe('completed');
       expect(state.pipelineStages[1].status).toBe('completed');
       expect(state.pipelineStages[2].status).toBe('pending');
+    });
+  });
+});
+
+// ============================================================================
+// Task 4.1 (continued): Entry Agent and Pane Routing Tests
+// ============================================================================
+
+describe('Task Group 4: Entry Agent and Pane Routing Logic', () => {
+  describe('Test 1: First node_start sets entryAgentName in state', () => {
+    it('should identify entry agent from first node_start (simulated flow)', () => {
+      let state = createInitialChatState();
+
+      // Simulate first node_start - this is the entry agent
+      // In the actual handler, entryAgentName is set on first node_start
+      expect(state.entryAgentName).toBeNull();
+
+      // Simulate what handleNodeStartEvent does for the first agent
+      const agentName = 'Triage Agent';
+      const fromAgent = null; // Entry agent has no from_agent
+
+      // First node_start sets entryAgentName
+      if (state.entryAgentName === null) {
+        state = { ...state, entryAgentName: agentName };
+      }
+
+      expect(state.entryAgentName).toBe('Triage Agent');
+    });
+
+    it('should not override entryAgentName on subsequent node_start events', () => {
+      let state = createInitialChatState();
+
+      // First node_start sets entry agent
+      state = { ...state, entryAgentName: 'Triage Agent' };
+
+      // Second node_start should NOT override entryAgentName
+      const secondAgentName = 'Technical Agent';
+      if (state.entryAgentName === null) {
+        state = { ...state, entryAgentName: secondAgentName };
+      }
+
+      expect(state.entryAgentName).toBe('Triage Agent');
+    });
+  });
+
+  describe('Test 2: activeMessagePane is set correctly on node_start', () => {
+    it('should set activeMessagePane to conversation for entry agent', () => {
+      let state = createInitialChatState();
+
+      // Entry agent (from_agent === null) -> conversation pane
+      const pane = determineMessagePane(null);
+      state = addAgentMessage(state, 'Entry Agent', pane);
+
+      expect(state.activeMessagePane).toBe('conversation');
+    });
+
+    it('should set activeMessagePane to collaboration for internal agents', () => {
+      let state = createInitialChatState();
+
+      // Internal agent (from_agent !== null) -> collaboration pane
+      const pane = determineMessagePane('Triage Agent');
+      state = addAgentMessage(state, 'Technical Agent', pane);
+
+      expect(state.activeMessagePane).toBe('collaboration');
+    });
+  });
+
+  describe('Test 3: Handoff messages appear correctly in collaboration pane', () => {
+    it('should add handoff prompt as sender message when from_agent is present', () => {
+      let state = createInitialChatState();
+
+      // Simulate node_start with from_agent (handoff scenario)
+      const fromAgent = 'Triage Agent';
+      const handoffPrompt = 'Please analyze this data in detail';
+
+      // When from_agent !== null, add handoff message
+      if (fromAgent !== null) {
+        state = addHandoffMessage(state, fromAgent, handoffPrompt);
+      }
+
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0].agentName).toBe('Triage Agent');
+      expect(state.messages[0].content).toBe('Please analyze this data in detail');
+      expect(state.messages[0].isSender).toBe(true);
+      expect(state.messages[0].pane).toBe('collaboration');
+    });
+
+    it('should not add handoff message for entry agent', () => {
+      let state = createInitialChatState();
+
+      // Entry agent has from_agent === null
+      const fromAgent = null;
+      const handoffPrompt = 'User prompt';
+
+      // No handoff message for entry agent
+      if (fromAgent !== null) {
+        state = addHandoffMessage(state, fromAgent, handoffPrompt);
+      }
+
+      expect(state.messages).toHaveLength(0);
+    });
+  });
+
+  describe('Test 4: Agent responses appear in correct panes', () => {
+    it('should route entry agent response to conversation pane', () => {
+      let state = createInitialChatState();
+
+      // Entry agent (from_agent === null) response
+      const pane = determineMessagePane(null);
+      state = addAgentMessage(state, 'Entry Agent', pane);
+      state = appendToStreamingContent(state, 'Entry agent response');
+      state = finalizeAgentMessage(state);
+
+      expect(state.messages[0].pane).toBe('conversation');
+      expect(state.messages[0].content).toBe('Entry agent response');
+    });
+
+    it('should route internal agent response to collaboration pane', () => {
+      let state = createInitialChatState();
+
+      // Internal agent (from_agent !== null) response
+      const pane = determineMessagePane('Previous Agent');
+      state = addAgentMessage(state, 'Internal Agent', pane);
+      state = appendToStreamingContent(state, 'Internal agent response');
+      state = finalizeAgentMessage(state);
+
+      expect(state.messages[0].pane).toBe('collaboration');
+      expect(state.messages[0].content).toBe('Internal agent response');
+    });
+  });
+
+  describe('Test 5: Complete multi-agent workflow with dual-pane routing', () => {
+    it('should correctly route all messages in multi-agent workflow', () => {
+      let state = createInitialChatState();
+
+      // 1. User sends message
+      state = addUserMessage(state, 'Analyze sales data');
+      expect(state.messages[0].pane).toBe('conversation');
+
+      // 2. Entry agent starts (from_agent: null)
+      state = { ...state, entryAgentName: 'Triage Agent' };
+      const entryPane = determineMessagePane(null);
+      state = addAgentMessage(state, 'Triage Agent', entryPane);
+      state = appendToStreamingContent(state, 'Routing to technical team...');
+      state = finalizeAgentMessage(state);
+
+      expect(state.messages[1].pane).toBe('conversation');
+      expect(state.entryAgentName).toBe('Triage Agent');
+
+      // 3. Handoff to Technical Agent (from_agent: 'Triage Agent')
+      const fromAgent = 'Triage Agent';
+      state = addHandoffMessage(state, fromAgent, 'Perform technical analysis');
+
+      expect(state.messages[2].pane).toBe('collaboration');
+      expect(state.messages[2].isSender).toBe(true);
+
+      // 4. Technical Agent starts and responds
+      const internalPane = determineMessagePane(fromAgent);
+      state = addAgentMessage(state, 'Technical Agent', internalPane);
+      state = appendToStreamingContent(state, 'Analysis complete: Revenue up 15%');
+      state = finalizeAgentMessage(state);
+
+      expect(state.messages[3].pane).toBe('collaboration');
+      expect(state.messages[3].isSender).toBeUndefined();
+
+      // Verify final message distribution
+      const conversationMessages = state.messages.filter(m => m.pane === 'conversation');
+      const collaborationMessages = state.messages.filter(m => m.pane === 'collaboration');
+
+      expect(conversationMessages).toHaveLength(2); // User + Entry Agent
+      expect(collaborationMessages).toHaveLength(2); // Handoff + Technical Agent
     });
   });
 });

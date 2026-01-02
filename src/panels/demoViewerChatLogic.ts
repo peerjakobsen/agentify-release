@@ -18,6 +18,8 @@ import {
   setWorkflowStartTime,
   resetChatState,
   addErrorMessage,
+  determineMessagePane,
+  addHandoffMessage,
 } from '../utils/chatStateUtils';
 import type {
   ChatSessionState,
@@ -41,7 +43,7 @@ import { formatTime } from '../utils/timerFormatter';
 export interface ChatLogicCallbacks {
   updateWebviewContent: () => void;
   syncStateToWebview: () => void;
-  postStreamingToken: (content: string) => void;
+  postStreamingToken: (content: string, pane?: string | null) => void;
 }
 
 /**
@@ -319,22 +321,46 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   /**
    * Handles node_start event
    * Creates new agent message bubble and updates pipeline status
+   * Routes messages to correct pane based on from_agent field
    * Python provides both node_id and node_name - use node_name for display
    */
   private handleNodeStartEvent(event: NodeStartEvent): void {
     // Python emits node_name for display, node_id for identification
-    const eventAny = event as unknown as { node_name?: string };
+    const eventAny = event as unknown as { node_name?: string; from_agent?: string | null; handoff_prompt?: string };
     const agentName = eventAny.node_name || event.node_id;
 
-    console.log(`[DemoViewerChatLogic] Node start: ${agentName}, pipeline stages:`, this._sessionState.pipelineStages);
+    // Extract from_agent and handoff_prompt from event
+    // Use event fields if available, otherwise check eventAny for Python format
+    const fromAgent = event.from_agent !== undefined ? event.from_agent : (eventAny.from_agent ?? null);
+    const handoffPrompt = event.handoff_prompt || eventAny.handoff_prompt || '';
+
+    console.log(`[DemoViewerChatLogic] Node start: ${agentName}, from_agent: ${fromAgent}, pipeline stages:`, this._sessionState.pipelineStages);
+
+    // If first node_start received, set entryAgentName
+    if (this._sessionState.entryAgentName === null) {
+      this._sessionState = {
+        ...this._sessionState,
+        entryAgentName: agentName,
+      };
+      console.log(`[DemoViewerChatLogic] Set entry agent: ${agentName}`);
+    }
+
+    // If from_agent is not null, add handoff message to collaboration pane
+    if (fromAgent !== null && handoffPrompt) {
+      this._sessionState = addHandoffMessage(this._sessionState, fromAgent, handoffPrompt);
+      console.log(`[DemoViewerChatLogic] Added handoff message from ${fromAgent}`);
+    }
+
+    // Determine pane based on from_agent
+    const pane = determineMessagePane(fromAgent);
 
     // Update pipeline stage to active
     this._sessionState = updatePipelineStage(this._sessionState, agentName, 'active');
 
-    // Create new agent message bubble
-    this._sessionState = addAgentMessage(this._sessionState, agentName);
+    // Create new agent message bubble in the correct pane
+    this._sessionState = addAgentMessage(this._sessionState, agentName, pane);
 
-    console.log(`[DemoViewerChatLogic] After node start, messages:`, this._sessionState.messages.length);
+    console.log(`[DemoViewerChatLogic] After node start, messages: ${this._sessionState.messages.length}, pane: ${pane}`);
 
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
@@ -343,6 +369,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   /**
    * Handles node_stop event
    * Finalizes agent message and updates pipeline status
+   * Streaming content routes to the same pane as the corresponding node_start
    * Python provides both node_id and node_name - use node_name for display
    * Python also sends the full response in node_stop (not via streaming)
    */
@@ -354,7 +381,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Extract response from event (Python sends full response in node_stop)
     const response = eventAny.response || '';
 
-    console.log(`[DemoViewerChatLogic] Node stop: ${agentName}, response length: ${response.length}`);
+    console.log(`[DemoViewerChatLogic] Node stop: ${agentName}, response length: ${response.length}, activePane: ${this._sessionState.activeMessagePane}`);
 
     // If we have a response and no streaming content, set it directly
     if (response && !this._sessionState.streamingContent) {
@@ -362,6 +389,7 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     }
 
     // Finalize the current streaming message
+    // The message retains its pane assignment from node_start
     this._sessionState = finalizeAgentMessage(this._sessionState);
 
     // Update pipeline stage based on status
@@ -381,7 +409,11 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     this._sessionState = appendToStreamingContent(this._sessionState, event.data);
 
     // Post streaming token to webview for real-time update
-    this._callbacks.postStreamingToken(this._sessionState.streamingContent);
+    // Include activeMessagePane so the correct pane scrolls
+    this._callbacks.postStreamingToken(
+      this._sessionState.streamingContent,
+      this._sessionState.activeMessagePane
+    );
   }
 
   /**

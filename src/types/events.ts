@@ -77,6 +77,18 @@ export interface NodeStartEvent extends BaseEvent {
   type: 'node_start';
   /** ID of the node that started */
   node_id: string;
+  /**
+   * Name of the agent that triggered this node (handoff source).
+   * - null: Entry agent receiving user prompt directly
+   * - string: Name of the agent that handed off to this node
+   */
+  from_agent: string | null;
+  /**
+   * The prompt/instruction sent to this agent.
+   * - For entry agent: Contains the original user prompt
+   * - For subsequent agents: Contains the enhanced/handoff prompt from sender
+   */
+  handoff_prompt: string;
 }
 
 /**
@@ -250,6 +262,8 @@ export function isGraphStructureEvent(event: AgentifyEvent): event is GraphStruc
 
 /**
  * Type guard for NodeStartEvent
+ * Note: Only checks event.type for backward compatibility.
+ * The from_agent and handoff_prompt fields are not checked here.
  */
 export function isNodeStartEvent(event: AgentifyEvent): event is NodeStartEvent {
   return 'type' in event && event.type === 'node_start';

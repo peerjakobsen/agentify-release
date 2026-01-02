@@ -14,6 +14,7 @@ import type {
   AgentPipelineStatus,
   ChatUiState,
   ChatPanelState,
+  MessagePane,
 } from '../types/chatPanel';
 
 /**
@@ -48,6 +49,8 @@ export function createInitialChatState(): ChatSessionState {
     pipelineStages: [],
     activeAgentName: null,
     streamingContent: '',
+    entryAgentName: null,
+    activeMessagePane: null,
   };
 }
 
@@ -78,7 +81,18 @@ export function createInitialChatPanelState(): ChatPanelState {
 }
 
 /**
+ * Determines which pane a message should be routed to based on from_agent field
+ *
+ * @param fromAgent - The from_agent field from node_start event (null for entry agent)
+ * @returns 'conversation' if fromAgent is null, 'collaboration' otherwise
+ */
+export function determineMessagePane(fromAgent: string | null): MessagePane {
+  return fromAgent === null ? 'conversation' : 'collaboration';
+}
+
+/**
  * Adds a user message to the chat state
+ * User messages always route to the conversation pane (left pane)
  *
  * @param state - Current chat session state
  * @param content - Message content text
@@ -91,6 +105,7 @@ export function addUserMessage(state: ChatSessionState, content: string): ChatSe
     content: content.trim(),
     timestamp: Date.now(),
     isStreaming: false,
+    pane: 'conversation',
   };
 
   return {
@@ -106,9 +121,14 @@ export function addUserMessage(state: ChatSessionState, content: string): ChatSe
  *
  * @param state - Current chat session state
  * @param agentName - Name of the agent creating the message
+ * @param pane - Target pane for this message ('conversation' or 'collaboration')
  * @returns Updated chat session state with new agent message
  */
-export function addAgentMessage(state: ChatSessionState, agentName: string): ChatSessionState {
+export function addAgentMessage(
+  state: ChatSessionState,
+  agentName: string,
+  pane: MessagePane
+): ChatSessionState {
   const agentMessage: ChatMessage = {
     id: generateMessageId(),
     role: 'agent',
@@ -116,6 +136,7 @@ export function addAgentMessage(state: ChatSessionState, agentName: string): Cha
     content: '',
     timestamp: Date.now(),
     isStreaming: true,
+    pane,
   };
 
   return {
@@ -123,6 +144,39 @@ export function addAgentMessage(state: ChatSessionState, agentName: string): Cha
     messages: [...state.messages, agentMessage],
     activeAgentName: agentName,
     streamingContent: '',
+    activeMessagePane: pane,
+  };
+}
+
+/**
+ * Adds a handoff message to the collaboration pane
+ * Handoff messages represent the prompt sent from one agent to another during handoffs.
+ * They appear as sender-style messages (right-aligned, like user messages visually).
+ *
+ * @param state - Current chat session state
+ * @param senderAgentName - Name of the agent sending the handoff
+ * @param handoffPrompt - The prompt/instruction being sent to the next agent
+ * @returns Updated chat session state with handoff message added
+ */
+export function addHandoffMessage(
+  state: ChatSessionState,
+  senderAgentName: string,
+  handoffPrompt: string
+): ChatSessionState {
+  const handoffMessage: ChatMessage = {
+    id: generateMessageId(),
+    role: 'agent',
+    agentName: senderAgentName,
+    content: handoffPrompt,
+    timestamp: Date.now(),
+    isStreaming: false,
+    pane: 'collaboration',
+    isSender: true,
+  };
+
+  return {
+    ...state,
+    messages: [...state.messages, handoffMessage],
   };
 }
 
@@ -166,6 +220,7 @@ export function finalizeAgentMessage(state: ChatSessionState): ChatSessionState 
     messages: updatedMessages,
     activeAgentName: null,
     streamingContent: '',
+    activeMessagePane: null,
   };
 }
 
@@ -229,6 +284,7 @@ export function resetChatState(): ChatSessionState {
 
 /**
  * Adds an error message to the chat
+ * Error messages route to the conversation pane (left pane)
  *
  * @param state - Current chat session state
  * @param errorMessage - Error message text
@@ -242,6 +298,7 @@ export function addErrorMessage(state: ChatSessionState, errorMessage: string): 
     content: `Error: ${errorMessage}`,
     timestamp: Date.now(),
     isStreaming: false,
+    pane: 'conversation',
   };
 
   return {
@@ -249,6 +306,7 @@ export function addErrorMessage(state: ChatSessionState, errorMessage: string): 
     messages: [...state.messages, errorChatMessage],
     activeAgentName: null,
     streamingContent: '',
+    activeMessagePane: null,
   };
 }
 

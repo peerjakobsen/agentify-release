@@ -263,7 +263,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
       {
         updateWebviewContent: () => this.updateWebviewContent(),
         syncStateToWebview: () => this.syncStateToWebview(),
-        postStreamingToken: (content: string) => this.postDemoStreamingToken(content),
+        postStreamingToken: (content: string, pane?: string | null) => this.postDemoStreamingToken(content, pane),
       }
     );
   }
@@ -283,12 +283,14 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
   /**
    * Post streaming token to webview (Demo Viewer Chat)
    * Task Group 4: Separate method for demo chat streaming
+   * Includes pane parameter for dual-pane scroll behavior
    */
-  private postDemoStreamingToken(content: string): void {
+  private postDemoStreamingToken(content: string, pane?: string | null): void {
     if (this._view && this._activeTab === 'demo') {
       this._view.webview.postMessage({
         type: 'streamingToken',
         content,
+        pane,
       });
     }
   }
@@ -1879,16 +1881,28 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         // Update the streaming message content in real-time
         const streamingText = document.querySelector('.streaming .streaming-text');
         const typingIndicator = document.querySelector('.streaming .typing-indicator');
-        const chatContainer = document.querySelector('.chat-container');
         if (streamingText) {
           streamingText.textContent = message.content;
           // Hide typing indicator once we have content
           if (typingIndicator && message.content) {
             typingIndicator.style.display = 'none';
           }
-          // Auto-scroll to bottom
-          if (chatContainer) {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+          // Auto-scroll to bottom - handle dual-pane layout
+          const paneContainers = document.querySelectorAll('.pane-messages');
+          if (paneContainers.length > 0) {
+            // Dual-pane: scroll the pane containing the streaming message
+            if (message.pane) {
+              const selector = message.pane === 'conversation' ? '.pane-left .pane-messages' : '.pane-right .pane-messages';
+              const paneContainer = document.querySelector(selector);
+              if (paneContainer) paneContainer.scrollTop = paneContainer.scrollHeight;
+            } else {
+              // Fallback: scroll all panes
+              paneContainers.forEach(c => c.scrollTop = c.scrollHeight);
+            }
+          } else {
+            // Legacy single container
+            const chatContainer = document.querySelector('.chat-container');
+            if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
           }
         }
       }

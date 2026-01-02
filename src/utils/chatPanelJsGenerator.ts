@@ -73,13 +73,33 @@ export function generateChatPanelJs(): string {
 
     // =========================================================================
     // Auto-scroll to Bottom
-    // Scrolls chat container to bottom when new messages arrive
+    // Scrolls chat pane containers to bottom when new messages arrive
+    // Handles both dual-pane layout (.pane-messages) and legacy (#chat-container)
     // =========================================================================
 
     function scrollChatToBottom() {
+      // Dual-pane layout: scroll both pane message containers
+      const paneContainers = document.querySelectorAll('.pane-messages');
+      if (paneContainers.length > 0) {
+        paneContainers.forEach(container => {
+          container.scrollTop = container.scrollHeight;
+        });
+        return;
+      }
+
+      // Legacy fallback: single chat container
       const chatContainer = document.getElementById('chat-container');
       if (chatContainer) {
         chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+    }
+
+    // Scroll specific pane to bottom (for streaming to correct pane)
+    function scrollPaneToBottom(pane) {
+      const selector = pane === 'conversation' ? '.pane-left .pane-messages' : '.pane-right .pane-messages';
+      const container = document.querySelector(selector);
+      if (container) {
+        container.scrollTop = container.scrollHeight;
       }
     }
 
@@ -103,7 +123,7 @@ export function generateChatPanelJs(): string {
     // Updates streaming message content in real-time
     // =========================================================================
 
-    function handleStreamingToken(content) {
+    function handleStreamingToken(content, pane) {
       const streamingText = document.querySelector('.streaming .streaming-text');
       const typingIndicator = document.querySelector('.streaming .typing-indicator');
 
@@ -116,8 +136,12 @@ export function generateChatPanelJs(): string {
           typingIndicator.style.display = 'none';
         }
 
-        // Auto-scroll to bottom
-        scrollChatToBottom();
+        // Auto-scroll the pane containing the streaming message
+        if (pane) {
+          scrollPaneToBottom(pane);
+        } else {
+          scrollChatToBottom();
+        }
       }
     }
 
@@ -146,7 +170,7 @@ export function generateChatPanelJs(): string {
           break;
 
         case 'streamingToken':
-          handleStreamingToken(message.content);
+          handleStreamingToken(message.content, message.pane);
           break;
 
         case 'scrollToBottom':
@@ -195,6 +219,7 @@ export function generateChatPanelJs(): string {
       handleSendClick,
       handleNewConversation,
       scrollChatToBottom,
+      scrollPaneToBottom,
       handleTimerUpdate,
       handleStreamingToken,
       handleChatMessage,
@@ -223,8 +248,13 @@ export function generateChatPanelInlineJs(): string {
       vscode.postMessage({ command: 'newConversation' });
     }
 
-    // Auto-scroll chat container
+    // Auto-scroll chat containers (dual-pane or legacy)
     function scrollChatToBottom() {
+      const paneContainers = document.querySelectorAll('.pane-messages');
+      if (paneContainers.length > 0) {
+        paneContainers.forEach(c => c.scrollTop = c.scrollHeight);
+        return;
+      }
       const container = document.getElementById('chat-container');
       if (container) container.scrollTop = container.scrollHeight;
     }

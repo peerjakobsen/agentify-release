@@ -239,11 +239,14 @@ def main() -> None:
         last_response = None
         max_handoffs = 20  # Prevent infinite loops
 
+        # Track previous agent for from_agent field in node_start events
+        previous_agent_name = None
+
         while current_agent is not None and len(agents_invoked) < max_handoffs:
             agent_name = get_agent_display_name(current_agent)
             print(f"Invoking agent: {agent_name} ({current_agent})", file=sys.stderr)
 
-            # Emit node_start event
+            # Emit node_start event with from_agent and handoff_prompt for dual-pane UI
             emit_event({
                 "event_type": "node_start",
                 "timestamp": get_timestamp(),
@@ -251,7 +254,9 @@ def main() -> None:
                 "workflow_id": args.workflow_id,
                 "trace_id": args.trace_id,
                 "node_id": current_agent,
-                "node_name": agent_name
+                "node_name": agent_name,
+                "from_agent": previous_agent_name,
+                "handoff_prompt": current_prompt
             })
 
             try:
@@ -275,6 +280,9 @@ def main() -> None:
                 print(f"Agent {current_agent} completed: {response_preview}...", file=sys.stderr)
 
                 last_response = response
+
+                # Update previous_agent_name for the next agent's from_agent field
+                previous_agent_name = agent_name
 
                 # Swarm pattern: Extract handoff from agent's response
                 next_agent = extract_handoff_from_response(response)

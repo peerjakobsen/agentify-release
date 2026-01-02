@@ -141,6 +141,92 @@ export function getDemoViewerChatStyles(): string {
     }
 
     /* =========================================================================
+     * Dual-Pane Container Styles
+     * Side-by-side layout for Conversation and Agent Collaboration panes
+     * ========================================================================= */
+
+    .dual-pane-container {
+      display: flex;
+      min-height: 200px;
+      max-height: 400px;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+
+    /* Left pane: User-facing conversation */
+    .pane-left {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    /* Right pane: Agent collaboration */
+    .pane-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-left: 1px solid var(--vscode-panel-border);
+    }
+
+    /* =========================================================================
+     * Pane Header Styles
+     * Label text for each pane ("Conversation", "Agent Collaboration")
+     * ========================================================================= */
+
+    .pane-header {
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-editorWidget-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+
+    /* =========================================================================
+     * Pane Messages Styles
+     * Independent scroll container for each pane
+     * ========================================================================= */
+
+    .pane-messages {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      overflow-y: auto;
+      max-height: 350px;
+      flex: 1;
+    }
+
+    /* =========================================================================
+     * Collaboration Pane Empty State Styles
+     * "No agent collaboration" message when right pane is empty
+     * ========================================================================= */
+
+    .collaboration-empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground);
+      font-size: 13px;
+      flex: 1;
+    }
+
+    .collaboration-empty-icon {
+      font-size: 24px;
+      margin-bottom: 8px;
+      opacity: 0.5;
+    }
+
+    /* =========================================================================
      * Message Bubble Styles
      * User and agent message styling - reuses from ideationStyles.ts
      * ========================================================================= */
@@ -164,6 +250,13 @@ export function getDemoViewerChatStyles(): string {
       align-items: flex-end;
     }
 
+    /* Sender message - right aligned, blue background (for handoff prompts in collaboration pane) */
+    .chat-message.sender-message {
+      align-self: flex-end;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
     /* Agent name label above bubble */
     .agent-name-label {
       font-size: 11px;
@@ -171,6 +264,12 @@ export function getDemoViewerChatStyles(): string {
       color: var(--vscode-descriptionForeground);
       margin-bottom: 4px;
       padding-left: 4px;
+    }
+
+    /* Sender name label - right aligned */
+    .sender-message .agent-name-label {
+      padding-left: 0;
+      padding-right: 4px;
     }
 
     /* Message content container */
@@ -199,6 +298,13 @@ export function getDemoViewerChatStyles(): string {
 
     /* User message bubble styling */
     .user-message .message-text {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-bottom-right-radius: 4px;
+    }
+
+    /* Sender message bubble styling (blue like user messages) */
+    .sender-message .message-text {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border-bottom-right-radius: 4px;

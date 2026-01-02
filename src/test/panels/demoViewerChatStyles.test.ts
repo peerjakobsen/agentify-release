@@ -198,3 +198,148 @@ describe('Task Group 2: Chat UI Styles', () => {
     });
   });
 });
+
+// ============================================================================
+// Task Group 2: Dual-Pane CSS Styles Tests (Task 2.1)
+// Visual regression tests for the dual-pane conversation UI layout
+// ============================================================================
+
+describe('Task Group 2: Dual-Pane CSS Styles', () => {
+  describe('Test 1: Dual-pane container renders with 50/50 split', () => {
+    it('should contain dual-pane-container class', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.dual-pane-container');
+    });
+
+    it('should use flexbox for dual-pane-container', () => {
+      const styles = getDemoViewerChatStyles();
+      // Extract the dual-pane-container rule
+      expect(styles).toMatch(/\.dual-pane-container\s*\{[^}]*display:\s*flex/);
+    });
+
+    it('should contain pane-left and pane-right classes', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.pane-left');
+      expect(styles).toContain('.pane-right');
+    });
+
+    it('should use flex: 1 for equal width panes', () => {
+      const styles = getDemoViewerChatStyles();
+      // Both pane-left and pane-right should have flex: 1
+      expect(styles).toMatch(/\.pane-left\s*\{[^}]*flex:\s*1/);
+      expect(styles).toMatch(/\.pane-right\s*\{[^}]*flex:\s*1/);
+    });
+
+    it('should have border separator between panes', () => {
+      const styles = getDemoViewerChatStyles();
+      // The right pane should have a left border for separation
+      expect(styles).toMatch(/\.pane-right\s*\{[^}]*border-left/);
+    });
+  });
+
+  describe('Test 2: Pane headers display correctly', () => {
+    it('should contain pane-header class', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.pane-header');
+    });
+
+    it('should style pane-header with 11px font size', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.pane-header\s*\{[^}]*font-size:\s*11px/);
+    });
+
+    it('should style pane-header with uppercase text', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.pane-header\s*\{[^}]*text-transform:\s*uppercase/);
+    });
+
+    it('should use VS Code theme variables for header colors', () => {
+      const styles = getDemoViewerChatStyles();
+      // Header should use VS Code description foreground for subtle appearance
+      expect(styles).toContain('--vscode-descriptionForeground');
+    });
+
+    it('should have subtle visual separation for headers', () => {
+      const styles = getDemoViewerChatStyles();
+      // Header should have padding or border for visual separation
+      expect(styles).toMatch(/\.pane-header\s*\{[^}]*padding/);
+    });
+  });
+
+  describe('Test 3: Independent scroll containers work for each pane', () => {
+    it('should contain pane-messages class', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.pane-messages');
+    });
+
+    it('should have overflow-y auto for pane-messages', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.pane-messages\s*\{[^}]*overflow-y:\s*auto/);
+    });
+
+    it('should have max-height for pane-messages scroll container', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.pane-messages\s*\{[^}]*max-height:\s*350px/);
+    });
+
+    it('should reuse chat-messages padding pattern for pane-messages', () => {
+      const styles = getDemoViewerChatStyles();
+      // pane-messages should have padding like chat-messages (12px)
+      expect(styles).toMatch(/\.pane-messages\s*\{[^}]*padding:\s*12px/);
+    });
+
+    it('should have gap between messages in pane-messages', () => {
+      const styles = getDemoViewerChatStyles();
+      // pane-messages should have gap between messages like chat-messages
+      expect(styles).toMatch(/\.pane-messages\s*\{[^}]*gap:\s*12px/);
+    });
+  });
+
+  describe('Test 4: Empty state styling in collaboration pane', () => {
+    it('should contain collaboration-empty-state class', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.collaboration-empty-state');
+    });
+
+    it('should center-align the empty state text', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.collaboration-empty-state\s*\{[^}]*text-align:\s*center/);
+    });
+
+    it('should use muted text color for empty state', () => {
+      const styles = getDemoViewerChatStyles();
+      // Should use VS Code description foreground for muted appearance
+      expect(styles).toMatch(/\.collaboration-empty-state\s*\{[^}]*color:\s*var\(--vscode-descriptionForeground\)/);
+    });
+
+    it('should have padding for empty state content', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.collaboration-empty-state\s*\{[^}]*padding/);
+    });
+
+    it('should be consistent with existing chat-empty-state styling', () => {
+      const styles = getDemoViewerChatStyles();
+      // Both empty states should use similar font-size (13px from chat-empty-text)
+      expect(styles).toContain('.chat-empty-state');
+      expect(styles).toContain('.collaboration-empty-state');
+    });
+  });
+
+  describe('Test 5: Sender message styling in collaboration pane', () => {
+    it('should contain sender-message class for right-aligned handoff messages', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toContain('.sender-message');
+    });
+
+    it('should style sender-message with flex-end alignment (right-aligned)', () => {
+      const styles = getDemoViewerChatStyles();
+      expect(styles).toMatch(/\.sender-message\s*\{[^}]*align-self:\s*flex-end/);
+    });
+
+    it('should style sender-message with user message colors (blue)', () => {
+      const styles = getDemoViewerChatStyles();
+      // Sender message bubble should use button background like user messages
+      expect(styles).toMatch(/\.sender-message\s+\.message-text\s*\{[^}]*--vscode-button-background/);
+    });
+  });
+});
