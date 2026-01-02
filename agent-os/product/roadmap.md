@@ -1281,6 +1281,47 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerChatStyles.ts`, `src/utils/chatPanelHtmlGenerator.ts`
 - `resources/agents/main_*.py` templates (add handoff_prompt, from_agent fields) `M`
 
+35.2. [ ] Tool Call Visualization — Show tool calls inline with agent messages in collaboration pane:
+
+**Data Source:**
+- DynamoDB stores tool events via `@instrument_tool` decorator
+- Events include: `workflow_id`, `agent`, `tool_name`, `parameters`, `status`, `duration_ms`
+- Polling already fetches these events (existing DynamoDB integration)
+
+**UI Design (inline chips below agent messages):**
+```
+┌─ AGENT COLLABORATION ─────────────────────────────┐
+│ Triage Agent                                      │
+│ "Analyzing this customer's situation..."          │
+│ ┌───────────────────────────────────────────────┐│
+│ │ 🔧 lookup_customer ✓ 0.3s  🔧 get_ticket ✓   ││
+│ └───────────────────────────────────────────────┘│
+│                                                   │
+│                       Escalation Handler          │
+│                      "Based on VIP status..."     │
+│                      ┌─────────────────────────┐ │
+│                      │ 🔧 notify_manager ✓     │ │
+│                      └─────────────────────────┘ │
+└───────────────────────────────────────────────────┘
+```
+
+**Tool Chip States:**
+- ⏳ Running (animated): Tool started, waiting for completion
+- ✓ Completed (green): Tool finished successfully with duration
+- ✗ Failed (red): Tool errored with hover tooltip for error message
+
+**Implementation:**
+- Match tool events to agent messages by `agent` field and timestamp
+- Group consecutive tool calls under same agent message
+- Optionally expandable to show parameters/output (click to expand)
+
+**Files:**
+- `src/types/events.ts` — Already has `ToolCallEvent` interface
+- `src/types/chatPanel.ts` — Add `toolCalls: ToolCallEvent[]` to `ChatMessage`
+- `src/utils/chatStateUtils.ts` — Match tool events to agent messages
+- `src/panels/demoViewerChatStyles.ts` — Tool chip CSS styles
+- `src/utils/chatPanelHtmlGenerator.ts` — Render tool chips inline `M`
+
 37. [ ] Partial Execution Detection — Detect and handle "needs more info" workflow pauses:
 
 **Detection Strategy (simplified by 35.1):**
