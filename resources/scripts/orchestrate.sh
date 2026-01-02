@@ -254,13 +254,13 @@ if [ "$SKIP_EVENTS" = false ] && [ -n "$SESSION_ID" ]; then
         echo ""
         echo -e "${CYAN}TOOL EVENTS (Session: ${SESSION_ID}):${NC}"
         echo "------------------------------------------------------------"
-        printf "%-20s %-25s %-12s %s\n" "Agent" "Tool" "Status" "Duration"
+        printf "%-20s %-25s %-12s %s\n" "Agent" "Operation" "Status" "Duration"
         echo "------------------------------------------------------------"
 
-        # Parse and display events
-        echo "$EVENTS" | jq -r '.Items[] | "\(.agent.S // "unknown")\t\(.tool_name.S // "unknown")\t\(.status.S // "unknown")\t\(.duration_ms.N // "-")ms"' | \
-        while IFS=$'\t' read -r agent tool status duration; do
-            printf "%-20s %-25s %-12s %s\n" "$agent" "$tool" "$status" "$duration"
+        # Parse and display events (new format: agent_name, operation instead of agent, tool_name)
+        echo "$EVENTS" | jq -r '.Items[] | "\(.agent_name.S // .agent.S // "unknown")\t\(.operation.S // .tool_name.S // "unknown")\t\(.status.S // "unknown")\t\(.duration_ms.N // "-")ms"' | \
+        while IFS=$'\t' read -r agent operation status duration; do
+            printf "%-20s %-25s %-12s %s\n" "$agent" "$operation" "$status" "$duration"
         done
 
         echo "------------------------------------------------------------"

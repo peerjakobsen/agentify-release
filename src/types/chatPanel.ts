@@ -6,6 +6,8 @@
  * streaming token display, and agent pipeline status tracking.
  */
 
+import type { ToolCallEvent } from './events';
+
 /**
  * Role of the message author in the chat conversation
  */
@@ -57,6 +59,18 @@ export interface ChatMessage {
    * the receiving agent's response.
    */
   isSender?: boolean;
+  /**
+   * Timestamp when agent finished processing (set on node_stop event).
+   * Undefined while the agent is still streaming.
+   * Used for matching tool events to messages by time range.
+   */
+  endTimestamp?: number;
+  /**
+   * Tool call events matched to this message by agent name and time range.
+   * Populated by matchToolEventsToMessages() utility function.
+   * Tool chips are rendered inline below the message content.
+   */
+  toolCalls: ToolCallEvent[];
 }
 
 /**

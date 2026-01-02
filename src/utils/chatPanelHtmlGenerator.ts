@@ -7,6 +7,8 @@
  */
 
 import { formatTime } from './timerFormatter';
+import { generateToolId } from './chatStateUtils';
+import type { MergedToolCallEvent } from './chatStateUtils';
 import type {
   ChatMessage,
   ChatSessionState,
@@ -14,6 +16,7 @@ import type {
   ChatPanelState,
   MessagePane,
 } from '../types/chatPanel';
+import type { ToolCallEvent } from '../types/events';
 
 /**
  * Escapes HTML special characters to prevent XSS
@@ -138,6 +141,11 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
     ? `<div class="agent-name-label">${escapeHtml(message.agentName)}</div>`
     : '';
 
+  // Generate tool chips if tool calls exist
+  const toolChipsHtml = message.toolCalls && message.toolCalls.length > 0
+    ? generateToolChipsContainerHtml(message.toolCalls)
+    : '';
+
   if (message.isStreaming) {
     // Streaming message - will be updated via JS
     return `
@@ -150,6 +158,7 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
             <span class="dot"></span>
           </div>
           <div class="streaming-text message-text"></div>
+          ${toolChipsHtml}
         </div>
       </div>
     `;
@@ -160,6 +169,7 @@ export function generateMessageBubbleHtml(message: ChatMessage): string {
       ${agentLabel}
       <div class="message-content">
         <div class="message-text">${escapeHtml(message.content)}</div>
+        ${toolChipsHtml}
       </div>
     </div>
   `;
@@ -441,4 +451,118 @@ export function generateStreamingContentHtml(content: string): string {
     return '';
   }
   return `${escapeHtml(content)}<span class="streaming-cursor"></span>`;
+}
+
+// ============================================================================
+// Tool Chip HTML Generation Functions
+// ============================================================================
+
+/**
+ * Generates HTML for a single tool chip
+ * Renders status-specific styling (running/completed/failed)
+ *
+ * @param toolEvent - Tool call event to render
+ * @returns HTML string for tool chip
+ */
+export function generateToolChipHtml(toolEvent: ToolCallEvent): string {
+  const toolId = generateToolId(toolEvent);
+  let statusClass: string;
+  let statusIcon: string;
+
+  // Determine status class and icon based on event status
+  switch (toolEvent.status) {
+    case 'started':
+      statusClass = 'running';
+      statusIcon = '<span class="tool-chip-spinner"></span>';
+      break;
+    case 'completed':
+      statusClass = 'completed';
+      statusIcon = '<span class="tool-chip-icon">&#10003;</span>'; // Checkmark
+      break;
+    case 'failed':
+      statusClass = 'failed';
+      statusIcon = '<span class="tool-chip-icon">&#10007;</span>'; // X mark
+      break;
+    default:
+      statusClass = 'running';
+      statusIcon = '<span class="tool-chip-spinner"></span>';
+  }
+
+  // Generate the label: system.operation
+  const label = `${escapeHtml(toolEvent.system)}.${escapeHtml(toolEvent.operation)}`;
+
+  return `<div class="tool-chip ${statusClass}" data-tool-id="${escapeHtml(toolId)}">${statusIcon}<span class="tool-chip-label">${label}</span></div>`;
+}
+
+/**
+ * Generates HTML for a container of tool chips
+ * Returns empty string if no tool calls
+ *
+ * @param toolEvents - Array of tool call events
+ * @returns HTML string for tool chips container, or empty string
+ */
+export function generateToolChipsContainerHtml(toolEvents: ToolCallEvent[]): string {
+  if (!toolEvents || toolEvents.length === 0) {
+    return '';
+  }
+
+  const chipsHtml = toolEvents
+    .map((event) => generateToolChipHtml(event))
+    .join('');
+
+  return `<div class="tool-chips-container">${chipsHtml}</div>`;
+}
+
+/**
+ * Generates HTML for expanded tool chip details
+ * Shows input, output, error message, and duration
+ *
+ * @param toolEvent - Tool call event (with optional duration_ms)
+ * @returns HTML string for tool chip details
+ */
+export function generateToolChipDetailsHtml(toolEvent: MergedToolCallEvent): string {
+  const sections: string[] = [];
+
+  // Input section
+  if (toolEvent.input && Object.keys(toolEvent.input).length > 0) {
+    const inputJson = escapeHtml(JSON.stringify(toolEvent.input, null, 2));
+    sections.push(`
+      <div class="tool-chip-details-section">
+        <div class="tool-chip-details-label">Input</div>
+        <pre class="tool-chip-json">${inputJson}</pre>
+      </div>
+    `);
+  }
+
+  // Output section (only for completed status)
+  if (toolEvent.output && Object.keys(toolEvent.output).length > 0) {
+    const outputJson = escapeHtml(JSON.stringify(toolEvent.output, null, 2));
+    sections.push(`
+      <div class="tool-chip-details-section">
+        <div class="tool-chip-details-label">Output</div>
+        <pre class="tool-chip-json">${outputJson}</pre>
+      </div>
+    `);
+  }
+
+  // Error section (only for failed status)
+  if (toolEvent.error_message) {
+    sections.push(`
+      <div class="tool-chip-details-section">
+        <div class="tool-chip-details-label">Error</div>
+        <div class="tool-chip-error-text">${escapeHtml(toolEvent.error_message)}</div>
+      </div>
+    `);
+  }
+
+  // Duration section (if available)
+  if (toolEvent.duration_ms !== undefined) {
+    sections.push(`
+      <div class="tool-chip-details-section">
+        <div class="tool-chip-duration">Completed in ${toolEvent.duration_ms}ms</div>
+      </div>
+    `);
+  }
+
+  return `<div class="tool-chip-details">${sections.join('')}</div>`;
 }

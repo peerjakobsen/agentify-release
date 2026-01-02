@@ -7,6 +7,7 @@
  * - New Conversation button click handler
  * - Auto-scroll on new messages
  * - Timer update handler
+ * - Tool chip expansion toggle
  * - NO Enter key handler (button-only submission for demo safety)
  */
 
@@ -157,6 +158,82 @@ export function generateChatPanelJs(): string {
     }
 
     // =========================================================================
+    // Tool Chip Expansion Toggle Handler
+    // Toggles inline expansion of tool chip details (input/output/error)
+    // =========================================================================
+
+    // Store expanded tool IDs for toggle state
+    const expandedToolChips = new Set();
+
+    function handleToolChipClick(event) {
+      const chip = event.target.closest('.tool-chip');
+      if (!chip) return;
+
+      const toolId = chip.getAttribute('data-tool-id');
+      if (!toolId) return;
+
+      // Find the message content container that contains this chip
+      const messageContent = chip.closest('.message-content');
+      if (!messageContent) return;
+
+      // Check if details already exist
+      let existingDetails = messageContent.querySelector('.tool-chip-details[data-tool-id="' + toolId + '"]');
+
+      if (existingDetails) {
+        // Collapse: remove the details element
+        existingDetails.remove();
+        chip.classList.remove('expanded');
+        expandedToolChips.delete(toolId);
+      } else {
+        // Expand: request details from extension
+        vscode.postMessage({
+          command: 'expandToolChip',
+          toolId: toolId
+        });
+        chip.classList.add('expanded');
+        expandedToolChips.add(toolId);
+      }
+    }
+
+    // Handle tool chip details response from extension
+    function handleToolChipDetails(toolId, detailsHtml) {
+      // Find the chip with this tool ID
+      const chip = document.querySelector('.tool-chip[data-tool-id="' + toolId + '"]');
+      if (!chip) return;
+
+      // Find the message content container
+      const messageContent = chip.closest('.message-content');
+      if (!messageContent) return;
+
+      // Check if details already exist (prevent duplicates)
+      if (messageContent.querySelector('.tool-chip-details[data-tool-id="' + toolId + '"]')) {
+        return;
+      }
+
+      // Create and insert details element
+      const detailsContainer = document.createElement('div');
+      detailsContainer.innerHTML = detailsHtml;
+      const details = detailsContainer.firstElementChild;
+      if (details) {
+        details.setAttribute('data-tool-id', toolId);
+        // Insert after the tool chips container
+        const chipsContainer = messageContent.querySelector('.tool-chips-container');
+        if (chipsContainer && chipsContainer.nextSibling) {
+          messageContent.insertBefore(details, chipsContainer.nextSibling);
+        } else {
+          messageContent.appendChild(details);
+        }
+      }
+    }
+
+    // Attach click handler to tool chips using event delegation
+    document.addEventListener('click', function(event) {
+      if (event.target.closest('.tool-chip')) {
+        handleToolChipClick(event);
+      }
+    });
+
+    // =========================================================================
     // Message Handler
     // Handles messages from extension
     // =========================================================================
@@ -182,6 +259,13 @@ export function generateChatPanelJs(): string {
           // Handle any UI-only updates here
           if (message.scrollToBottom) {
             scrollChatToBottom();
+          }
+          break;
+
+        case 'toolChipDetails':
+          // Handle tool chip expansion details
+          if (message.toolId && message.detailsHtml) {
+            handleToolChipDetails(message.toolId, message.detailsHtml);
           }
           break;
       }
@@ -223,7 +307,9 @@ export function generateChatPanelJs(): string {
       handleTimerUpdate,
       handleStreamingToken,
       handleChatMessage,
-      focusChatInput
+      focusChatInput,
+      handleToolChipClick,
+      handleToolChipDetails
     };
   `;
 }
@@ -259,5 +345,15 @@ export function generateChatPanelInlineJs(): string {
       if (container) container.scrollTop = container.scrollHeight;
     }
     scrollChatToBottom();
+
+    // Tool chip click handler
+    document.addEventListener('click', function(e) {
+      const chip = e.target.closest('.tool-chip');
+      if (!chip) return;
+      const toolId = chip.getAttribute('data-tool-id');
+      if (toolId) {
+        vscode.postMessage({ command: 'expandToolChip', toolId: toolId });
+      }
+    });
   `;
 }

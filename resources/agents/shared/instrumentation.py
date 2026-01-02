@@ -160,13 +160,16 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
         from agents.shared.dynamodb_client import write_tool_event
 
         # Write 'started' event (fire-and-forget)
+        # Format matches TypeScript ToolCallEvent interface
         started_event = {
             'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
             'timestamp': start_timestamp,
+            'event_type': 'tool_call',  # Required for TypeScript type guard
             'event_id': event_id,
-            'agent': agent_name,
-            'tool_name': tool_name,
-            'parameters': _truncate_json(params),
+            'agent_name': agent_name,  # Matches TypeScript ToolCallEvent
+            'system': 'agent',  # Default system for agent tools
+            'operation': tool_name,  # Tool function name
+            'input': _truncate_json(params),  # Matches TypeScript ToolCallEvent
             'status': 'started',
         }
         write_tool_event(started_event)
@@ -180,12 +183,15 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
             duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
             # Write 'completed' event (fire-and-forget)
+            # Format matches TypeScript ToolCallEvent interface
             completed_event = {
                 'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
                 'timestamp': int(end_time.timestamp() * 1000),  # epoch milliseconds
+                'event_type': 'tool_call',  # Required for TypeScript type guard
                 'event_id': event_id,
-                'agent': agent_name,
-                'tool_name': tool_name,
+                'agent_name': agent_name,  # Matches TypeScript ToolCallEvent
+                'system': 'agent',  # Default system for agent tools
+                'operation': tool_name,  # Tool function name
                 'status': 'completed',
                 'duration_ms': duration_ms,
             }
@@ -198,14 +204,17 @@ def instrument_tool(func: Callable[P, R]) -> Callable[P, R]:
             end_time = datetime.now(timezone.utc)
             duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
-            # Write 'error' event (fire-and-forget)
+            # Write 'failed' event (fire-and-forget)
+            # Format matches TypeScript ToolCallEvent interface
             error_event = {
                 'workflow_id': session_id,  # DynamoDB uses workflow_id as partition key
                 'timestamp': int(end_time.timestamp() * 1000),  # epoch milliseconds
+                'event_type': 'tool_call',  # Required for TypeScript type guard
                 'event_id': event_id,
-                'agent': agent_name,
-                'tool_name': tool_name,
-                'status': 'error',
+                'agent_name': agent_name,  # Matches TypeScript ToolCallEvent
+                'system': 'agent',  # Default system for agent tools
+                'operation': tool_name,  # Tool function name
+                'status': 'failed',  # TypeScript uses 'failed' not 'error'
                 'duration_ms': duration_ms,
                 'error_message': _truncate_error(str(e)),
             }

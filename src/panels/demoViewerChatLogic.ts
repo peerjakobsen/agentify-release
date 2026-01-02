@@ -20,6 +20,7 @@ import {
   addErrorMessage,
   determineMessagePane,
   addHandoffMessage,
+  matchToolEventsToMessages,
 } from '../utils/chatStateUtils';
 import type {
   ChatSessionState,
@@ -34,8 +35,10 @@ import {
   getStdoutEventParser,
   type StdoutEventParser,
 } from '../services/stdoutEventParser';
-import type { MergedEvent, StdoutEvent, NodeStreamEvent, NodeStartEvent, NodeStopEvent, GraphStructureEvent, WorkflowCompleteEvent, WorkflowErrorEvent } from '../types/events';
+import type { MergedEvent, StdoutEvent, NodeStreamEvent, NodeStartEvent, NodeStopEvent, GraphStructureEvent, WorkflowCompleteEvent, WorkflowErrorEvent, ToolCallEvent, DynamoDbEvent } from '../types/events';
+import { isToolCallEvent } from '../types/events';
 import { formatTime } from '../utils/timerFormatter';
+import { getDynamoDbPollingService } from '../services/dynamoDbPollingService';
 
 /**
  * Callbacks for updating the webview from chat logic
@@ -75,6 +78,9 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
   /** Reference to stdout event parser */
   private _stdoutParser: StdoutEventParser | null = null;
+
+  /** Collected tool call events from DynamoDB polling */
+  private _toolEvents: ToolCallEvent[] = [];
 
   // -------------------------------------------------------------------------
   // Constructor
@@ -191,6 +197,12 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Stop any running timer
     this.stopTimer();
 
+    // Stop any running DynamoDB polling from previous workflow
+    const dynamoDbService = getDynamoDbPollingService();
+    if (dynamoDbService) {
+      dynamoDbService.stopPolling();
+    }
+
     // Reset session state
     this._sessionState = resetChatState();
 
@@ -201,6 +213,9 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     if (this._stdoutParser) {
       this._stdoutParser.reset();
     }
+
+    // Reset tool events collection
+    this._toolEvents = [];
 
     // Update UI
     this._callbacks.updateWebviewContent();
@@ -241,6 +256,38 @@ export class DemoViewerChatLogic implements vscode.Disposable {
       this.handleStdoutEvent(mergedEvent);
     });
     this._disposables.push(eventSubscription);
+
+    // Subscribe to DynamoDB polling service for tool call events
+    const dynamoDbService = getDynamoDbPollingService();
+    if (dynamoDbService) {
+      const toolEventSubscription = dynamoDbService.onEvent((event: DynamoDbEvent) => {
+        this.handleDynamoDbEvent(event);
+      });
+      this._disposables.push(toolEventSubscription);
+    }
+  }
+
+  /**
+   * Handles DynamoDB events, filtering for tool call events
+   * Collects tool events and matches them to messages
+   */
+  private handleDynamoDbEvent(event: DynamoDbEvent): void {
+    if (isToolCallEvent(event)) {
+      console.log(`[DemoViewerChatLogic] Tool event received: ${event.agent_name} - ${event.system}:${event.operation} (${event.status})`);
+
+      // Add to tool events collection
+      this._toolEvents.push(event);
+
+      // Match tool events to messages and update state
+      this._sessionState = {
+        ...this._sessionState,
+        messages: matchToolEventsToMessages(this._sessionState.messages, this._toolEvents),
+      };
+
+      // Update UI to show tool chips
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+    }
   }
 
   /**
@@ -297,13 +344,30 @@ export class DemoViewerChatLogic implements vscode.Disposable {
   /**
    * Handles graph_structure event to set up pipeline stages
    * Python emits nodes in event.graph.nodes, TypeScript types expect event.nodes
+   * Also extracts session_id and starts DynamoDB polling for tool events
    */
   private handleGraphStructureEvent(event: GraphStructureEvent): void {
     // Handle both Python format (graph.nodes) and TypeScript format (nodes)
-    const eventAny = event as unknown as { graph?: { nodes: Array<{ id?: string; name: string }> } };
+    const eventAny = event as unknown as {
+      graph?: { nodes: Array<{ id?: string; name: string }> };
+      session_id?: string;
+    };
     const nodes = event.nodes || eventAny.graph?.nodes || [];
 
     console.log('[DemoViewerChatLogic] Graph structure nodes:', nodes);
+
+    // Extract session_id and start DynamoDB polling
+    // Python uses session_id as the DynamoDB partition key (workflow_id in DynamoDB)
+    const sessionId = eventAny.session_id;
+    if (sessionId) {
+      console.log(`[DemoViewerChatLogic] Starting DynamoDB polling with session_id: ${sessionId}`);
+      const dynamoDbService = getDynamoDbPollingService();
+      if (dynamoDbService) {
+        dynamoDbService.startPolling(sessionId);
+      }
+    } else {
+      console.warn('[DemoViewerChatLogic] No session_id in graph_structure event, tool events will not be polled');
+    }
 
     // Add all nodes as pending pipeline stages
     // Use node.name if available, fallback to node.id
@@ -423,6 +487,12 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Finalize any pending streaming message
     if (this._sessionState.activeAgentName) {
       this._sessionState = finalizeAgentMessage(this._sessionState);
+    }
+
+    // Stop DynamoDB polling (workflow finished)
+    const dynamoDbService = getDynamoDbPollingService();
+    if (dynamoDbService) {
+      dynamoDbService.stopPolling();
     }
 
     // Stop timer

@@ -16,6 +16,15 @@ import type {
   ChatPanelState,
   MessagePane,
 } from '../types/chatPanel';
+import type { ToolCallEvent } from '../types/events';
+
+/**
+ * Extended ToolCallEvent with calculated duration
+ */
+export interface MergedToolCallEvent extends ToolCallEvent {
+  /** Duration in milliseconds (calculated from timestamp difference) */
+  duration_ms?: number;
+}
 
 /**
  * Generates a unique message ID
@@ -106,6 +115,7 @@ export function addUserMessage(state: ChatSessionState, content: string): ChatSe
     timestamp: Date.now(),
     isStreaming: false,
     pane: 'conversation',
+    toolCalls: [],
   };
 
   return {
@@ -137,6 +147,7 @@ export function addAgentMessage(
     timestamp: Date.now(),
     isStreaming: true,
     pane,
+    toolCalls: [],
   };
 
   return {
@@ -172,6 +183,7 @@ export function addHandoffMessage(
     isStreaming: false,
     pane: 'collaboration',
     isSender: true,
+    toolCalls: [],
   };
 
   return {
@@ -198,11 +210,14 @@ export function appendToStreamingContent(state: ChatSessionState, token: string)
 /**
  * Finalizes the active agent message by moving streaming content to message content
  * Similar to handleStreamingComplete() pattern from Step 2
+ * Sets endTimestamp to mark when the agent finished processing
  *
  * @param state - Current chat session state
  * @returns Updated chat session state with finalized message
  */
 export function finalizeAgentMessage(state: ChatSessionState): ChatSessionState {
+  const endTimestamp = Date.now();
+
   // Find the active streaming message
   const updatedMessages = state.messages.map((message) => {
     if (message.role === 'agent' && message.isStreaming && message.agentName === state.activeAgentName) {
@@ -210,6 +225,7 @@ export function finalizeAgentMessage(state: ChatSessionState): ChatSessionState 
         ...message,
         content: state.streamingContent,
         isStreaming: false,
+        endTimestamp,
       };
     }
     return message;
@@ -299,6 +315,7 @@ export function addErrorMessage(state: ChatSessionState, errorMessage: string): 
     timestamp: Date.now(),
     isStreaming: false,
     pane: 'conversation',
+    toolCalls: [],
   };
 
   return {
@@ -328,4 +345,183 @@ export function getLastMessage(state: ChatSessionState): ChatMessage | undefined
  */
 export function hasActiveStreaming(state: ChatSessionState): boolean {
   return state.activeAgentName !== null && state.messages.some((m) => m.isStreaming);
+}
+
+// ============================================================================
+// Tool Call Matching and Pairing Functions
+// ============================================================================
+
+/**
+ * Generates a unique tool call ID from event properties
+ * Used for pairing started/completed events and for HTML data attributes
+ *
+ * @param event - ToolCallEvent to generate ID for
+ * @returns Composite key: "agent_name-system-operation-timestamp"
+ */
+export function generateToolId(event: ToolCallEvent): string {
+  return `${event.agent_name}-${event.system}-${event.operation}-${event.timestamp}`;
+}
+
+/**
+ * Generates a pairing key for matching started/completed events
+ * Does not include timestamp since paired events have different timestamps
+ *
+ * @param event - ToolCallEvent to generate pairing key for
+ * @returns Composite key: "agent_name-system-operation"
+ */
+function generatePairingKey(event: ToolCallEvent): string {
+  return `${event.agent_name}-${event.system}-${event.operation}`;
+}
+
+/**
+ * Merges tool call pairs by matching started events with their completed/failed counterparts
+ * Calculates duration_ms from timestamp differences
+ *
+ * Tool calls emit TWO events:
+ * 1. First with status='started'
+ * 2. Then with status='completed' or 'failed'
+ *
+ * @param toolEvents - Array of ToolCallEvent from DynamoDB polling
+ * @returns Array of merged events with calculated duration
+ */
+export function mergeToolCallPairs(toolEvents: ToolCallEvent[]): MergedToolCallEvent[] {
+  // Group events by pairing key (agent_name + system + operation)
+  const eventGroups = new Map<string, ToolCallEvent[]>();
+
+  for (const event of toolEvents) {
+    const key = generatePairingKey(event);
+    const group = eventGroups.get(key) || [];
+    group.push(event);
+    eventGroups.set(key, group);
+  }
+
+  const mergedEvents: MergedToolCallEvent[] = [];
+
+  for (const [key, events] of eventGroups) {
+    // Sort events by timestamp to find started/completed pairs
+    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+
+    // Find started event (first one)
+    const startedEvent = sortedEvents.find(e => e.status === 'started');
+    // Find completed/failed event (any status that's not 'started')
+    const completedEvent = sortedEvents.find(e => e.status === 'completed' || e.status === 'failed');
+
+    if (startedEvent && completedEvent) {
+      // Paired events - merge into completed with duration
+      const duration_ms = completedEvent.timestamp - startedEvent.timestamp;
+      mergedEvents.push({
+        ...completedEvent,
+        duration_ms,
+      });
+    } else if (startedEvent) {
+      // Unpaired started event - still running
+      mergedEvents.push({
+        ...startedEvent,
+      });
+    } else if (completedEvent) {
+      // Completed without started (edge case) - include as-is
+      mergedEvents.push({
+        ...completedEvent,
+      });
+    }
+  }
+
+  return mergedEvents;
+}
+
+/**
+ * Normalizes an agent name for matching purposes
+ * Handles mismatches between Python agent names ('escalation') and
+ * display names ('Escalation Handler') by extracting the base identifier
+ *
+ * @param name - Agent name to normalize
+ * @returns Lowercase base identifier (e.g., 'escalation' from 'Escalation Handler')
+ */
+function normalizeAgentName(name: string): string {
+  // Convert to lowercase and extract first word/identifier
+  // 'Escalation Handler' -> 'escalation'
+  // 'Triage Agent' -> 'triage'
+  // 'Technical Support' -> 'technical'
+  // 'escalation' -> 'escalation' (already normalized)
+  const lower = name.toLowerCase();
+  const firstWord = lower.split(/[\s_-]/)[0];
+  return firstWord;
+}
+
+/**
+ * Checks if two agent names match after normalization
+ * Handles various naming formats:
+ * - 'escalation' matches 'Escalation Handler'
+ * - 'triage' matches 'Triage Agent'
+ * - 'technical' matches 'Technical Support'
+ *
+ * @param eventAgentName - Agent name from tool event (e.g., 'escalation')
+ * @param messageAgentName - Agent name from chat message (e.g., 'Escalation Handler')
+ * @returns true if the names refer to the same agent
+ */
+function agentNamesMatch(eventAgentName: string, messageAgentName: string): boolean {
+  const normalizedEvent = normalizeAgentName(eventAgentName);
+  const normalizedMessage = normalizeAgentName(messageAgentName);
+  return normalizedEvent === normalizedMessage;
+}
+
+/**
+ * Matches tool events to agent messages based on agent name and timestamp range
+ *
+ * Matching formula:
+ * normalizeAgentName(toolEvent.agent_name) === normalizeAgentName(message.agentName) &&
+ * toolEvent.timestamp >= message.timestamp &&
+ * toolEvent.timestamp <= (message.endTimestamp || Date.now())
+ *
+ * @param messages - Array of ChatMessage to populate with tool calls
+ * @param toolEvents - Array of ToolCallEvent from DynamoDB polling
+ * @returns New messages array with populated toolCalls fields
+ */
+export function matchToolEventsToMessages(
+  messages: ChatMessage[],
+  toolEvents: ToolCallEvent[]
+): ChatMessage[] {
+  // First, merge tool call pairs
+  const mergedEvents = mergeToolCallPairs(toolEvents);
+
+  // Create a new messages array with matched tool calls
+  return messages.map((message) => {
+    // Only match tool calls for agent messages
+    if (message.role !== 'agent' || !message.agentName) {
+      return message;
+    }
+
+    // Extract agentName for use in filter (TypeScript narrowing)
+    const messageAgentName = message.agentName;
+
+    // Determine the end timestamp (use Date.now() if streaming)
+    const endTimestamp = message.endTimestamp ?? Date.now();
+
+    // Find tool events that belong to this message
+    const matchedTools = mergedEvents.filter((event) => {
+      // Skip events without agent_name
+      const eventAgentName = event.agent_name;
+      if (!eventAgentName) {
+        return false;
+      }
+
+      // Match by agent name (with normalization for display name vs. internal name)
+      if (!agentNamesMatch(eventAgentName, messageAgentName)) {
+        return false;
+      }
+
+      // Match by timestamp range
+      return event.timestamp >= message.timestamp && event.timestamp <= endTimestamp;
+    });
+
+    // Return message with matched tool calls
+    if (matchedTools.length > 0) {
+      return {
+        ...message,
+        toolCalls: matchedTools,
+      };
+    }
+
+    return message;
+  });
 }

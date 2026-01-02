@@ -1281,7 +1281,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/panels/demoViewerChatStyles.ts`, `src/utils/chatPanelHtmlGenerator.ts`
 - `resources/agents/main_*.py` templates (add handoff_prompt, from_agent fields) `M`
 
-35.2. [ ] Tool Call Visualization — Show tool calls inline with agent messages in collaboration pane:
+35.2. [x] Tool Call Visualization — Show tool calls inline with agent messages in collaboration pane:
 
 **Data Source:**
 - DynamoDB stores tool events via `@instrument_tool` decorator

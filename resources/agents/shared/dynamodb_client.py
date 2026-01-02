@@ -235,15 +235,15 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
         logger.debug('Cannot write tool event: table not configured')
         return False
 
-    # Validate required fields
-    required_fields = ['workflow_id', 'timestamp', 'event_id', 'agent', 'tool_name', 'status']
+    # Validate required fields (supports new TypeScript ToolCallEvent format)
+    required_fields = ['workflow_id', 'timestamp', 'event_id', 'agent_name', 'system', 'operation', 'status', 'event_type']
     for field in required_fields:
         if field not in event:
             logger.warning(f'Cannot write tool event: missing required field "{field}"')
             return False
 
-    # Validate status value
-    valid_statuses = ['started', 'completed', 'error']
+    # Validate status value (TypeScript uses 'failed' not 'error')
+    valid_statuses = ['started', 'completed', 'failed']
     if event.get('status') not in valid_statuses:
         logger.warning(f'Invalid status value: {event.get("status")}')
         return False
@@ -261,7 +261,7 @@ def write_tool_event(event: Dict[str, Any]) -> bool:
         table.put_item(Item=event)
 
         logger.debug(
-            f"Wrote tool event: {event.get('tool_name', 'unknown')} "
+            f"Wrote tool event: {event.get('system', 'unknown')}:{event.get('operation', 'unknown')} "
             f"[{event.get('status', 'unknown')}]"
         )
         return True

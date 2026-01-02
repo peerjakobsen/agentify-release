@@ -501,5 +501,138 @@ export function getDemoViewerChatStyles(): string {
     .chat-empty-text {
       font-size: 13px;
     }
+
+    /* =========================================================================
+     * Tool Chip Styles
+     * Tool call visualization chips below agent messages
+     * ========================================================================= */
+
+    /* Tool chips container - wraps below message content */
+    .tool-chips-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+
+    /* Base tool chip styling */
+    .tool-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+    }
+
+    .tool-chip:hover {
+      opacity: 0.9;
+    }
+
+    /* Running state - muted background with spinner */
+    .tool-chip.running {
+      background: var(--vscode-input-background);
+      color: var(--vscode-descriptionForeground);
+    }
+
+    /* Completed state - green tint */
+    .tool-chip.completed {
+      background: rgba(115, 201, 145, 0.1);
+      color: var(--vscode-testing-iconPassed, #73c991);
+    }
+
+    /* Failed state - red background with border */
+    .tool-chip.failed {
+      background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      color: var(--vscode-errorForeground, #f48771);
+    }
+
+    /* Tool chip spinner - CSS-based animation (not codicon) */
+    .tool-chip-spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid var(--vscode-descriptionForeground);
+      border-top-color: var(--vscode-button-background);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    /* Tool chip status icons (Unicode-based) */
+    .tool-chip-icon {
+      font-size: 10px;
+    }
+
+    /* =========================================================================
+     * Tool Chip Expanded Details Styles
+     * Inline expansion with input/output/error details
+     * ========================================================================= */
+
+    /* Expanded details container */
+    .tool-chip-details {
+      margin-top: 8px;
+      padding: 8px;
+      background: var(--vscode-input-background);
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border);
+    }
+
+    /* Details section wrapper */
+    .tool-chip-details-section {
+      margin-bottom: 8px;
+    }
+
+    .tool-chip-details-section:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Section label styling */
+    .tool-chip-details-label {
+      font-weight: 500;
+      font-size: 10px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      color: var(--vscode-descriptionForeground);
+      letter-spacing: 0.5px;
+    }
+
+    /* JSON content formatting */
+    .tool-chip-json {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      background: var(--vscode-editor-background);
+      padding: 6px;
+      border-radius: 3px;
+      color: var(--vscode-foreground);
+    }
+
+    /* Error text styling */
+    .tool-chip-error-text {
+      color: var(--vscode-errorForeground, #f48771);
+      font-size: 11px;
+    }
+
+    /* Show more link for truncated output */
+    .tool-chip-show-more {
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      font-size: 11px;
+      margin-top: 4px;
+      display: inline-block;
+    }
+
+    .tool-chip-show-more:hover {
+      text-decoration: underline;
+    }
+
+    /* Duration display in details */
+    .tool-chip-duration {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
   `;
 }

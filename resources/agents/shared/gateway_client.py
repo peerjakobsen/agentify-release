@@ -50,7 +50,8 @@ ensuring Gateway tools work correctly.
 
 import logging
 import os
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import TypedDict
 
@@ -61,6 +62,9 @@ from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 from strands.tools.mcp import MCPClient
+
+from agents.shared.instrumentation import get_instrumentation_context
+from agents.shared.dynamodb_client import write_tool_event
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +235,160 @@ class GatewayTokenManager:
         logger.debug('Cleared cached OAuth token')
 
 
+def _create_instrumented_stream(original_stream, tool_name: str):
+    """
+    Create an instrumented async generator that wraps the original tool's stream method.
+
+    Strands tools use stream() method which is an async generator. This wrapper:
+    1. Emits 'started' event to DynamoDB before yielding any events
+    2. Yields all events from the original stream
+    3. Emits 'completed' or 'failed' event when the stream finishes
+
+    IMPORTANT: Uses try/finally to ensure completion event is ALWAYS written,
+    even if the consumer doesn't fully exhaust the generator (e.g., due to
+    early break, GeneratorExit, or garbage collection).
+
+    Args:
+        original_stream: The original stream method from MCPAgentTool
+        tool_name: Name of the tool for event logging
+
+    Returns:
+        Async generator function that wraps the original stream with instrumentation
+    """
+    async def instrumented_stream(tool_use, invocation_state=None, **kwargs):
+        """Instrumented stream method for MCPAgentTool."""
+        # Check if instrumentation context is set
+        session_id, agent_name = get_instrumentation_context()
+
+        if not session_id or not agent_name:
+            # No context - just delegate to original stream without instrumentation
+            async for event in original_stream(tool_use, invocation_state, **kwargs):
+                yield event
+            return
+
+        # Generate event ID and timestamps
+        event_id = str(uuid.uuid4())
+        start_time = datetime.now(timezone.utc)
+        start_timestamp = int(start_time.timestamp() * 1000)
+
+        # Prepare input (truncated)
+        import json
+        try:
+            input_data = tool_use.get('input', {}) if isinstance(tool_use, dict) else {}
+            input_str = json.dumps(input_data)
+            if len(input_str) > 200:
+                input_str = input_str[:197] + '...'
+        except Exception:
+            input_str = '{}'
+
+        # Write 'started' event
+        started_event = {
+            'workflow_id': session_id,
+            'timestamp': start_timestamp,
+            'event_type': 'tool_call',
+            'event_id': event_id,
+            'agent_name': agent_name,
+            'system': 'gateway',
+            'operation': tool_name,
+            'input': input_str,
+            'status': 'started',
+        }
+        write_tool_event(started_event)
+        logger.info('Gateway tool %s started event written for session %s', tool_name, session_id)
+
+        # Track whether we completed successfully or had an error
+        error_occurred = None
+
+        try:
+            # Stream all events from the original tool
+            async for event in original_stream(tool_use, invocation_state, **kwargs):
+                yield event
+            logger.info('Gateway tool %s stream completed normally', tool_name)
+
+        except GeneratorExit:
+            # Generator was closed by consumer - still count as success
+            logger.info('Gateway tool %s generator closed by consumer', tool_name)
+            raise  # Must re-raise GeneratorExit
+
+        except Exception as e:
+            # Capture error for finally block
+            error_occurred = e
+            logger.error('Gateway tool %s failed with error: %s', tool_name, e)
+            raise
+
+        finally:
+            # ALWAYS write completion event (success or failure)
+            end_time = datetime.now(timezone.utc)
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+
+            if error_occurred is not None:
+                # Truncate error message
+                error_msg = str(error_occurred)
+                if len(error_msg) > 500:
+                    error_msg = error_msg[:497] + '...'
+
+                # Write 'failed' event
+                error_event = {
+                    'workflow_id': session_id,
+                    'timestamp': int(end_time.timestamp() * 1000),
+                    'event_type': 'tool_call',
+                    'event_id': event_id,
+                    'agent_name': agent_name,
+                    'system': 'gateway',
+                    'operation': tool_name,
+                    'status': 'failed',
+                    'duration_ms': duration_ms,
+                    'error_message': error_msg,
+                }
+                write_tool_event(error_event)
+                logger.info('Gateway tool %s failed event written, duration: %dms', tool_name, duration_ms)
+            else:
+                # Write 'completed' event
+                completed_event = {
+                    'workflow_id': session_id,
+                    'timestamp': int(end_time.timestamp() * 1000),
+                    'event_type': 'tool_call',
+                    'event_id': event_id,
+                    'agent_name': agent_name,
+                    'system': 'gateway',
+                    'operation': tool_name,
+                    'status': 'completed',
+                    'duration_ms': duration_ms,
+                }
+                write_tool_event(completed_event)
+                logger.info('Gateway tool %s completed event written, duration: %dms', tool_name, duration_ms)
+
+    return instrumented_stream
+
+
+def _instrument_gateway_tools(gateway_tools: list) -> list:
+    """
+    Instrument MCP Gateway tools by monkey-patching their stream method.
+
+    Strands tools use the stream() async generator method for execution.
+    This modifies the original tool objects IN PLACE by replacing their
+    stream method with an instrumented version. This preserves the tool's
+    type and all other attributes, avoiding Strands registry issues.
+
+    Args:
+        gateway_tools: List of MCPAgentTool proxy objects
+
+    Returns:
+        Same list (tools are modified in place)
+    """
+    for tool in gateway_tools:
+        tool_name = getattr(tool, 'name', str(tool))
+        if hasattr(tool, 'stream'):
+            # Monkey-patch the stream method with instrumented version
+            original_stream = tool.stream
+            tool.stream = _create_instrumented_stream(original_stream, tool_name)
+            logger.debug('Instrumented Gateway tool: %s', tool_name)
+        else:
+            logger.warning('Gateway tool %s has no stream method, skipping instrumentation', tool_name)
+
+    return gateway_tools
+
+
 def invoke_with_gateway(
     prompt: str,
     local_tools: list,
@@ -247,6 +405,7 @@ def invoke_with_gateway(
     - Tool discovery from Gateway
     - Agent creation and invocation
     - Graceful degradation when Gateway unavailable
+    - Gateway tool instrumentation for observability
 
     CRITICAL: This function keeps the MCP client session open during the
     entire agent execution. Do NOT call MCPClient directly in agent code -
@@ -332,6 +491,10 @@ def invoke_with_gateway(
         with client:
             gateway_tools = client.list_tools_sync()
             logger.info('Loaded %d tools from Gateway', len(gateway_tools))
+
+            # Instrument Gateway tools to emit events to DynamoDB
+            gateway_tools = _instrument_gateway_tools(gateway_tools)
+            logger.debug('Instrumented %d Gateway tools for observability', len(gateway_tools))
 
             all_tools = local_tools + gateway_tools
             logger.info('Created agent with %d total tools', len(all_tools))
