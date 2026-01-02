@@ -107,12 +107,14 @@ Location: `agents/{agent_id}/`
 
 Use this template for the project structure, customizing agent folders based on `confirmedAgents`:
 
-**IMPORTANT:** The `agents/shared/` directory is **pre-bundled** by the Agentify extension during project initialization. Kiro should **IMPORT from** these modules, not recreate them.
+**IMPORTANT:** The following files are **pre-bundled** by the Agentify extension during project initialization:
+- `agents/shared/` — Shared utilities (IMPORT from, do not recreate)
+- `agents/main.py` — Pattern-specific orchestrator (MODIFY CUSTOMIZATION SECTION only, do not recreate)
 
 ```
 project-root/
 ├── agents/
-│   ├── main.py                    # Workflow entry point (runs LOCALLY)
+│   ├── main.py                    # PRE-BUNDLED orchestrator (modify CUSTOMIZATION SECTION only)
 │   ├── {agent_id}_handler.py      # AgentCore Runtime entry point per agent
 │   ├── {agent_id}/                # Agent module folder
 │   │   ├── __init__.py
@@ -125,7 +127,8 @@ project-root/
 │       ├── __init__.py            # Module exports
 │       ├── instrumentation.py     # @instrument_tool decorator (pre-bundled)
 │       ├── dynamodb_client.py     # Fire-and-forget events (pre-bundled)
-│       └── gateway_client.py       # Gateway integration (pre-bundled)
+│       ├── gateway_client.py      # Gateway integration (pre-bundled)
+│       └── orchestrator_utils.py  # CLI, events, SDK calls (pre-bundled)
 ├── cdk/                           # AWS CDK infrastructure (Python)
 │   ├── app.py                     # CDK app entry point
 │   ├── config.py                  # Environment configuration

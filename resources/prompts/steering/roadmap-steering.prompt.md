@@ -76,16 +76,25 @@ cdk/                              # PRE-EXISTING — DO NOT MODIFY
 
 The `gateway_tools.py` stack automatically discovers any handlers in `cdk/gateway/handlers/*/` during deployment. Kiro's job is to CREATE handler directories inside this existing structure.
 
-### 4. Pre-bundled Shared Utilities (Explain This)
+### 4. Pre-bundled Files (Explain This)
 
-**CRITICAL:** The `agents/shared/` module is pre-bundled by the Agentify extension. Kiro should NOT create these files — they already exist:
+**CRITICAL:** The following files are **pre-bundled** by the Agentify extension. Kiro should NOT recreate these files — they already exist:
 
+**Shared Utilities** (`agents/shared/`):
 - `agents/shared/__init__.py` — Module exports
 - `agents/shared/instrumentation.py` — `@instrument_tool` decorator for observability
 - `agents/shared/dynamodb_client.py` — Fire-and-forget event persistence
 - `agents/shared/gateway_auth.py` — `GatewayTokenManager` for OAuth
+- `agents/shared/orchestrator_utils.py` — CLI parsing, event emission, remote agent invocation
 
-Explain this clearly in the roadmap so users know to IMPORT from these modules, not recreate them.
+**Orchestrator** (`agents/main.py`):
+- `agents/main.py` — Pattern-specific orchestrator template (Graph, Swarm, or Workflow)
+  - Contains: CLI parsing, event emission, `invoke_agent_remotely()`, error handling
+  - Kiro modifies: CUSTOMIZATION SECTION only (4 functions)
+
+Explain this clearly in the roadmap so users know:
+- IMPORT from `agents/shared/` modules, not recreate them
+- MODIFY `agents/main.py` CUSTOMIZATION SECTION, not recreate the entire file
 
 ### 5. Roadmap Items (Multiple Sections)
 
@@ -110,12 +119,26 @@ For each agent in the design:
 - MUST require importing @instrument_tool from `agents.shared.instrumentation` (pre-bundled)
 - Each agent depends on Item 1 (Gateway handlers) if using shared tools
 
-#### Final Item: Main Orchestrator
-- Prompt for Kiro to create `agents/main.py` — the LOCAL entry point
-- Prompt must specify CLI contract: `--prompt`, `--workflow-id`, `--trace-id`
-- Prompt must specify env vars: `AGENTIFY_TABLE_NAME`, `AWS_REGION`
-- Prompt must specify stdout event emission for Demo Viewer
-- Acceptance: Running main.py produces stdout events
+#### Final Item: Main Orchestrator Customization (Pattern-Specific)
+
+**IMPORTANT:** Generate this item based on `confirmedOrchestration` from wizard-state.json.
+
+**Graph Pattern** (`confirmedOrchestration == "graph"`):
+- CUSTOMIZATION SECTION functions: `define_graph_structure()`, `get_entry_agent()`, `route_to_next_agent()`, `get_agent_display_name()`
+- Routing uses `CLASSIFICATION_ROUTES` or `STATIC_ROUTES` dicts (NO keyword matching)
+- Agent prompts MUST return `route_to` or `classification` field for non-static routing
+
+**Swarm Pattern** (`confirmedOrchestration == "swarm"`):
+- CUSTOMIZATION SECTION functions: `define_graph_structure()`, `get_entry_agent()`, `get_agent_display_name()`
+- Agents decide handoffs autonomously via `handoff_to_agent` tool or `handoff_to` response field
+- Each agent item MUST include the `handoff_to_agent` tool definition
+
+**Workflow Pattern** (`confirmedOrchestration == "workflow"`):
+- CUSTOMIZATION SECTION functions: `define_graph_structure()`, `define_task_dag()`, `get_agent_display_name()`, `build_task_prompt()`
+- DAG determines execution order — agents do NOT need routing fields
+- Tasks run in parallel when their dependencies are satisfied
+
+- Acceptance: Running main.py produces stdout events, CUSTOMIZATION SECTION is filled in
 
 ### Per-Item Format
 
@@ -273,17 +296,37 @@ cdk/                              # PRE-EXISTING — DO NOT MODIFY
 
 ---
 
-## Pre-bundled Shared Utilities
+## Pre-bundled Files
 
-The `agents/shared/` module is **pre-bundled** by the Agentify extension during project initialization. These files already exist — do NOT recreate them:
+The following files are **pre-bundled** by the Agentify extension during project initialization. Do NOT recreate them:
+
+### Shared Utilities (`agents/shared/`)
 
 | File | Purpose | Import Example |
 |------|---------|----------------|
 | `agents/shared/instrumentation.py` | `@instrument_tool` decorator | `from agents.shared.instrumentation import instrument_tool` |
 | `agents/shared/dynamodb_client.py` | Fire-and-forget event persistence | `from agents.shared.dynamodb_client import write_tool_event` |
 | `agents/shared/gateway_auth.py` | OAuth token management | `from agents.shared.gateway_auth import GatewayTokenManager` |
+| `agents/shared/orchestrator_utils.py` | CLI, events, SDK calls | `from agents.shared.orchestrator_utils import invoke_agent_remotely` |
 
-All agents should **import from** these modules, not create new implementations.
+### Main Orchestrator (`agents/main.py`)
+
+The `agents/main.py` orchestrator is **pre-bundled** based on the selected orchestration pattern (Graph, Swarm, or Workflow).
+
+| Section | Status | Description |
+|---------|--------|-------------|
+| GENERIC INFRASTRUCTURE | DO NOT MODIFY | CLI parsing, event emission, boto3 SDK calls, error handling |
+| CUSTOMIZATION SECTION | MODIFY | 4 functions that define project-specific behavior |
+
+Functions to implement in CUSTOMIZATION SECTION:
+| Function | Purpose |
+|----------|---------|
+| `define_graph_structure()` | Return graph nodes/edges for Demo Viewer visualization |
+| `get_entry_agent()` | Return ID of first agent to invoke |
+| `route_to_next_agent()` | Return next agent ID based on response, or None if complete |
+| `get_agent_display_name()` | Return human-readable name for agent ID |
+
+All agents should **import from** shared modules, and Kiro should **modify only the CUSTOMIZATION SECTION** of main.py.
 
 ---
 
@@ -493,71 +536,239 @@ This agent deploys to AgentCore Runtime. Include a comment with the deployment c
 
 ... [continue pattern for remaining items] ...
 
-## Item N: Main Orchestrator
+## Item N: Main Orchestrator Customization
 
-**Purpose:** Create the local entry point that orchestrates remote agents.
+**IMPORTANT:** Generate this item based on `confirmedOrchestration` from wizard-state.json. Use the appropriate pattern-specific section below.
+
+---
+
+### IF confirmedOrchestration == "graph":
+
+**Purpose:** Customize the pre-bundled Graph orchestrator with project-specific routing logic.
 
 **Depends on:** Items 1 through N-1
 
-**Files to be created:**
-- `agents/main.py` — Local orchestrator with CLI interface
+**Files to be MODIFIED (not created):**
+- `agents/main.py` — PRE-BUNDLED Graph orchestrator, customize CUSTOMIZATION SECTION only
 
 **Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
 
 \`\`\`
-Create the main orchestrator for an Agentify demo project.
+Customize the pre-bundled Graph orchestrator for this Agentify project.
 
-## CRITICAL ARCHITECTURE — READ BEFORE GENERATING CODE
+## CRITICAL: DO NOT RECREATE agents/main.py
 
-This is an Agentify demo project. Follow these rules strictly:
+The `agents/main.py` file is **PRE-BUNDLED** by the Agentify extension.
+It already contains CLI parsing, event emission, and `invoke_agent_remotely()`.
 
-1. **Agent Deployment**: Agents deploy to Amazon Bedrock AgentCore Runtime via `agentcore deploy`. They run REMOTELY, not locally.
+**You ONLY need to modify the CUSTOMIZATION SECTION** — the 4 functions marked with TODO comments.
 
-2. **Local Orchestrator Only**: Only `agents/main.py` runs locally. It orchestrates by calling remote agents.
+## CUSTOMIZATION SECTION Functions (Graph Pattern)
 
-3. **Strands SDK**: Use `from strands import Agent, tool` for agent and tool definitions.
+### 1. define_graph_structure()
+Return nodes and edges for Demo Viewer visualization:
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    return {
+        "nodes": [{"id": "agent_id", "name": "Display Name", "type": "role_type"}],
+        "edges": [{"from": "source", "to": "target", "condition": "description"}]
+    }
+```
 
-4. **Mock Tools**: All integrations are mocks returning realistic fake data. This is a demo system.
+### 2. get_entry_agent()
+Return the ID of the first agent to invoke:
+```python
+def get_entry_agent() -> str:
+    return "entry_agent_id"
+```
 
-5. **Event Emission**: Emit events per .kiro/steering/agentify-integration.md
+### 3. route_to_next_agent()
+Configure routing using the appropriate strategy:
 
-Reference these steering files:
-- .kiro/steering/tech.md — deployment architecture  
-- .kiro/steering/agentify-integration.md — event contracts and CLI specification
+**Strategy 1 - Explicit Routing** (agent returns `route_to` field):
+- Agent prompt must include: "Return JSON with route_to field containing next agent ID or null"
+- Template checks `response.get('route_to')` automatically
 
-## Requirements
+**Strategy 2 - Classification Routing** (agent returns `classification` field):
+- Fill in `CLASSIFICATION_ROUTES` dict in main.py
+- Agent prompt must include: "Return JSON with classification field"
 
-Create `agents/main.py` as the LOCAL entry point:
+**Strategy 3 - Static Routing** (predetermined sequence):
+- Fill in `STATIC_ROUTES` dict in main.py
+- No agent prompt changes needed
 
-1. **CLI Interface** using argparse:
-   - `--prompt` (required): The user's input prompt
-   - `--workflow-id` (required): Short ID like wf-abc123
-   - `--trace-id` (required): 32-char hex OTEL trace ID
+### 4. get_agent_display_name()
+Map agent IDs to human-readable names.
 
-2. **Environment Variables**:
-   - Read `AGENTIFY_TABLE_NAME` for DynamoDB table
-   - Read `AWS_REGION` for AWS region
+## IMPORTANT: Agent Prompt Updates Required
 
-3. **stdout Event Emission** (JSON lines format):
-   - `graph_structure` on startup with agent topology
-   - `node_start` when each agent begins
-   - `node_stop` when each agent completes
-   - `workflow_complete` or `workflow_error` at end
+If using Explicit or Classification routing, you MUST also update agent prompts to return structured JSON.
+See the agent items above for the required response format.
 
-4. **Orchestration**:
-   - Use Strands Workflow/Graph/Swarm class (per tech.md pattern)
-   - Call remote agents deployed to AgentCore
-
-This file runs LOCALLY — it is NOT deployed to AgentCore.
+Reference: .kiro/steering/tech.md for agent design and routing pattern.
 \`\`\`
 
-**Acceptance Criteria (verify after Kiro implements):**
-- [ ] `agents/main.py` exists with argparse CLI
-- [ ] Running `python agents/main.py --help` shows all three required arguments
-- [ ] Running with test args produces JSON lines on stdout
-- [ ] `graph_structure` event emitted first
-- [ ] `workflow_complete` or `workflow_error` event emitted last
+**Acceptance Criteria (Graph):**
+- [ ] CUSTOMIZATION SECTION is filled in (file not recreated)
+- [ ] `define_graph_structure()` returns nodes/edges from tech.md
+- [ ] `get_entry_agent()` returns valid agent ID
+- [ ] `route_to_next_agent()` uses CLASSIFICATION_ROUTES or STATIC_ROUTES (no keyword matching)
+- [ ] `get_agent_display_name()` maps all agent IDs
+- [ ] GENERIC INFRASTRUCTURE section is UNCHANGED
+- [ ] `python agents/main.py --help` works
+
+---
+
+### IF confirmedOrchestration == "swarm":
+
+**Purpose:** Customize the pre-bundled Swarm orchestrator with agent definitions.
+
+**Depends on:** Items 1 through N-1
+
+**Files to be MODIFIED (not created):**
+- `agents/main.py` — PRE-BUNDLED Swarm orchestrator, customize CUSTOMIZATION SECTION only
+
+**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
+
+\`\`\`
+Customize the pre-bundled Swarm orchestrator for this Agentify project.
+
+## CRITICAL: DO NOT RECREATE agents/main.py
+
+The `agents/main.py` file is **PRE-BUNDLED** by the Agentify extension.
+It already contains CLI parsing, event emission, `invoke_agent_remotely()`, and `extract_handoff_from_response()`.
+
+**You ONLY need to modify the CUSTOMIZATION SECTION** — the 3 functions marked with TODO comments.
+
+## CUSTOMIZATION SECTION Functions (Swarm Pattern)
+
+### 1. define_graph_structure()
+Return nodes and all possible handoff edges for Demo Viewer:
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    return {
+        "nodes": [{"id": "agent_id", "name": "Display Name", "type": "coordinator|specialist"}],
+        "edges": [{"from": "source", "to": "target", "condition": "handoff"}]
+    }
 ```
+Note: Show ALL possible handoffs — actual path is determined at runtime by agent decisions.
+
+### 2. get_entry_agent()
+Return the ID of the first agent (usually a coordinator):
+```python
+def get_entry_agent() -> str:
+    return "coordinator"
+```
+
+### 3. get_agent_display_name()
+Map agent IDs to human-readable names.
+
+## IMPORTANT: Agent Handoff Tool Required
+
+Every Swarm agent MUST have a `handoff_to_agent` tool to enable autonomous handoffs:
+
+```python
+@tool
+@instrument_tool
+def handoff_to_agent(agent_id: str, context: str) -> dict:
+    '''Hand off to another agent with context.'''
+    return {"handoff_to": agent_id, "context": context}
+```
+
+Agent prompts MUST instruct agents to use this tool when handing off, OR return JSON with `handoff_to` field.
+
+Reference: .kiro/steering/tech.md for agent design and handoff patterns.
+\`\`\`
+
+**Acceptance Criteria (Swarm):**
+- [ ] CUSTOMIZATION SECTION is filled in (file not recreated)
+- [ ] `define_graph_structure()` shows all possible handoff paths
+- [ ] `get_entry_agent()` returns valid coordinator agent ID
+- [ ] `get_agent_display_name()` maps all agent IDs
+- [ ] Each agent has `handoff_to_agent` tool OR returns `handoff_to` in response
+- [ ] GENERIC INFRASTRUCTURE section is UNCHANGED
+- [ ] `python agents/main.py --help` works
+
+---
+
+### IF confirmedOrchestration == "workflow":
+
+**Purpose:** Customize the pre-bundled Workflow orchestrator with task DAG and dependencies.
+
+**Depends on:** Items 1 through N-1
+
+**Files to be MODIFIED (not created):**
+- `agents/main.py` — PRE-BUNDLED Workflow orchestrator, customize CUSTOMIZATION SECTION only
+
+**Prompt for Kiro — Copy everything in the code block below and paste into Kiro chat:**
+
+\`\`\`
+Customize the pre-bundled Workflow orchestrator for this Agentify project.
+
+## CRITICAL: DO NOT RECREATE agents/main.py
+
+The `agents/main.py` file is **PRE-BUNDLED** by the Agentify extension.
+It already contains CLI parsing, event emission, parallel execution with ThreadPoolExecutor, and DAG validation.
+
+**You ONLY need to modify the CUSTOMIZATION SECTION** — the 4 functions marked with TODO comments.
+
+## CUSTOMIZATION SECTION Functions (Workflow Pattern)
+
+### 1. define_graph_structure()
+Return nodes and dependency edges for Demo Viewer:
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    return {
+        "nodes": [{"id": "task_id", "name": "Task Name", "type": "task"}],
+        "edges": [{"from": "dependency", "to": "dependent", "condition": "dependency"}]
+    }
+```
+
+### 2. define_task_dag()
+Return task dependencies as a Directed Acyclic Graph:
+```python
+def define_task_dag() -> Dict[str, List[str]]:
+    return {
+        "fetch_data": [],                    # No deps - runs first
+        "analyze": ["fetch_data"],           # Waits for fetch_data
+        "enrich": ["fetch_data"],            # Runs parallel with analyze
+        "aggregate": ["analyze", "enrich"],  # Waits for both
+    }
+```
+Tasks with empty dependency lists run immediately. Tasks run in parallel when their dependencies are satisfied.
+
+### 3. get_agent_display_name()
+Map task IDs to human-readable names.
+
+### 4. build_task_prompt()
+Customize how dependency results are passed to dependent tasks:
+```python
+def build_task_prompt(task_id: str, original_prompt: str,
+                     dependency_results: Dict[str, Dict[str, Any]]) -> str:
+    # Default: Include all dependency responses in prompt
+    # Customize if tasks need specific data extraction
+```
+
+## IMPORTANT: No Routing Logic Needed
+
+Workflow pattern uses the DAG structure for execution order — agents do NOT need to return routing fields.
+All tasks in the DAG will execute; the only question is WHEN (after dependencies complete).
+
+If you want structured data flow between tasks, agents CAN return JSON, but it's optional.
+
+Reference: .kiro/steering/tech.md for task dependencies and parallel execution design.
+\`\`\`
+
+**Acceptance Criteria (Workflow):**
+- [ ] CUSTOMIZATION SECTION is filled in (file not recreated)
+- [ ] `define_graph_structure()` shows dependency edges
+- [ ] `define_task_dag()` returns valid DAG (no cycles, all deps exist)
+- [ ] `get_agent_display_name()` maps all task IDs
+- [ ] `build_task_prompt()` properly passes dependency results
+- [ ] GENERIC INFRASTRUCTURE section is UNCHANGED
+- [ ] `python agents/main.py --help` works
+
+---
 
 ## Final Checklist
 
@@ -567,36 +778,45 @@ Before outputting the roadmap, verify:
 1. [ ] Every prompt includes the full CRITICAL ARCHITECTURE block
 2. [ ] Every agent item's prompt mentions "deploys to AgentCore Runtime"
 3. [ ] Every agent item's acceptance criteria includes `agentcore deploy` command
-4. [ ] The main.py item's prompt explicitly states it runs LOCALLY
-5. [ ] The main.py item's prompt specifies CLI contract (--prompt, --workflow-id, --trace-id)
+4. [ ] The main.py item's prompt explicitly states to MODIFY (not CREATE) the file
+5. [ ] The main.py item uses the correct pattern-specific section (Graph/Swarm/Workflow)
+6. [ ] The main.py item's prompt specifies the correct CUSTOMIZATION SECTION functions for the pattern
+
+### Pattern-Specific Requirements
+7. [ ] **Graph pattern**: Agent items mention required response format (route_to or classification field)
+8. [ ] **Graph pattern**: main.py item mentions CLASSIFICATION_ROUTES or STATIC_ROUTES (no keyword matching)
+9. [ ] **Swarm pattern**: Agent items include `handoff_to_agent` tool definition
+10. [ ] **Swarm pattern**: Agent prompts instruct using handoff tool OR returning `handoff_to` field
+11. [ ] **Workflow pattern**: main.py item includes `define_task_dag()` function
+12. [ ] **Workflow pattern**: Agent items do NOT mention routing fields (DAG determines order)
 
 ### Instrumentation & Observability
-6. [ ] Pre-bundled shared utilities section explains `agents/shared/` is already installed
-7. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation (pre-bundled)
-8. [ ] Every agent item shows correct decorator order: @tool ON TOP, @instrument_tool BELOW (closest to function)
-9. [ ] Agent handlers (agents/{agent_id}_handler.py) set/clear instrumentation context
+13. [ ] Pre-bundled files section explains `agents/shared/` AND `agents/main.py` are pre-bundled
+14. [ ] Every agent item requires importing @instrument_tool from agents.shared.instrumentation (pre-bundled)
+15. [ ] Every agent item shows correct decorator order: @tool ON TOP, @instrument_tool BELOW (closest to function)
+16. [ ] Agent handlers (agents/{agent_id}_handler.py) set/clear instrumentation context
 
 ### CDK Structure & Injection
-10. [ ] Gateway Lambda handlers use path `cdk/gateway/handlers/{tool_name}/` (with `cdk/` prefix)
-11. [ ] Each Lambda handler directory contains `mock_data.json` (bundled, not external reference)
-12. [ ] Lambda handler example loads mock data from same directory: `os.path.dirname(__file__)`
-13. [ ] Pre-existing CDK structure is clearly documented (stacks/, app.py, config.py)
-14. [ ] "What NOT to Create" section explicitly lists `cdk/stacks/*.py` as off-limits
-15. [ ] No references to `gateway/handlers/` without the `cdk/` prefix
-16. [ ] No references to external `mocks/` directory for Lambda handlers
+17. [ ] Gateway Lambda handlers use path `cdk/gateway/handlers/{tool_name}/` (with `cdk/` prefix)
+18. [ ] Each Lambda handler directory contains `mock_data.json` (bundled, not external reference)
+19. [ ] Lambda handler example loads mock data from same directory: `os.path.dirname(__file__)`
+20. [ ] Pre-existing CDK structure is clearly documented (stacks/, app.py, config.py)
+21. [ ] "What NOT to Create" section explicitly lists `cdk/stacks/*.py` as off-limits
+22. [ ] No references to `gateway/handlers/` without the `cdk/` prefix
+23. [ ] No references to external `mocks/` directory for Lambda handlers
 
 ### Dependencies & Order
-17. [ ] Items are ordered: Gateway handlers → agents → orchestrator (shared utilities are pre-bundled)
-18. [ ] No item assumes local-only execution for agents
-19. [ ] All tools are mocks (demo system)
-20. [ ] Event emission patterns are referenced in each prompt
+24. [ ] Items are ordered: Gateway handlers → agents → orchestrator (shared utilities are pre-bundled)
+25. [ ] No item assumes local-only execution for agents
+26. [ ] All tools are mocks (demo system)
+27. [ ] Event emission patterns are referenced in each prompt
 
 ### Path Consistency
-21. [ ] All paths use forward slashes (not backslashes)
-22. [ ] Agent modules go in `agents/{agent_id}/` directory
-23. [ ] Agent handlers go in `agents/{agent_id}_handler.py`
-24. [ ] Lambda handlers go in `cdk/gateway/handlers/` directory
-25. [ ] No TypeScript references (CDK is Python: `cdk/stacks/gateway_tools.py`)
+28. [ ] All paths use forward slashes (not backslashes)
+29. [ ] Agent modules go in `agents/{agent_id}/` directory
+30. [ ] Agent handlers go in `agents/{agent_id}_handler.py`
+31. [ ] Lambda handlers go in `cdk/gateway/handlers/` directory
+32. [ ] No TypeScript references (CDK is Python: `cdk/stacks/gateway_tools.py`)
 
 ## Output
 

@@ -41,6 +41,8 @@ const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES
 import { isKiroEnvironment, getKiroLearnMoreUrl } from '../utils/environment';
 // Import steering directory path for reveal
 import { STEERING_DIR_PATH } from '../templates/steeringFile';
+// Phase 3: Import path for orchestrator template copying
+import * as path from 'path';
 
 /**
  * Step 8 context inputs needed for file generation
@@ -580,6 +582,18 @@ export class Step8LogicHandler {
       this._callbacks.updateWebviewContent();
       this._callbacks.syncStateToWebview();
 
+      // Phase 3: Copy pattern-specific orchestrator template
+      try {
+        await this.copyOrchestratorTemplate();
+        console.log('Phase 3 complete: Orchestrator template copied');
+      } catch (templateError) {
+        // Log but don't fail the overall operation - roadmap was still generated
+        console.error('Warning: Failed to copy orchestrator template:', templateError);
+        vscode.window.showWarningMessage(
+          'Roadmap generated, but orchestrator template copy failed. You may need to manually copy agents/main.py'
+        );
+      }
+
       // Show success message
       vscode.window.showInformationMessage(
         'Implementation roadmap generated successfully!',
@@ -630,6 +644,99 @@ export class Step8LogicHandler {
       vscode.window.showErrorMessage(
         `${ROADMAP_OUTPUT_FILE} not found. Generate it first using the "Generate Roadmap" button.`
       );
+    }
+  }
+
+  // ============================================================================
+  // Phase 3: Orchestrator Template Copying
+  // ============================================================================
+
+  /**
+   * Copy pattern-specific orchestrator template to agents/main.py
+   * Phase 3: Based on wizard state's confirmedOrchestration value
+   *
+   * Copies:
+   * 1. main_{pattern}.py → agents/main.py
+   * 2. orchestrator_utils.py → agents/shared/orchestrator_utils.py
+   */
+  public async copyOrchestratorTemplate(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      throw new Error('No workspace folder open');
+    }
+
+    const context = this._callbacks.getContext();
+    if (!context) {
+      throw new Error('Extension context is required for template copying');
+    }
+
+    // Get orchestration pattern from wizard state
+    const wizardState = this._callbacks.getWizardState();
+    const pattern = wizardState.agentDesign?.confirmedOrchestration?.toLowerCase() || 'graph';
+
+    // Map pattern to template file name
+    const templateMap: Record<string, string> = {
+      'graph': 'main_graph.py',
+      'swarm': 'main_swarm.py',
+      'workflow': 'main_workflow.py',
+    };
+    const templateFileName = templateMap[pattern] || 'main_graph.py';
+
+    // Get extension resources path
+    const extensionPath = context.extensionPath;
+
+    // Source and destination paths for main.py
+    const mainTemplateSrc = vscode.Uri.file(
+      path.join(extensionPath, 'resources', 'agents', templateFileName)
+    );
+    const mainTemplateDest = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      'agents',
+      'main.py'
+    );
+
+    // Source and destination paths for orchestrator_utils.py
+    const utilsSrc = vscode.Uri.file(
+      path.join(extensionPath, 'resources', 'agents', 'shared', 'orchestrator_utils.py')
+    );
+    const utilsDest = vscode.Uri.joinPath(
+      workspaceFolder.uri,
+      'agents',
+      'shared',
+      'orchestrator_utils.py'
+    );
+
+    try {
+      // Ensure agents/ directory exists
+      const agentsDir = vscode.Uri.joinPath(workspaceFolder.uri, 'agents');
+      try {
+        await vscode.workspace.fs.stat(agentsDir);
+      } catch {
+        await vscode.workspace.fs.createDirectory(agentsDir);
+      }
+
+      // Ensure agents/shared/ directory exists
+      const sharedDir = vscode.Uri.joinPath(agentsDir, 'shared');
+      try {
+        await vscode.workspace.fs.stat(sharedDir);
+      } catch {
+        await vscode.workspace.fs.createDirectory(sharedDir);
+      }
+
+      // Copy orchestrator template
+      const templateContent = await vscode.workspace.fs.readFile(mainTemplateSrc);
+      await vscode.workspace.fs.writeFile(mainTemplateDest, templateContent);
+      console.log(`Copied ${templateFileName} to agents/main.py`);
+
+      // Copy orchestrator_utils.py
+      const utilsContent = await vscode.workspace.fs.readFile(utilsSrc);
+      await vscode.workspace.fs.writeFile(utilsDest, utilsContent);
+      console.log('Copied orchestrator_utils.py to agents/shared/');
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to copy orchestrator template: ${errorMessage}`);
+      throw new Error(`Failed to copy orchestrator template (${pattern}): ${errorMessage}`);
     }
   }
 

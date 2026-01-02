@@ -58,6 +58,11 @@ You will receive a JSON object with the following structure:
   - `swarm`: Autonomous agents with emergent handoffs (use Swarm)
   - `workflow`: Sequential pipelines with automatic parallelization (use Workflow)
 
+- **agentDesign.confirmedEdges[].routingStrategy** (optional): How routing decisions are made for Graph pattern:
+  - `static`: Predetermined next agent (linear pipelines, fixed sequences)
+  - `classification`: Agent returns structured classification field
+  - `explicit`: Agent returns route_to field with next agent ID
+
 - **agentDesign.confirmedEdges**: Edges defining how agents connect and trigger each other. Conditional edges include trigger conditions.
 
 - **security.dataSensitivity**: Classification level affecting data handling patterns.
@@ -91,6 +96,93 @@ Pattern: {confirmedOrchestration}
 Strands Class: [GraphBuilder | Swarm | Workflow]
 
 [1-2 paragraphs explaining pattern characteristics and how agents will coordinate.]
+
+### Agent Response Requirements by Pattern
+
+The orchestration pattern determines what agents must return in their responses.
+
+#### Graph Pattern - Response-Based Routing
+
+For Graph orchestration, agents participating in routing decisions must return structured responses:
+
+| Routing Strategy | Agent Prompt Requirement | Example Response |
+|-----------------|-------------------------|------------------|
+| **Static** | None - routing predetermined | Any format |
+| **Classification** | Must return `classification` field | `{"classification": "technical", "response": "..."}` |
+| **Explicit** | Must return `route_to` field | `{"route_to": "billing_handler", "response": "..."}` |
+
+**Strategy Selection Guidelines:**
+- Predetermined sequences → **Static** (fill in `STATIC_ROUTES` dict)
+- Category-based routing → **Classification** (fill in `CLASSIFICATION_ROUTES` dict, update agent prompts)
+- Complex decisions → **Explicit** (update agent prompts to return `route_to` field)
+- **Avoid keyword matching** on unstructured text (fragile and hard to maintain)
+
+**Agent Prompt Template (Classification):**
+```
+Return your response as JSON:
+{
+  "classification": "technical" | "billing" | "escalation",
+  "confidence": 0.0-1.0,
+  "response": "Your response text"
+}
+```
+
+**Agent Prompt Template (Explicit):**
+```
+Return your response as JSON:
+{
+  "route_to": "<next_agent_id>" | null,
+  "response": "Your response text"
+}
+Set route_to to null if workflow should complete.
+```
+
+#### Swarm Pattern - Autonomous Handoffs
+
+For Swarm orchestration, agents decide handoffs autonomously using one of two methods:
+
+**Method 1: Handoff Tool (Recommended)**
+Each agent must have a `handoff_to_agent` tool:
+```python
+@tool
+@instrument_tool
+def handoff_to_agent(agent_id: str, context: str) -> dict:
+    '''Hand off to another agent with context.'''
+    return {"handoff_to": agent_id, "context": context}
+```
+
+Agent prompt must instruct when to use the tool:
+```
+When you need another agent's help, use the handoff_to_agent tool.
+Available agents: coordinator, researcher, writer, reviewer
+If your task is complete and no handoff needed, respond normally without using the tool.
+```
+
+**Method 2: Response Field**
+Agent returns `handoff_to` in response JSON:
+```
+Return your response as JSON:
+{
+  "handoff_to": "<agent_id>" | null,
+  "context": "Context for next agent",
+  "response": "Your response text"
+}
+```
+
+#### Workflow Pattern - No Routing Fields Needed
+
+For Workflow orchestration, agents do NOT need routing fields. The DAG structure determines execution order.
+
+Agents MAY return structured JSON for better data flow between dependent tasks:
+```
+Return your response as JSON:
+{
+  "result": {...},  // Structured data for dependent tasks
+  "response": "Human readable summary"
+}
+```
+
+The `build_task_prompt()` function in main.py determines how dependency results are passed to dependent tasks.
 
 ## AgentCore Deployment
 
@@ -478,15 +570,21 @@ forbid (
 1. **Use Accurate Placeholders**: All dynamic values must use the `{placeholder_name}` format. Never include hardcoded region names, account IDs, or resource names.
 
 2. **Match Orchestration to Pattern**: Ensure the deployment structure reflects the selected orchestration pattern:
-   - Graph: Deploy all agents, configure conditional edge routing
+   - Graph: Deploy all agents, configure conditional edge routing using appropriate routing strategy
    - Swarm: Deploy agents with handoff tool capabilities
    - Workflow: Deploy agents with task dependency configuration
 
-3. **Map All Approval Gates**: Every approval gate from the security configuration should have a corresponding Cedar policy example.
+3. **Select Routing Strategy (Graph Pattern)**: Analyze each routing decision point:
+   - Predetermined sequences → Static routing (no agent prompt changes needed)
+   - Category-based routing → Classification routing (agent prompts must return `classification` field)
+   - Complex decisions → Explicit routing (agent prompts must return `route_to` field)
+   - Avoid keyword-matching on unstructured response text (fragile and hard to maintain)
 
-4. **Include Runtime Context**: Describe environment variables and configuration needed for the agent runtime.
+4. **Map All Approval Gates**: Every approval gate from the security configuration should have a corresponding Cedar policy example.
 
-5. **Reference Strands SDK**: Mention the appropriate Strands class for the orchestration pattern (GraphBuilder, Swarm, or Workflow).
+5. **Include Runtime Context**: Describe environment variables and configuration needed for the agent runtime.
+
+6. **Reference Strands SDK**: Mention the appropriate Strands class for the orchestration pattern (GraphBuilder, Swarm, or Workflow).
 
 ## Fallback Instructions
 

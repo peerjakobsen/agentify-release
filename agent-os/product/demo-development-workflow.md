@@ -71,19 +71,223 @@ Kiro reads the steering files and generates all code following the defined contr
 
 ### What Kiro Generates
 
-#### 1. Agent Orchestrator
+#### 1. Agent Orchestrator (Base Template + Kiro Customization)
 
 ```
 agents/
 └── main.py                     # Entry point following CLI contract
 ```
 
+The orchestrator uses a **base template + customization** pattern:
+
+**Base Template** (`resources/agents/main.py` in Agentify extension):
+- Generic infrastructure: CLI parsing, event emission, agent config loading
+- `invoke_agent_remotely()` function for boto3 SDK calls
+- Error handling, workflow summaries, response parsing
+- Marked as **DO NOT MODIFY** section
+
+**Customization Section** (Kiro fills in based on steering files):
+
+The CUSTOMIZATION SECTION functions vary by orchestration pattern:
+
+**Graph Pattern:**
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    """Return nodes and edges for Demo Viewer visualization."""
+    return {"nodes": [...], "edges": [...]}
+
+def get_entry_agent() -> str:
+    """Return first agent to invoke."""
+    return "triage"
+
+def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optional[str]:
+    """Routing logic using hybrid strategy (NO keyword matching)."""
+    # Strategy 1: Explicit routing (agent returns route_to field)
+    if response.get('route_to'):
+        return response['route_to']
+
+    # Strategy 2: Classification routing (agent returns classification field)
+    CLASSIFICATION_ROUTES = {"technical": "technical_handler", "billing": "billing_handler"}
+    if response.get('classification'):
+        return CLASSIFICATION_ROUTES.get(response['classification'].lower())
+
+    # Strategy 3: Static routing (predetermined sequence)
+    STATIC_ROUTES = {"extract": "validate", "validate": None}
+    if current_agent in STATIC_ROUTES:
+        return STATIC_ROUTES[current_agent]
+
+    return None  # Workflow complete
+
+def get_agent_display_name(agent_id: str) -> str:
+    """Map agent IDs to human-readable names."""
+    return {"triage": "Triage Agent", ...}.get(agent_id, agent_id)
+```
+
+**Swarm Pattern:**
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    """Return nodes and all possible handoff edges."""
+    return {"nodes": [...], "edges": [...]}  # Show all possible handoffs
+
+def get_entry_agent() -> str:
+    """Return first agent (usually coordinator)."""
+    return "coordinator"
+
+def get_agent_display_name(agent_id: str) -> str:
+    """Map agent IDs to human-readable names."""
+    return {...}.get(agent_id, agent_id)
+
+# NOTE: No route_to_next_agent - agents decide handoffs autonomously
+# Handoffs extracted by extract_handoff_from_response() in template
+```
+
+**Workflow Pattern:**
+```python
+def define_graph_structure() -> Dict[str, Any]:
+    """Return nodes and dependency edges."""
+    return {"nodes": [...], "edges": [...]}
+
+def define_task_dag() -> Dict[str, List[str]]:
+    """Return task dependencies as DAG."""
+    return {
+        "fetch": [],           # No deps - runs first
+        "analyze": ["fetch"],  # Waits for fetch
+        "enrich": ["fetch"],   # Runs parallel with analyze
+        "aggregate": ["analyze", "enrich"]  # Waits for both
+    }
+
+def get_agent_display_name(agent_id: str) -> str:
+    """Map task IDs to human-readable names."""
+    return {...}.get(agent_id, agent_id)
+
+def build_task_prompt(task_id: str, original_prompt: str,
+                     dependency_results: Dict[str, Dict[str, Any]]) -> str:
+    """Build prompt with dependency results for dependent tasks."""
+    # Customize how dependency outputs are passed to tasks
+
+# NOTE: No get_entry_agent or route_to_next_agent - DAG determines order
+```
+
 The orchestrator:
 - Parses CLI arguments (`--prompt`, `--workflow-id`, `--trace-id`)
 - Emits `graph_structure` event first
-- Executes agents according to orchestration pattern
+- **Invokes remote agents via boto3 SDK** (NOT local imports)
 - Emits events to stdout and DynamoDB
 - Returns `workflow_complete` or `workflow_error`
+
+**Critical Architecture:** The orchestrator runs **locally** and calls agents deployed to **AgentCore Runtime** using the `InvokeAgentRuntime` API. It does NOT import or run agent code locally.
+
+```
+main.py (local)
+    │
+    │ boto3.client('bedrock-agentcore').invoke_agent_runtime()
+    ▼
+AgentCore Runtime (AWS)
+    │
+    ├── Agent 1 (remote) ──► MCP Gateway ──► Lambda tools
+    ├── Agent 2 (remote) ──► MCP Gateway ──► Lambda tools
+    └── Agent 3 (remote) ──► MCP Gateway ──► Lambda tools
+```
+
+**Remote Agent Invocation Pattern:**
+
+```python
+import boto3
+import yaml
+from functools import lru_cache
+from pathlib import Path
+
+@lru_cache(maxsize=1)
+def load_agent_config() -> dict:
+    """Load all agent configs from .bedrock_agentcore.yaml dynamically."""
+    config_path = Path(__file__).parent.parent / '.bedrock_agentcore.yaml'
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    agents = {}
+    for agent_key, agent_config in config.get('agents', {}).items():
+        agentcore = agent_config.get('bedrock_agentcore', {})
+        aws = agent_config.get('aws', {})
+        if agentcore.get('agent_arn'):
+            agent_id = agent_config.get('name', agent_key)
+            agents[agent_id] = {
+                'arn': agentcore['agent_arn'],
+                'region': aws.get('region', 'us-east-1'),
+            }
+    return agents
+
+
+def invoke_agent_remotely(agent_id: str, prompt: str, session_id: str) -> dict:
+    """Invoke remote agent via AgentCore SDK."""
+    agents = load_agent_config()
+    agent = agents[agent_id]
+
+    client = boto3.client('bedrock-agentcore', region_name=agent['region'])
+    payload = json.dumps({'prompt': prompt, 'session_id': session_id}).encode()
+
+    response = client.invoke_agent_runtime(
+        agentRuntimeArn=agent['arn'],
+        runtimeSessionId=session_id,
+        payload=payload
+    )
+
+    # Collect all bytes first to handle multi-byte UTF-8 chars at chunk boundaries
+    raw_bytes = b''
+    for chunk in response.get('response', []):
+        raw_bytes += chunk
+    response_text = raw_bytes.decode('utf-8')
+
+    # Parse nested Bedrock message format
+    try:
+        parsed = json.loads(response_text)
+        if isinstance(parsed, dict):
+            # Handle: {'response': {'role': 'assistant', 'content': [{'text': '...'}]}}
+            inner = parsed.get('response')
+            if isinstance(inner, dict) and 'content' in inner:
+                texts = [item['text'] for item in inner.get('content', [])
+                         if isinstance(item, dict) and 'text' in item]
+                if texts:
+                    return {'response': '\n'.join(texts)}
+    except json.JSONDecodeError:
+        pass
+
+    return {'response': response_text}
+```
+
+**Key Points:**
+- Agent ARNs are read from `.bedrock_agentcore.yaml` (created by `agentcore deploy`)
+- No hardcoded agent names - dynamically discovers all deployed agents
+- Uses `runtimeSessionId` for session correlation across agents
+- Requires `bedrock-agentcore:InvokeAgentRuntime` IAM permission
+
+**Response Format Handling:**
+
+AgentCore returns responses in a nested JSON format that requires careful parsing:
+
+```json
+{
+  "response": {
+    "role": "assistant",
+    "content": [{"text": "Agent response here..."}]
+  },
+  "agent": "agent-name",
+  "session_id": "uuid"
+}
+```
+
+**Critical:** The streaming response arrives in chunks that may split multi-byte UTF-8 characters (like emojis). Always collect all bytes first, then decode:
+
+```python
+# ❌ Wrong: decoding each chunk individually breaks multi-byte chars
+for chunk in response.get('response', []):
+    content.append(chunk.decode('utf-8'))  # May fail on emoji boundaries
+
+# ✅ Correct: collect all bytes first, then decode together
+raw_bytes = b''
+for chunk in response.get('response', []):
+    raw_bytes += chunk
+response_text = raw_bytes.decode('utf-8')
+```
 
 #### 2. Individual Agent Handlers
 
@@ -197,6 +401,28 @@ This allows Kiro to simply add new handlers to the directory structure without m
 # Teardown everything
 ./scripts/destroy.sh
 ```
+
+### Running Workflows
+
+After deployment, use `orchestrate.sh` to run the complete workflow:
+
+```bash
+# Run workflow with a prompt
+./scripts/orchestrate.sh -p "Customer TKT-001 has API errors"
+
+# With custom workflow ID and output file
+./scripts/orchestrate.sh --prompt "Billing issue" --workflow-id "wf-test-123" --json events.json
+
+# Skip DynamoDB event query (faster)
+./scripts/orchestrate.sh -p "VIP complaint" --skip-events
+```
+
+The orchestrate script:
+- Auto-discovers AWS profile from `.agentify/config.json`
+- Auto-generates workflow-id and trace-id if not provided
+- Separates stdout (JSON events) from stderr (human-readable progress)
+- Queries DynamoDB for tool events after completion
+- Shows formatted table of tool invocations per agent
 
 ### IAM Role & Policy Creation
 
@@ -519,6 +745,72 @@ This self-healing loop is faster than manual debugging and helps Kiro learn from
 
 ---
 
+## Testing the Full Orchestrated Workflow
+
+After deploying individual agents with `./scripts/setup.sh --agent <name>`, test the complete workflow using the local orchestrator.
+
+### Test Command
+
+```bash
+cd /path/to/your/project
+
+# With AWS profile
+AWS_PROFILE=YourProfile uv run python agents/main.py \
+  --prompt "Your test prompt here" \
+  --workflow-id "wf-test-$(date +%s)" \
+  --trace-id "$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+```
+
+### Expected Output
+
+**stdout** (JSON Lines for Demo Viewer):
+```json
+{"event_type": "graph_structure", "timestamp": ..., "graph": {...}}
+{"event_type": "node_start", "node_id": "triage", ...}
+{"event_type": "node_stop", "node_id": "triage", "status": "completed", ...}
+{"event_type": "node_start", "node_id": "specialist_agent", ...}
+{"event_type": "node_stop", "node_id": "specialist_agent", "status": "completed", ...}
+{"event_type": "workflow_complete", "status": "success", ...}
+```
+
+**stderr** (Human-readable progress):
+```
+Starting workflow execution:
+  Workflow ID: wf-test-1234567890
+  Session ID: abc123...
+Stage 1: Invoking Triage Agent for ticket classification
+Invoking remote agent 'triage' at arn:aws:bedrock-agentcore:...
+Triage completed: ...
+Stage 2: Routing to technical agent for resolution
+...
+WORKFLOW EXECUTION COMPLETED SUCCESSFULLY
+```
+
+### IAM Permissions for Local Invocation
+
+The AWS credentials used to run main.py need:
+
+```json
+{
+    "Effect": "Allow",
+    "Action": "bedrock-agentcore:InvokeAgentRuntime",
+    "Resource": "arn:aws:bedrock-agentcore:*:*:runtime/*"
+}
+```
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `AccessDeniedException` | Missing IAM permission | Add `bedrock-agentcore:InvokeAgentRuntime` to your user/role |
+| `Security token expired` | AWS credentials expired | Refresh credentials or re-authenticate with SSO |
+| `ResourceNotFoundException` | Agent not deployed | Run `./scripts/setup.sh --agent <name>` first |
+| Agent name mismatch | Routing returns wrong name | Ensure `route_ticket()` returns names matching `.bedrock_agentcore.yaml` |
+| UTF-8 decode error | Multi-byte char split across chunks | Collect all bytes before decoding (see Response Format Handling above) |
+| `'dict' object has no attribute 'lower'` | Response not parsed correctly | Handle nested Bedrock format: `response.content[].text` |
+
+---
+
 ## Orchestration Patterns
 
 Agentify supports three orchestration patterns:
@@ -592,6 +884,7 @@ project/
 │               └── requirements.txt
 ├── scripts/
 │   ├── setup.sh                # Deploy infrastructure + agents
+│   ├── orchestrate.sh          # Run workflow with DynamoDB event display
 │   └── destroy.sh              # Teardown everything
 └── .env                        # Environment variables
 ```

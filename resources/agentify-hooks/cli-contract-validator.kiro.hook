@@ -1,15 +1,15 @@
 {
   "enabled": true,
   "name": "CLI Contract Validator",
-  "description": "Validates main.py CLI interface follows Agentify contract",
-  "version": "1",
+  "description": "Validates main.py follows pre-bundled orchestrator architecture for all patterns",
+  "version": "4",
   "when": {
     "type": "fileEdited",
     "patterns": ["agents/main.py"]
   },
   "then": {
     "type": "askAgent",
-    "prompt": "Check agents/main.py for CLI contract compliance.\n\nREQUIRED CLI ARGUMENTS (via argparse):\n- --prompt (required): User input prompt\n- --workflow-id (required): Short workflow ID like wf-abc123\n- --trace-id (required): 32-char hex OTEL trace ID\n\nREQUIRED ENVIRONMENT VARIABLES:\n- AGENTIFY_TABLE_NAME: DynamoDB table for tool events\n- AWS_REGION: AWS region\n\nREQUIRED STDOUT EVENTS (JSON lines with flush=True):\n- graph_structure: Emitted first with agent topology\n- node_start: When each agent begins\n- node_stop: When each agent completes\n- workflow_complete or workflow_error: Emitted last\n\nAll timestamps must be epoch milliseconds: int(time.time() * 1000)\n\nIf any requirements are missing, add them."
+    "prompt": "Check agents/main.py follows the PRE-BUNDLED orchestrator architecture.\n\nFIRST: Determine the orchestration pattern from the docstring:\n- 'Graph Pattern' → validate Graph functions\n- 'Swarm Pattern' → validate Swarm functions\n- 'Workflow Pattern' → validate Workflow functions\n\nCRITICAL: The orchestrator is PRE-BUNDLED by Agentify. CLI parsing, event emission, and SDK calls are in agents/shared/orchestrator_utils.py.\n\nVERIFY IMPORTS from orchestrator_utils (DO NOT duplicate):\n- parse_arguments, validate_arguments\n- setup_environment, generate_session_id\n- get_timestamp, emit_event\n- invoke_agent_remotely\n- emit_workflow_error, print_workflow_summary, print_workflow_error_summary\n\n## Graph Pattern - CUSTOMIZATION SECTION Functions:\n- define_graph_structure() -> Dict with nodes and edges\n- get_entry_agent() -> str (first agent ID)\n- route_to_next_agent(current_agent, response) -> Optional[str]\n- get_agent_display_name(agent_id) -> str\n\n**route_to_next_agent() MUST use:**\n- CLASSIFICATION_ROUTES dict for category-based routing\n- STATIC_ROUTES dict for linear/predetermined routing\n- Check response.get('route_to') for explicit routing\n- Check response.get('classification') for classification routing\n- DO NOT use keyword matching on unstructured response text\n\n## Swarm Pattern - CUSTOMIZATION SECTION Functions:\n- define_graph_structure() -> Dict with nodes and possible handoff edges\n- get_entry_agent() -> str (first agent ID, usually coordinator)\n- get_agent_display_name(agent_id) -> str\n\nNOTE: Swarm does NOT have route_to_next_agent() - handoffs extracted by extract_handoff_from_response()\n\n## Workflow Pattern - CUSTOMIZATION SECTION Functions:\n- define_graph_structure() -> Dict with nodes and dependency edges\n- define_task_dag() -> Dict[str, List[str]] task dependencies\n- get_agent_display_name(agent_id) -> str\n- build_task_prompt(task_id, original_prompt, dependency_results) -> str\n\nNOTE: Workflow does NOT have get_entry_agent() or route_to_next_agent() - DAG determines order\n\n## DO NOT:\n- Add CLI argument parsing (it's in orchestrator_utils.py)\n- Add event emission functions (they're in orchestrator_utils.py)\n- Modify the main() function or GENERIC INFRASTRUCTURE section\n- Duplicate any functionality from orchestrator_utils.py\n- Use keyword matching (Graph pattern) - use CLASSIFICATION_ROUTES/STATIC_ROUTES instead\n\nIf main.py has wrong functions for the pattern, duplicate code, or keyword matching, FIX it."
   },
   "shortName": "cli-contract"
 }
