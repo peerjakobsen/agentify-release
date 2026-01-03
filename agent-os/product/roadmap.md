@@ -1374,6 +1374,341 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/utils/chatStateUtils.ts` — Turn tracking utilities
 - `resources/agents/shared/orchestrator_utils.py` — Parse conversation context arg `L`
 
+39. [ ] Cross-Agent Memory — Enable agents to share context via AgentCore Memory, reducing duplicate external calls:
+
+**Problem:**
+In multi-agent workflows, earlier agents often fetch data that later agents also need:
+- Triage Agent: `get_ticket()` → `get_customer()` → classify → route
+- Technical Agent: `get_ticket()` → `get_customer()` → search KB → respond
+- Same data fetched twice (latency, cost, inconsistency risk)
+
+**Solution: Memory as a Tool (Option B)**
+Provide `search_memory()` and `store_to_memory()` tools that agents can use. Agent prompts include generic guidance to check memory before calling external tools. LLM decides when to apply the pattern based on context.
+
+**Why Option B (vs. auto-injection):**
+- **Demo visibility**: Tool calls appear in execution log ("🔧 search_memory → ticket context")
+- **Agent control**: Agent decides when memory lookup is relevant
+- **Graceful degradation**: Returns "no context found" if memory empty
+- **Simple implementation**: Two tools, one prompt addition
+
+**Infrastructure Setup (AgentCore CLI):**
+
+Memory is created via AgentCore CLI (not CDK), following the documented AgentCore pattern:
+
+```bash
+# Create memory with semantic strategy for cross-agent context sharing
+agentcore memory create agentify-cross-agent-memory \
+  --strategies '[{"semanticMemoryStrategy": {"name": "AgentContext"}}]' \
+  --event-expiry-days 7 \
+  --wait
+```
+
+**Setup Script Updates** (`scripts/setup.sh`):
+```bash
+# Create AgentCore Memory (after CDK stacks, before agent deployment)
+echo "Creating AgentCore Memory..."
+MEMORY_OUTPUT=$(agentcore memory create agentify-cross-agent-memory \
+  --strategies '[{"semanticMemoryStrategy": {"name": "AgentContext"}}]' \
+  --event-expiry-days 7 \
+  --region $REGION \
+  --wait 2>&1)
+
+# Extract memory ID from output
+MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -oP 'Memory ID: \K[^\s]+' || \
+  agentcore memory list --region $REGION | grep agentify-cross-agent | awk '{print $1}')
+
+if [ -z "$MEMORY_ID" ]; then
+  echo "Error: Failed to create or find memory resource"
+  exit 1
+fi
+
+# Update infrastructure.json with memory config
+jq --arg mid "$MEMORY_ID" '.memory.memoryId = $mid' \
+  .agentify/infrastructure.json > tmp.json && mv tmp.json .agentify/infrastructure.json
+
+echo "Memory ID: $MEMORY_ID"
+
+# Export for agent deployment
+export MEMORY_ID=$MEMORY_ID
+```
+
+**Agent Deployment Updates** (`scripts/setup.sh` Step 3):
+```bash
+# Deploy agents with MEMORY_ID environment variable
+echo "Deploying agents to AgentCore Runtime..."
+
+# Load memory ID from infrastructure.json
+MEMORY_ID=$(jq -r '.memory.memoryId // empty' "${PROJECT_ROOT}/.agentify/infrastructure.json")
+
+# Pass MEMORY_ID as env var to agent (AgentCore passes to runtime)
+DEPLOY_ENV_ARGS="--env AGENTIFY_PROJECT_NAME=${PROJECT_NAME}"
+if [ -n "$MEMORY_ID" ]; then
+  DEPLOY_ENV_ARGS="${DEPLOY_ENV_ARGS} --env MEMORY_ID=${MEMORY_ID}"
+fi
+
+uv run agentcore deploy -a "${AGENT_NAME}" --auto-update-on-conflict ${DEPLOY_ENV_ARGS}
+```
+
+**Orchestrator Script Updates** (`scripts/orchestrate.sh`):
+```bash
+# Load memory ID from infrastructure.json for local orchestrator
+MEMORY_ID=""
+if [ -f "${INFRA_JSON}" ] && command -v jq &> /dev/null; then
+  MEMORY_ID=$(jq -r '.memory.memoryId // empty' "${INFRA_JSON}" 2>/dev/null)
+fi
+
+# Export for Python orchestrator
+if [ -n "$MEMORY_ID" ]; then
+  export MEMORY_ID="${MEMORY_ID}"
+fi
+
+# Run main.py - it reads MEMORY_ID from env and initializes memory client
+uv run python agents/main.py \
+    --prompt "$PROMPT" \
+    --workflow-id "$WORKFLOW_ID" \
+    --trace-id "$TRACE_ID" \
+    --turn-number 1 \
+    > "$JSON_OUTPUT" 2> >(tee "$STDERR_FILE" >&2)
+```
+
+**Destroy Script Updates** (`scripts/destroy.sh`):
+```bash
+# Delete memory resource during cleanup (before CDK destroy)
+echo "Deleting AgentCore Memory..."
+MEMORY_ID=$(jq -r '.memory.memoryId // empty' .agentify/infrastructure.json 2>/dev/null)
+if [ -n "$MEMORY_ID" ]; then
+  agentcore memory delete $MEMORY_ID --region $REGION --wait || true
+  echo "Memory resource deleted: $MEMORY_ID"
+fi
+```
+
+**Environment Variable Propagation:**
+- **Remote agents**: `MEMORY_ID` passed via `agentcore deploy --env` → agent reads via `os.getenv('MEMORY_ID')`
+- **Local orchestrator**: `orchestrate.sh` exports `MEMORY_ID` → `main.py` reads and calls `init_memory()`
+- **Demo Viewer**: `WorkflowTriggerService` reads from `infrastructure.json` and passes as env var to subprocess
+
+**New Pre-Bundled Module:**
+```
+resources/agents/shared/
+├── memory_client.py    # search_memory, store_to_memory tools
+└── ...existing files...
+```
+
+**memory_client.py Implementation:**
+```python
+import os
+from strands import tool
+from agents.shared.instrumentation import instrument_tool
+
+_memory_client = None
+_memory_id = None
+_session_id = None
+
+def init_memory(session_id: str):
+    """Initialize memory for session. Called by orchestrator."""
+    global _memory_client, _memory_id, _session_id
+    _memory_id = os.environ.get('MEMORY_ID')
+    if not _memory_id:
+        print("Warning: MEMORY_ID not set, cross-agent memory disabled")
+        return
+    _session_id = session_id
+    from bedrock_agentcore.memory import MemoryClient
+    _memory_client = MemoryClient(region_name=os.environ.get('AWS_REGION', 'us-west-2'))
+
+@tool
+@instrument_tool
+def search_memory(query: str) -> str:
+    """Search shared memory for context from previous agents in this workflow.
+
+    Use BEFORE calling external tools to check if data was already fetched.
+    Memory is scoped to the current session - other users/workflows cannot access.
+    """
+    if not _memory_client or not _memory_id or not _session_id:
+        return "Memory not initialized. Use external tools."
+    try:
+        # Search semantic memory scoped to THIS session only
+        results = _memory_client.search_memory(
+            memory_id=_memory_id,
+            session_id=_session_id,  # CRITICAL: Scope to current workflow session
+            query=query,
+            namespace="/agent/context",
+            max_results=3
+        )
+        if results:
+            return "\n".join([r.get('content', '') for r in results])
+        return "No relevant context found."
+    except Exception as e:
+        print(f"Memory search error: {e}")
+        return "Memory search failed. Use external tools."
+
+@tool
+@instrument_tool
+def store_to_memory(key: str, value: str) -> str:
+    """Store findings for downstream agents in this workflow.
+
+    Memory is scoped to the current session - other users/workflows cannot access.
+    """
+    if not _memory_client or not _memory_id or not _session_id:
+        return "Memory not initialized."
+    try:
+        # Store to semantic memory scoped to THIS session
+        _memory_client.store_memory(
+            memory_id=_memory_id,
+            session_id=_session_id,  # CRITICAL: Scope to current workflow session
+            content=f"{key}: {value}",
+            namespace="/agent/context"
+        )
+        return f"Stored: {key}"
+    except Exception as e:
+        print(f"Memory store error: {e}")
+        return f"Failed to store: {key}"
+```
+
+**Session Isolation:**
+- `session_id` = workflow session ID (from `--workflow-id` or generated)
+- Each workflow run gets a unique session ID
+- Memory reads/writes are scoped to that session only
+- Different users running concurrent workflows cannot access each other's memory
+- Same workflow's agents CAN share memory (that's the point)
+
+**Orchestrator Integration (main.py templates):**
+```python
+# In orchestrator setup
+from agents.shared.memory_client import init_memory
+
+# Initialize memory with session_id (same as workflow session)
+init_memory(session_id)
+```
+
+**Agentify Power Updates** (`resources/agentify-power/POWER.md`):
+
+Add **Pattern 8: Cross-Agent Memory** to POWER.md:
+```markdown
+## Pattern 8: Cross-Agent Memory
+
+Use `search_memory()` before external calls, `store_to_memory()` after retrieving data.
+
+```python
+# CORRECT - Import from shared, use memory tools
+from agents.shared.memory_client import init_memory, search_memory, store_to_memory
+
+# In main.py orchestrator - initialize memory first
+init_memory(session_id)
+
+# In agent tools - check memory before external calls
+@tool
+@instrument_tool
+def get_customer_info(customer_id: str) -> dict:
+    """Get customer information."""
+    # Check memory first
+    cached = search_memory(f"customer {customer_id}")
+    if "No relevant context" not in cached:
+        return json.loads(cached)
+
+    # Fetch from external source
+    result = external_api.get_customer(customer_id)
+
+    # Store for downstream agents
+    store_to_memory(f"customer_{customer_id}", json.dumps(result))
+    return result
+
+# WRONG - Never recreate memory_client locally
+def search_memory(query):  # BLOCKING ERROR
+    ...
+```
+
+Environment: `MEMORY_ID` must be set (from infrastructure.json or agentcore deploy).
+```
+
+Add to **Quick Checklist**:
+```markdown
+- [ ] Memory tools imported from `agents.shared.memory_client` (not local)
+- [ ] `init_memory(session_id)` called in main.py before agent invocations
+- [ ] `search_memory()` used before expensive external API calls
+```
+
+**Hook Updates** (`resources/agentify-hooks/`):
+
+1. **observability-enforcer.kiro.hook** — Add memory functions to local definition check:
+   ```json
+   // Add to LOCAL DEFINITIONS list in prompt:
+   "- init_memory\n- search_memory\n- store_to_memory"
+
+   // Add to CORRECT imports section:
+   "from agents.shared.memory_client import init_memory, search_memory, store_to_memory"
+   ```
+
+2. **cli-contract-validator.kiro.hook** — Add memory initialization check:
+   ```json
+   // Add to VERIFY IMPORTS section:
+   "- init_memory (from agents.shared.memory_client)"
+
+   // Add to validation:
+   "## Memory Initialization (if MEMORY_ID used):\n- init_memory(session_id) should be called in main() before agent invocations\n- Import from agents.shared.memory_client, not defined locally"
+   ```
+
+3. **tool-pattern.kiro.hook** — No changes needed (already validates decorator order for all `@tool`/`@instrument_tool` functions, which includes memory tools)
+
+**Steering Prompt Updates:**
+
+1. **agentify-integration-steering.prompt.md:**
+   - Add `memory_client.py` to Pre-Bundled Shared Utilities table
+   - Add new section:
+   ```markdown
+   ## Cross-Agent Memory
+
+   Agents in a workflow often need data that earlier agents have already retrieved.
+   To avoid duplicate external calls and share context:
+
+   - Use `search_memory(query)` before calling external tools to check if relevant data exists
+   - Use `store_to_memory(key, value)` after retrieving important data for downstream agents
+
+   This reduces latency, cost, and ensures consistency across the workflow.
+   ```
+
+2. **structure-steering.prompt.md:**
+   - Add `memory_client.py` to `agents/shared/` directory listing
+
+**Agent Prompt Pattern (generic, not tool-specific):**
+Generated agent prompts will include:
+```
+## Memory Usage
+Before calling external tools, use search_memory() to check if previous agents
+already retrieved the needed data. Store important findings with store_to_memory()
+for downstream agents.
+```
+
+The LLM applies this pattern to whatever tools exist in the specific project.
+
+**Demo Viewer Visibility:**
+Memory tool calls appear in execution log like any other tool:
+```
+14:32:02  🔧 search_memory → "ticket TKT-001 customer"     ← Visible!
+14:32:02     └─ Result: "Customer: Acme Corp, enterprise tier..."
+14:32:03  🔧 search_knowledge_base → "API authentication"
+```
+
+Sales presenter can point out: "See? It remembered from the previous agent."
+
+**Dependencies:**
+- Item 38 (Session continuation) — Uses same session_id
+- Item 28.6 (Shared utilities bundling) — Extends pre-bundled pattern
+- AgentCore Memory SDK (`bedrock_agentcore.memory`)
+
+**Files:**
+- `resources/scripts/setup.sh` — Add `agentcore memory create` (Step 2), pass `MEMORY_ID` to agent deploy (Step 3)
+- `resources/scripts/orchestrate.sh` — Load `MEMORY_ID` from infrastructure.json, export for main.py
+- `resources/scripts/destroy.sh` — Add `agentcore memory delete` for cleanup
+- `resources/agents/shared/memory_client.py` — New pre-bundled module
+- `resources/agents/shared/__init__.py` — Export memory functions
+- `resources/agents/main_graph.py`, `main_swarm.py`, `main_workflow.py` — Add `init_memory()` call
+- `src/services/workflowTriggerService.ts` — Pass `MEMORY_ID` env var (read from infrastructure.json)
+- `resources/agentify-power/POWER.md` — Add Pattern 8 (memory) and Quick Checklist items
+- `resources/agentify-hooks/observability-enforcer.kiro.hook` — Add memory functions to local definition check
+- `resources/agentify-hooks/cli-contract-validator.kiro.hook` — Add `init_memory()` validation
+- `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add memory section
+- `resources/prompts/steering/structure-steering.prompt.md` — Add to directory listing `L`
+
 ## Phase 4: Visual Polish
 
 25. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
