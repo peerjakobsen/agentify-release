@@ -5,45 +5,35 @@
   "highestStepReached": 8,
   "validationAttempted": true,
   "businessObjective": "Automated deal review board that accelerates M&A and partnership decisions by coordinating legal, financial, technical, and risk analysis in parallel. Ensures comprehensive due diligence while reducing review cycles from weeks to hours.",
-  "industry": "Finance",
+  "industry": "FSI",
   "systems": [
-    "DealManagement",
-    "CompanyDatabase",
-    "MarketDataService"
+    "Salesforce",
+    "SAP S/4HANA"
   ],
   "aiGapFillingState": {
     "conversationHistory": [],
     "confirmedAssumptions": [
       {
-        "system": "DealManagement",
+        "system": "Salesforce",
         "modules": [
-          "Deal Documents",
-          "Proposal Tracking"
+          "Opportunities",
+          "Accounts",
+          "Documents"
         ],
         "integrations": [
-          "Agent -> DealManagement: retrieve deal details and documents"
+          "Agent -> Salesforce: retrieve deal/opportunity details",
+          "Agent -> Salesforce: lookup counterparty account information"
         ],
         "source": "user-provided"
       },
       {
-        "system": "CompanyDatabase",
+        "system": "SAP S/4HANA",
         "modules": [
-          "Company Profiles",
-          "Due Diligence Records"
+          "Financial Analytics",
+          "Market Benchmarks"
         ],
         "integrations": [
-          "Agent -> CompanyDatabase: lookup counterparty information"
-        ],
-        "source": "user-provided"
-      },
-      {
-        "system": "MarketDataService",
-        "modules": [
-          "Industry Benchmarks",
-          "Comparable Transactions"
-        ],
-        "integrations": [
-          "Agent -> MarketDataService: fetch market data and comparables"
+          "Agent -> SAP S/4HANA: fetch market data and comparable transactions"
         ],
         "source": "user-provided"
       }
@@ -434,9 +424,9 @@
     "mockDefinitions": [
       {
         "tool": "get_deal",
-        "system": "DealManagement",
-        "operation": "getDeal",
-        "description": "Retrieves deal/proposal details and documents (SHARED TOOL - deployed via MCP Gateway)",
+        "system": "Salesforce",
+        "operation": "getOpportunity",
+        "description": "Retrieves deal/opportunity details from Salesforce CRM (SHARED TOOL - deployed via MCP Gateway)",
         "isShared": true,
         "mockRequest": {
           "dealId": "string"
@@ -513,9 +503,9 @@
       },
       {
         "tool": "get_company_profile",
-        "system": "CompanyDatabase",
-        "operation": "getCompanyProfile",
-        "description": "Retrieves counterparty company profile for due diligence (SHARED TOOL - deployed via MCP Gateway)",
+        "system": "Salesforce",
+        "operation": "getAccount",
+        "description": "Retrieves counterparty account profile from Salesforce for due diligence (SHARED TOOL - deployed via MCP Gateway)",
         "isShared": true,
         "mockRequest": {
           "companyName": "string"
@@ -584,9 +574,9 @@
       },
       {
         "tool": "get_market_data",
-        "system": "MarketDataService",
-        "operation": "getMarketData",
-        "description": "Retrieves market benchmarks and comparable transactions (SHARED TOOL - deployed via MCP Gateway)",
+        "system": "SAP S/4HANA",
+        "operation": "getMarketAnalytics",
+        "description": "Retrieves market benchmarks and comparable transactions from SAP (SHARED TOOL - deployed via MCP Gateway)",
         "isShared": true,
         "mockRequest": {
           "dealType": "string",

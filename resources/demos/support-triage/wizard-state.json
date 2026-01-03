@@ -5,32 +5,36 @@
   "highestStepReached": 8,
   "validationAttempted": true,
   "businessObjective": "Intelligent customer support triage system that reduces ticket resolution time by automatically routing issues to the right specialist. VIP customers get immediate escalation while technical and billing issues are handled by domain experts.",
-  "industry": "Technology",
+  "industry": "Other",
+  "customIndustry": "Technology / SaaS",
   "systems": [
-    "TicketSystem",
-    "CustomerDatabase"
+    "Zendesk",
+    "Salesforce"
   ],
   "aiGapFillingState": {
     "conversationHistory": [],
     "confirmedAssumptions": [
       {
-        "system": "TicketSystem",
+        "system": "Zendesk",
         "modules": [
-          "Ticket Management"
+          "Tickets",
+          "Knowledge Base"
         ],
         "integrations": [
-          "Agent -> TicketSystem: get ticket by ID"
+          "Agent -> Zendesk: get ticket by ID",
+          "Agent -> Zendesk: search knowledge base articles"
         ],
         "source": "user-provided"
       },
       {
-        "system": "CustomerDatabase",
+        "system": "Salesforce",
         "modules": [
-          "Customer Profiles",
+          "Accounts",
+          "Contacts",
           "Account History"
         ],
         "integrations": [
-          "Agent -> CustomerDatabase: lookup customer by ID"
+          "Agent -> Salesforce: lookup customer account by ID"
         ],
         "source": "user-provided"
       }
@@ -255,9 +259,9 @@
     "mockDefinitions": [
       {
         "tool": "get_ticket",
-        "system": "TicketSystem",
+        "system": "Zendesk",
         "operation": "getTicket",
-        "description": "Retrieves support ticket details by ID (SHARED TOOL - deployed via MCP Gateway)",
+        "description": "Retrieves support ticket details from Zendesk by ID (SHARED TOOL - deployed via MCP Gateway)",
         "isShared": true,
         "mockRequest": {
           "ticketId": "string"
@@ -307,9 +311,9 @@
       },
       {
         "tool": "get_customer",
-        "system": "CustomerDatabase",
-        "operation": "getCustomer",
-        "description": "Retrieves customer profile and account history (SHARED TOOL - deployed via MCP Gateway)",
+        "system": "Salesforce",
+        "operation": "getAccount",
+        "description": "Retrieves customer account profile and history from Salesforce (SHARED TOOL - deployed via MCP Gateway)",
         "isShared": true,
         "mockRequest": {
           "customerId": "string"

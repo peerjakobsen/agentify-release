@@ -374,9 +374,10 @@ All agents should **import from** shared modules, and Kiro should **modify only 
 **Depends on:** None (shared utilities are pre-bundled)
 
 **Files to be created (inject into existing CDK structure):**
-- `cdk/gateway/handlers/zendesk_get_ticket/handler.py` — Lambda handler (Python 3.11)
-- `cdk/gateway/handlers/zendesk_get_ticket/requirements.txt` — Dependencies (if needed)
-- `cdk/gateway/handlers/zendesk_get_ticket/mock_data.json` — Mock data bundled with Lambda
+- `cdk/gateway/handlers/{tool_name}/handler.py` — Lambda handler (Python 3.11)
+- `cdk/gateway/handlers/{tool_name}/requirements.txt` — Dependencies (if needed)
+- `cdk/gateway/handlers/{tool_name}/mock_data.json` — Mock data bundled with Lambda
+- `cdk/gateway/schemas/{tool_name}.json` — Tool schema for Gateway registration
 - (Repeat for each shared tool defined in integration-landscape.md)
 
 **Pre-built files (do NOT create or modify):**
@@ -454,24 +455,60 @@ def lambda_handler(event, context):
 
 **requirements.txt** — Only if dependencies beyond boto3 are needed (often empty)
 
-### 2. Directory Structure After Implementation
-```
-cdk/gateway/handlers/
-├── zendesk_get_ticket/
-│   ├── handler.py
-│   ├── mock_data.json
-│   └── requirements.txt
-├── zendesk_get_comments/
-│   ├── handler.py
-│   ├── mock_data.json
-│   └── requirements.txt
-└── customer_lookup/
-    ├── handler.py
-    ├── mock_data.json
-    └── requirements.txt
+### 2. Tool Schemas for Gateway Registration
+
+For each shared tool, create `cdk/gateway/schemas/{tool_name}.json` with the MCP tool definition:
+
+```json
+{
+    "name": "{tool_name}",
+    "description": "Brief description of what the tool does",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "param_name": {
+                "type": "string",
+                "description": "Description of the parameter"
+            }
+        },
+        "required": ["param_name"]
+    }
+}
 ```
 
-### 3. What NOT to Create
+**IMPORTANT - AgentCore Gateway Schema Limitations:**
+Only these JSON Schema properties are supported:
+- `type`, `properties`, `required`, `items`, `description`
+
+Do NOT use: `enum`, `format`, `additionalProperties`, `minimum`, `maximum`, `pattern`, `oneOf`, `anyOf`, `default`, `examples`, `title`, `$ref`, `errorSchema`
+
+If you need to express constraints, put them in the `description` field:
+- Instead of `"enum": ["low", "medium", "high"]` use `"description": "Priority level. One of: low, medium, high"`
+- Instead of `"format": "email"` use `"description": "Email address (email format)"`
+
+### 3. Directory Structure After Implementation
+```
+cdk/gateway/
+├── handlers/
+│   ├── {tool_1}/
+│   │   ├── handler.py
+│   │   ├── mock_data.json
+│   │   └── requirements.txt
+│   ├── {tool_2}/
+│   │   ├── handler.py
+│   │   ├── mock_data.json
+│   │   └── requirements.txt
+│   └── {tool_n}/
+│       ├── handler.py
+│       ├── mock_data.json
+│       └── requirements.txt
+└── schemas/
+    ├── {tool_1}.json
+    ├── {tool_2}.json
+    └── {tool_n}.json
+```
+
+### 4. What NOT to Create
 - Do NOT create `cdk/stacks/*.py` files — they already exist
 - Do NOT create `cdk/app.py` or `cdk/config.py` — they already exist
 - Do NOT create gateway setup scripts — they already exist
@@ -481,6 +518,8 @@ cdk/gateway/handlers/
 **Acceptance Criteria (verify after Kiro implements):**
 - [ ] `cdk/gateway/handlers/{tool_name}/handler.py` exists for each shared tool
 - [ ] `cdk/gateway/handlers/{tool_name}/mock_data.json` exists with realistic sample data
+- [ ] `cdk/gateway/schemas/{tool_name}.json` exists with valid MCP tool schema
+- [ ] Schema only uses supported properties: type, properties, required, items, description
 - [ ] Handler code loads mock data from same directory (not external path)
 - [ ] Handler code uses the correct tool name parsing pattern
 - [ ] `cd cdk && cdk deploy` succeeds (auto-discovers all handlers)
