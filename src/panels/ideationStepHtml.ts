@@ -506,6 +506,10 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
       roadmapGenerated: false,
       roadmapFilePath: '',
       roadmapError: undefined,
+      cedarGenerating: false,
+      cedarGenerated: false,
+      cedarFilePath: '',
+      cedarError: undefined,
     };
     const summaries = computeStepSummaries(state);
     return generateStep8Html(generationState, summaries);

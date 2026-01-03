@@ -67,11 +67,11 @@
     "refinedSections": {}
   },
   "security": {
-    "dataSensitivity": "Internal",
-    "complianceFrameworks": [],
-    "approvalGates": [],
-    "guardrailNotes": "Demo with mock customer data only. No real PII.",
-    "skipped": true
+    "dataSensitivity": "confidential",
+    "complianceFrameworks": ["SOC 2"],
+    "approvalGates": ["Before data modification"],
+    "guardrailNotes": "Demo with mock customer data. PII must be masked in responses. Escalation actions require approval.",
+    "skipped": false
   },
   "agentDesign": {
     "proposedAgents": [
@@ -604,9 +604,12 @@
     "generatedFilePaths": [],
     "accordionExpanded": false,
     "canGenerate": true,
-    "isPlaceholderMode": true,
     "roadmapGenerating": false,
     "roadmapGenerated": false,
-    "roadmapFilePath": ""
+    "roadmapFilePath": "",
+    "cedarGenerating": false,
+    "cedarGenerated": false,
+    "cedarFilePath": "",
+    "cedarError": null
   }
 }

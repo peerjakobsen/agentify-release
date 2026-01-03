@@ -842,6 +842,19 @@ export interface GenerationState {
   roadmapFilePath: string;
   /** Error message if roadmap generation failed */
   roadmapError?: string;
+
+  // -------------------------------------------------------------------------
+  // Phase 3: Cedar Policy Generation
+  // -------------------------------------------------------------------------
+
+  /** Whether Cedar policy generation is in progress */
+  cedarGenerating: boolean;
+  /** Whether Cedar policies were successfully generated */
+  cedarGenerated: boolean;
+  /** Path to the generated policies/main.cedar file */
+  cedarFilePath: string;
+  /** Error message if Cedar generation failed (non-blocking) */
+  cedarError?: string;
 }
 
 /**
@@ -1418,6 +1431,11 @@ export function createDefaultGenerationState(): GenerationState {
     roadmapGenerated: false,
     roadmapFilePath: '',
     roadmapError: undefined,
+    // Phase 3: Cedar policy generation
+    cedarGenerating: false,
+    cedarGenerated: false,
+    cedarFilePath: '',
+    cedarError: undefined,
   };
 }
 

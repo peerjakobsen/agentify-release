@@ -125,11 +125,21 @@ export class Step6LogicHandler {
 
   /**
    * Trigger auto-send when entering Step 6
-   * Re-triggers AI if Step 5 confirmed agents have changed
+   * Re-triggers AI if Step 5 confirmed agents have changed AND no mock data exists
+   * Users can always use "Regenerate All" button to refresh existing data
    * Task 3.3: Check if step5Hash has changed or aiCalled is false
    */
   public triggerAutoSend(inputs: Step6ContextInputs): void {
     const currentHash = generateStep5Hash(inputs.confirmedAgents);
+    const hasExistingMockData = this._state.mockDefinitions.length > 0;
+
+    // Skip auto-generation if we already have mock data
+    // Users can use the "Regenerate All" button to refresh from scratch
+    if (hasExistingMockData) {
+      // Just update the hash to prevent re-triggering on subsequent visits
+      this._state.step5Hash = currentHash;
+      return;
+    }
 
     // Check if inputs have changed since last visit
     if (this._state.step5Hash !== currentHash) {

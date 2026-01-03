@@ -18,6 +18,7 @@ import {
   RoadmapGenerationService,
   ROADMAP_OUTPUT_FILE,
 } from '../services/roadmapGenerationService';
+import { getSteeringGenerationService } from '../services/steeringGenerationService';
 import type {
   GenerationState,
   StepSummary,
@@ -263,6 +264,12 @@ export class Step8LogicHandler {
     this._state.generatedFilePaths = [];
     this._state.accordionExpanded = true; // Auto-expand during generation
 
+    // Reset Cedar policy state
+    this._state.cedarGenerating = false;
+    this._state.cedarGenerated = false;
+    this._state.cedarFilePath = '';
+    this._state.cedarError = undefined;
+
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
 
@@ -286,12 +293,16 @@ export class Step8LogicHandler {
       }
 
       if (result.success) {
-        // Success - all files generated
+        // Success - all steering files generated
         this._state.generatedFilePaths = result.files;
         this._state.accordionExpanded = false; // Auto-collapse on success
 
-        // Task 4.5: Show success toast with action
-        this.showSuccessToast(result.files.length, result.backupPath);
+        // Phase 3: Generate Cedar policies if security configuration warrants it
+        // This is non-blocking - Cedar failure won't fail steering file generation
+        await this.generateCedarPoliciesIfNeeded(wizardState);
+
+        // Task 4.5: Show success toast with action (updated for Cedar)
+        this.showSuccessToast(result.files.length, result.backupPath, this._state.cedarGenerated);
       } else if (result.error) {
         // Partial failure
         this._state.failedFile = {
@@ -320,9 +331,18 @@ export class Step8LogicHandler {
   /**
    * Show success toast with optional actions
    * Task 4.5: Shows toast with file count and backup path info
+   * Phase 3: Extended to show Cedar policy generation status
    */
-  private showSuccessToast(fileCount: number, backupPath?: string): void {
+  private showSuccessToast(
+    fileCount: number,
+    backupPath?: string,
+    cedarGenerated: boolean = false
+  ): void {
     let message = `Successfully generated ${fileCount} steering file${fileCount !== 1 ? 's' : ''} in .kiro/steering/`;
+
+    if (cedarGenerated) {
+      message += ` + Cedar policies in policies/`;
+    }
 
     if (backupPath) {
       message += ` (previous files backed up)`;
@@ -352,6 +372,76 @@ export class Step8LogicHandler {
         // Fallback: just show the folder in explorer view
         await vscode.commands.executeCommand('workbench.view.explorer');
       }
+    }
+  }
+
+  // ============================================================================
+  // Phase 3: Cedar Policy Generation
+  // ============================================================================
+
+  /**
+   * Generate Cedar policies if security configuration warrants it
+   * Phase 3: Called after steering file generation succeeds
+   * Cedar failure is non-blocking - won't fail overall generation
+   *
+   * @param wizardState The full wizard state
+   */
+  private async generateCedarPoliciesIfNeeded(wizardState: WizardState): Promise<void> {
+    const context = this._callbacks.getContext();
+    if (!context) {
+      console.warn('[Step8] No extension context available for Cedar generation');
+      return;
+    }
+
+    const generationService = getSteeringGenerationService(context);
+
+    // Check if Cedar generation should run based on security config
+    if (!generationService.shouldGenerateCedarPolicies(wizardState)) {
+      console.log('[Step8] Cedar policy generation not needed (no compliance frameworks or approval gates)');
+      return;
+    }
+
+    // Update state to indicate Cedar generation is starting
+    this._state.cedarGenerating = true;
+    this._state.cedarError = undefined;
+    this._callbacks.updateWebviewContent();
+
+    try {
+      // Generate Cedar policies
+      const cedarResult = await generationService.generateCedarPolicies(wizardState);
+
+      if (cedarResult.success) {
+        // Get workspace folder for writing
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+          throw new Error('No workspace folder open');
+        }
+
+        // Write Cedar policies to policies/main.cedar
+        const filePath = await generationService.writeCedarPolicies(
+          workspaceFolder.uri,
+          cedarResult.content
+        );
+
+        // Update state with success
+        this._state.cedarGenerated = true;
+        this._state.cedarFilePath = filePath;
+        this._state.generatedFilePaths.push(filePath);
+        console.log(`[Step8] Cedar policies generated: ${filePath}`);
+      } else {
+        // Cedar generation failed - log but don't block
+        this._state.cedarError = cedarResult.error || 'Unknown Cedar generation error';
+        console.warn(`[Step8] Cedar policy generation failed: ${this._state.cedarError}`);
+      }
+    } catch (error) {
+      // Unexpected error - log but don't block steering file success
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this._state.cedarError = errorMessage;
+      console.error(`[Step8] Cedar policy generation error: ${errorMessage}`);
+    } finally {
+      this._state.cedarGenerating = false;
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
     }
   }
 

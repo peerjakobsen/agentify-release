@@ -167,10 +167,20 @@ export class Step5LogicHandler {
 
   /**
    * Trigger auto-send when entering Step 5
-   * Re-triggers AI if Steps 1-4 inputs have changed
+   * Re-triggers AI if Steps 1-4 inputs have changed AND no agent data exists
+   * Users can always use "Regenerate" button to refresh existing data
    */
   public triggerAutoSend(inputs: Step5ContextInputs): void {
     const currentHash = generateStep4Hash(inputs);
+    const hasExistingAgents = this._state.proposedAgents.length > 0;
+
+    // Skip auto-generation if we already have agent data
+    // Users can use the "Regenerate" button to refresh from scratch
+    if (hasExistingAgents) {
+      // Just update the hash to prevent re-triggering on subsequent visits
+      this._state.step4Hash = currentHash;
+      return;
+    }
 
     // Check if inputs have changed since last visit
     if (this._state.step4Hash !== currentHash) {

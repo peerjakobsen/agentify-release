@@ -87,13 +87,13 @@
     "refinedSections": {}
   },
   "security": {
-    "dataSensitivity": "Confidential",
+    "dataSensitivity": "confidential",
     "complianceFrameworks": [
-      "SOC2"
+      "SOC 2"
     ],
     "approvalGates": [
-      "Legal Review",
-      "Finance Approval"
+      "Before sending recommendations",
+      "Before financial transactions"
     ],
     "guardrailNotes": "Demo with synthetic deal data. No real financial or legal information.",
     "skipped": false
@@ -259,26 +259,6 @@
         "from": "risk",
         "to": "technical",
         "condition": "Swarm: handoff when technical clarification needed"
-      },
-      {
-        "from": "risk",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when risk assessment complete"
-      },
-      {
-        "from": "legal",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when legal review complete"
-      },
-      {
-        "from": "financial",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when financial review complete"
-      },
-      {
-        "from": "technical",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when technical review complete"
       }
     ],
     "orchestrationReasoning": "Swarm pattern allows specialists to dynamically hand off to each other based on findings. Unlike graph workflows, the path is not predetermined - agents collaborate based on what they discover during the review.",
@@ -446,26 +426,6 @@
         "from": "risk",
         "to": "technical",
         "condition": "Swarm: handoff when technical clarification needed"
-      },
-      {
-        "from": "risk",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when risk assessment complete"
-      },
-      {
-        "from": "legal",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when legal review complete"
-      },
-      {
-        "from": "financial",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when financial review complete"
-      },
-      {
-        "from": "technical",
-        "to": "coordinator",
-        "condition": "Swarm: handoff when technical review complete"
       }
     ],
     "originalOrchestration": "swarm"

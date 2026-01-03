@@ -156,6 +156,14 @@ export class Step3LogicHandler {
   public triggerAutoSend(inputs: Step1And2Inputs): void {
     const currentHash = this.generateStep2AssumptionsHash(inputs.confirmedAssumptions);
 
+    // Skip auto-generation if outcome was already accepted
+    // Users can use "Regenerate" button to refresh from scratch
+    if (this._state.suggestionsAccepted && this._state.primaryOutcome) {
+      this._state.step2AssumptionsHash = currentHash;
+      this._step2AssumptionsHash = currentHash;
+      return;
+    }
+
     // Check if assumptions have changed since last visit
     if (this._step2AssumptionsHash !== currentHash) {
       // Reset outcome state (preserve customStakeholders)

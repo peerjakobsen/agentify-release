@@ -106,6 +106,12 @@ export class Step2LogicHandler {
    * Trigger auto-send when entering Step 2
    */
   public triggerAutoSend(step1Inputs: Step1Inputs): void {
+    // Skip auto-generation if assumptions were already accepted
+    // Users can use "Regenerate" button to refresh from scratch
+    if (this._state.assumptionsAccepted && this._state.confirmedAssumptions.length > 0) {
+      return;
+    }
+
     // Check if Step 1 inputs have changed since last visit
     if (hasStep1Changed(
       this._state.step1InputHash,
