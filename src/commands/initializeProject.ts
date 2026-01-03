@@ -249,6 +249,12 @@ async function generateConfig(
       region,
       ...(profile && { profile }),
     },
+    // Routing configuration for Haiku-based routing decisions
+    routing: {
+      useHaikuRouter: true,
+      routerModel: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      fallbackToAgentDecision: true,
+    },
   };
 
   try {
