@@ -1816,7 +1816,7 @@ Router decisions appear in execution log:
 - `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add routing context pattern
 - `resources/agentify-power/POWER.md` — Add Pattern 9: Haiku Routing `M`
 
-41. [ ] Cedar Policy Generation — Translate Step 4 security inputs into enforceable AgentCore Policy Engine Cedar policies:
+41. [x] Cedar Policy Generation — Translate Step 4 security inputs into enforceable AgentCore Policy Engine Cedar policies:
 
 **Problem:**
 Step 4 captures security intent (data sensitivity, compliance frameworks, approval gates) but generates only documentation (`security-policies.md`). This Markdown is steering for Kiro, not enforceable runtime policies. AgentCore Policy Engine uses Cedar language for actual enforcement.

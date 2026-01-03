@@ -513,6 +513,67 @@ After CDK deployment, the setup script registers tools with the AgentCore MCP Ga
 5. Save gateway configuration (including OAuth credentials) to cdk/gateway_config.json
 ```
 
+### Schema Validation & Fixing
+
+AgentCore MCP Gateway only supports a limited subset of JSON Schema properties:
+- `type`, `properties`, `required`, `items`, `description`
+
+Kiro may generate schemas with unsupported properties like `enum`, `format`, `minLength`, `additionalProperties`, or `errorSchema`. While there's a Kiro hook (`gateway-schema-validator.kiro.hook`) that attempts to catch these during development, it doesn't always fix everything.
+
+**The Iterative Fix Workflow:**
+
+When `setup.sh` runs, it validates all schemas in `cdk/gateway/schemas/`. If issues are found, it outputs a **red-highlighted prompt** that you can copy directly into Kiro:
+
+```
+============================================================
+ERROR: Schemas contain unsupported AgentCore properties
+============================================================
+
+Copy this prompt to Kiro to fix the schemas:
+------------------------------------------------------------
+[RED TEXT - Copy everything between the dashed lines]
+
+Fix the following gateway schemas for AgentCore MCP Gateway compatibility.
+...
+------------------------------------------------------------
+
+Fix the schemas and re-run ./scripts/setup.sh
+```
+
+**Why Multiple Iterations May Be Needed:**
+
+Sometimes Kiro doesn't fully fix all issues on the first pass:
+
+| Iteration | Common Issue |
+|-----------|--------------|
+| 1st pass | Removes `enum` but forgets `additionalProperties` |
+| 2nd pass | Fixes most issues but confuses property *named* "title" with JSON Schema `title` keyword |
+| 3rd pass | Finally gets it right |
+
+**Best Practice:**
+
+1. Run `./scripts/setup.sh`
+2. If schema errors appear, copy the red prompt text to Kiro
+3. Let Kiro fix the schemas
+4. Re-run `./scripts/setup.sh`
+5. Repeat until no schema errors (usually 1-3 iterations)
+
+**Example Schema Transformations:**
+
+```
+BEFORE: "status": {"type": "string", "enum": ["active", "inactive"]}
+AFTER:  "status": {"type": "string", "description": "Status. One of: active, inactive"}
+
+BEFORE: "email": {"type": "string", "format": "email"}
+AFTER:  "email": {"type": "string", "description": "Email address (email format)"}
+
+BEFORE: "inputSchema": {..., "additionalProperties": false}
+AFTER:  "inputSchema": {...}  (remove additionalProperties entirely)
+
+BEFORE: Top-level "errorSchema": {...}
+AFTER:  (remove errorSchema entirely - not supported)
+```
+
 ### Gateway OAuth Authentication
 
 The MCP Gateway uses Cognito OAuth2 with client credentials grant for authentication. Credentials are stored in SSM Parameter Store during `setup.sh` and discovered at runtime:

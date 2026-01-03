@@ -1,7 +1,7 @@
 /**
  * Steering Generation Service
  *
- * Service for generating 8 steering document files using Amazon Bedrock.
+ * Service for generating 8 steering document files and Cedar policy files using Amazon Bedrock.
  * Implements parallel generation with progress events for UI feedback.
  *
  * This service follows the singleton pattern established by MockDataService
@@ -26,6 +26,8 @@ import {
   mapToSecurityContext,
   mapToDemoContext,
   mapToAgentifyContext,
+  mapToCedarPolicyContext,
+  type CedarPolicyContext,
 } from '../utils/steeringStateMapper';
 
 // ============================================================================
@@ -59,6 +61,11 @@ const BACKOFF_MULTIPLIER = 2;
 const STEERING_PROMPTS_PATH = 'resources/prompts/steering';
 
 /**
+ * Default policy file name for Cedar policies output
+ */
+const CEDAR_POLICY_FILE_NAME = 'main.cedar';
+
+/**
  * Mapping of output file names to prompt file names
  * Maps: output file key (without .md) -> prompt file name
  *
@@ -73,6 +80,8 @@ export const STEERING_PROMPT_FILES: Record<string, string> = {
   'security-policies': 'security-policies-steering.prompt.md',
   'demo-strategy': 'demo-strategy-steering.prompt.md',
   'agentify-integration': 'agentify-integration-steering.prompt.md',
+  // Task Group 4: Cedar policy prompt file
+  'cedarPolicies': 'cedar-policies.prompt.md',
 };
 
 /**
@@ -204,6 +213,21 @@ export interface GenerationResult {
   files: GeneratedFile[];
   /** Array of errors for failed files (if any) */
   errors?: Array<{ file: string; error: string }>;
+}
+
+/**
+ * Result of Cedar policy generation
+ * Task Group 4: Separate result type for policy generation
+ */
+export interface CedarPolicyResult {
+  /** Whether policy generation was successful */
+  success: boolean;
+  /** Path to the generated policy file */
+  filePath: string;
+  /** Generated Cedar policy content */
+  content: string;
+  /** Error message if generation failed */
+  error?: string;
 }
 
 // ============================================================================
@@ -619,6 +643,203 @@ export class SteeringGenerationService implements vscode.Disposable {
       files,
       errors: errors.length > 0 ? errors : undefined,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Public Methods - Cedar Policy Generation
+  // Task Group 4: SteeringGenerationService Updates
+  // -------------------------------------------------------------------------
+
+  /**
+   * Generate Cedar policies from wizard state
+   * Task 4.3: Implements generateCedarPolicies method following generateDocument pattern
+   *
+   * @param state The wizard state containing security and agent design
+   * @returns CedarPolicyResult with generated content or error
+   */
+  public async generateCedarPolicies(state: WizardState): Promise<CedarPolicyResult> {
+    const fileName = CEDAR_POLICY_FILE_NAME;
+    const total = 1;
+    const index = 0;
+
+    // Emit start event for policy file
+    this._onFileStart.fire({ fileName, index, total });
+
+    try {
+      // Map state to Cedar policy context
+      const context = mapToCedarPolicyContext(state);
+
+      // Generate Cedar policies with retry
+      const content = await this._generateCedarPoliciesWithRetry(context);
+
+      // Emit complete event
+      this._onFileComplete.fire({ fileName, index, total, content });
+
+      return {
+        success: true,
+        filePath: '', // Will be set by caller when writing to disk
+        content,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Emit error event
+      this._onFileError.fire({ fileName, index, total, error: errorMessage });
+
+      return {
+        success: false,
+        filePath: '',
+        content: '',
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Check if Cedar policy generation should run
+   * Task 4.4: Only generate if SecurityState has compliance frameworks or approval gates
+   *
+   * @param state The wizard state
+   * @returns true if Cedar policies should be generated
+   */
+  public shouldGenerateCedarPolicies(state: WizardState): boolean {
+    const security = state.security;
+
+    // Don't generate if security step was skipped
+    if (security?.skipped) {
+      return false;
+    }
+
+    // Generate if there are compliance frameworks or approval gates
+    const hasComplianceFrameworks = security?.complianceFrameworks && security.complianceFrameworks.length > 0;
+    const hasApprovalGates = security?.approvalGates && security.approvalGates.length > 0;
+
+    return hasComplianceFrameworks || hasApprovalGates;
+  }
+
+  /**
+   * Write Cedar policies to the policies/ directory
+   * Task 4.6: Implements policy file output
+   *
+   * @param workspaceUri The workspace root URI
+   * @param content The generated Cedar policy content
+   * @returns The full path to the written policy file
+   */
+  public async writeCedarPolicies(
+    workspaceUri: vscode.Uri,
+    content: string
+  ): Promise<string> {
+    // Create policies/ directory if it doesn't exist
+    const policiesDir = vscode.Uri.joinPath(workspaceUri, 'policies');
+
+    try {
+      await vscode.workspace.fs.stat(policiesDir);
+    } catch {
+      // Directory doesn't exist, create it
+      await vscode.workspace.fs.createDirectory(policiesDir);
+    }
+
+    // Write the Cedar policy file
+    const policyFileUri = vscode.Uri.joinPath(policiesDir, CEDAR_POLICY_FILE_NAME);
+    const contentBytes = Buffer.from(content, 'utf-8');
+    await vscode.workspace.fs.writeFile(policyFileUri, contentBytes);
+
+    return policyFileUri.fsPath;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private Methods - Cedar Generation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Generate Cedar policies with retry logic
+   * Task 4.3: Uses existing retry pattern
+   *
+   * @param context The Cedar policy context
+   * @returns Generated Cedar policy content
+   */
+  private async _generateCedarPoliciesWithRetry(
+    context: CedarPolicyContext
+  ): Promise<string> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this._generateCedarPoliciesFromContext(context);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Check for token expiration - reset caches and retry
+        if (isTokenExpiredError(error)) {
+          resetCredentialCaches();
+
+          if (attempt < MAX_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, INITIAL_BACKOFF_MS));
+            continue;
+          }
+        }
+
+        // Check if error is retryable
+        const errorName = (error as { name?: string })?.name || '';
+        const isRetryable = RETRYABLE_ERROR_NAMES.includes(errorName);
+
+        if (!isRetryable || attempt >= MAX_RETRIES) {
+          throw lastError;
+        }
+
+        // Calculate backoff delay
+        const backoffMs = INITIAL_BACKOFF_MS * Math.pow(BACKOFF_MULTIPLIER, attempt);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+
+    throw lastError || new Error('Cedar policy generation failed after retries');
+  }
+
+  /**
+   * Generate Cedar policies from context
+   * Calls Bedrock with the Cedar policy prompt
+   *
+   * @param context The Cedar policy context
+   * @returns Generated Cedar policy content
+   */
+  private async _generateCedarPoliciesFromContext(
+    context: CedarPolicyContext
+  ): Promise<string> {
+    // Load the Cedar policy prompt
+    const systemPrompt = await this.loadPrompt('cedarPolicies');
+
+    // Get model ID
+    const modelId = await this.getModelId();
+
+    // Get Bedrock client
+    const client = await getBedrockClientAsync();
+
+    // Build user message with JSON-serialized context
+    const userMessage = `Generate Cedar policies based on the following context:\n\n${JSON.stringify(context, null, 2)}`;
+
+    // Use non-streaming ConverseCommand
+    const command = new ConverseCommand({
+      modelId,
+      system: [{ text: systemPrompt }],
+      messages: [
+        {
+          role: 'user',
+          content: [{ text: userMessage }],
+        },
+      ],
+    });
+
+    const response = await client.send(command);
+
+    // Extract text from response
+    const responseText = response.output?.message?.content?.[0]?.text;
+
+    if (!responseText) {
+      throw new Error('Empty response from Bedrock for Cedar policy generation');
+    }
+
+    return responseText;
   }
 
   // -------------------------------------------------------------------------

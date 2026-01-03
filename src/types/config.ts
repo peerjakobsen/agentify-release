@@ -251,6 +251,31 @@ export interface RoutingConfig {
 }
 
 /**
+ * Policy Engine enforcement mode
+ * - 'LOG_ONLY': Log policy decisions without enforcement (safe for demos)
+ * - 'ENFORCE': Enforce policy decisions (block unauthorized actions)
+ */
+export type PolicyMode = 'LOG_ONLY' | 'ENFORCE';
+
+/**
+ * Configuration for AgentCore Policy Engine integration
+ * Controls Cedar policy enforcement for MCP Gateway tool invocations
+ *
+ * Note: policyEngineId and policyEngineArn are runtime values stored in
+ * infrastructure.json, not in config.json. This follows the existing
+ * pattern established for DynamoDB configuration.
+ */
+export interface PolicyConfig {
+  /**
+   * Policy Engine enforcement mode
+   * - 'LOG_ONLY': Log policy decisions without enforcement (recommended for demos)
+   * - 'ENFORCE': Enforce policy decisions and block unauthorized actions
+   * @default "LOG_ONLY"
+   */
+  mode: PolicyMode;
+}
+
+/**
  * Root configuration for an Agentify project
  * Stored in .agentify/config.json
  */
@@ -293,6 +318,13 @@ export interface AgentifyConfig {
    * Optional - when omitted, Haiku routing is disabled (uses existing strategies)
    */
   routing?: RoutingConfig;
+
+  /**
+   * Policy configuration for AgentCore Policy Engine
+   * Optional - when omitted, policy generation is skipped during Step 8
+   * Note: policyEngineId and policyEngineArn are stored in infrastructure.json
+   */
+  policy?: PolicyConfig;
 }
 
 /**
@@ -477,6 +509,25 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
       // Validate routing.fallbackToAgentDecision (boolean)
       if (routing.fallbackToAgentDecision !== undefined && typeof routing.fallbackToAgentDecision !== 'boolean') {
         errors.push('Invalid "routing.fallbackToAgentDecision" field - must be a boolean when provided');
+      }
+    }
+  }
+
+  // Validate optional policy section
+  if (cfg.policy !== undefined) {
+    if (typeof cfg.policy !== 'object' || cfg.policy === null) {
+      errors.push('Invalid "policy" field - must be an object when provided');
+    } else {
+      const policy = cfg.policy as Record<string, unknown>;
+
+      // Validate policy.mode (enum)
+      const validModes = ['LOG_ONLY', 'ENFORCE'];
+      if (policy.mode !== undefined) {
+        if (typeof policy.mode !== 'string') {
+          errors.push('Invalid "policy.mode" field - must be a string when provided');
+        } else if (!validModes.includes(policy.mode)) {
+          errors.push('Invalid "policy.mode" field - must be "LOG_ONLY" or "ENFORCE"');
+        }
       }
     }
   }

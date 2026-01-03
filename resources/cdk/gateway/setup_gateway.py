@@ -28,6 +28,109 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ANSI color codes for terminal output
+RED = '\033[0;31m'
+NC = '\033[0m'  # No Color
+
+# AgentCore MCP Gateway only supports a limited subset of JSON Schema
+SUPPORTED_SCHEMA_PROPS = {'type', 'properties', 'required', 'items', 'description'}
+UNSUPPORTED_PROPS = {
+    'additionalProperties', 'enum', 'format', 'minLength', 'maxLength',
+    'minimum', 'maximum', 'pattern', 'minItems', 'maxItems', 'errorSchema',
+    'oneOf', 'anyOf', 'allOf', 'not', 'const', 'default', 'examples',
+    'title', '$ref', '$schema', 'definitions', '$defs'
+}
+
+
+def find_unsupported_props(obj: any, path: str = '') -> list[tuple[str, str, any]]:
+    """Recursively find unsupported JSON Schema properties.
+
+    Returns:
+        List of tuples: (path, property_name, value)
+    """
+    issues = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            current_path = f"{path}.{key}" if path else key
+            if key in UNSUPPORTED_PROPS:
+                # Truncate long values for readability
+                display_value = value
+                if isinstance(value, (dict, list)) and len(str(value)) > 50:
+                    display_value = f"<{type(value).__name__}>"
+                issues.append((current_path, key, display_value))
+            issues.extend(find_unsupported_props(value, current_path))
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            issues.extend(find_unsupported_props(item, f"{path}[{i}]"))
+    return issues
+
+
+def validate_schemas(schemas: dict[str, dict]) -> bool:
+    """Validate schemas for AgentCore compatibility.
+
+    If issues found, prints a Kiro-ready prompt for fixing them.
+
+    Returns:
+        True if all schemas are valid, False otherwise
+    """
+    all_issues = {}
+    for tool_name, schema in schemas.items():
+        issues = find_unsupported_props(schema)
+        if issues:
+            all_issues[tool_name] = issues
+
+    if not all_issues:
+        return True
+
+    # Print error header
+    print("\n" + "=" * 60)
+    print("ERROR: Schemas contain unsupported AgentCore properties")
+    print("=" * 60)
+    print("\nAgentCore MCP Gateway ONLY supports these JSON Schema properties:")
+    print("  type, properties, required, items, description")
+    print("\nCopy this prompt to Kiro to fix the schemas:")
+    print("-" * 60)
+
+    # Print Kiro-ready prompt (in red for visibility)
+    print(RED, end='')  # Start red text
+    print("""Fix the following gateway schemas for AgentCore MCP Gateway compatibility.
+
+AgentCore MCP Gateway ONLY supports these JSON Schema properties:
+- type
+- properties
+- required
+- items
+- description
+
+Remove unsupported properties and move their semantic info into descriptions:
+""")
+
+    for tool_name, issues in all_issues.items():
+        print(f"\n**cdk/gateway/schemas/{tool_name.replace('-', '_')}.json:**")
+        for path, prop, value in issues:
+            print(f"  - `{path}`: remove `{prop}` (value: {value})")
+
+    print("""
+Example conversions:
+
+BEFORE: "status": {"type": "string", "enum": ["active", "inactive"]}
+AFTER:  "status": {"type": "string", "description": "Status. One of: active, inactive"}
+
+BEFORE: "email": {"type": "string", "format": "email"}
+AFTER:  "email": {"type": "string", "description": "Email address (email format)"}
+
+BEFORE: "inputSchema": {"type": "object", "properties": {...}, "additionalProperties": false}
+AFTER:  "inputSchema": {"type": "object", "properties": {...}}
+
+BEFORE: Top-level "errorSchema": {...}
+AFTER:  Remove errorSchema entirely (not supported by AgentCore)
+""")
+    print(NC, end='')  # End red text
+    print("-" * 60)
+    print("\nFix the schemas and re-run ./scripts/setup.sh")
+
+    return False
+
 
 def get_project_root() -> Path:
     """Get the project root directory."""
@@ -421,6 +524,10 @@ def main():
     print(f"\nFound {len(schemas)} schema(s):")
     for name in schemas:
         print(f"  - {name}")
+
+    # Validate schemas for AgentCore compatibility
+    if not validate_schemas(schemas):
+        sys.exit(1)
 
     # Derive gateway name from project folder
     gateway_name = args.name or f"{project_root.name}-gateway"

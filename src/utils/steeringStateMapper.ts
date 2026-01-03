@@ -167,6 +167,40 @@ export interface AgentifyContext {
   };
 }
 
+/**
+ * Agent tool mapping for Cedar policy context
+ * Maps agent IDs to their assigned tools
+ */
+export interface AgentToolMapping {
+  [agentId: string]: string[];
+}
+
+/**
+ * Context for cedar-policies.prompt.md
+ * Captures security inputs and agent/tool definitions for Cedar policy generation
+ *
+ * Task Group 3: Policy Context Mapper
+ */
+export interface CedarPolicyContext {
+  /** Security configuration from Step 4 */
+  security: {
+    dataSensitivity: string;
+    complianceFrameworks: string[];
+    approvalGates: string[];
+    guardrailNotes: string;
+  };
+  /** Agents with their tools from Step 5 */
+  agents: Array<{
+    id: string;
+    name: string;
+    tools: string[];
+  }>;
+  /** Flat list of all tools across all agents */
+  allTools: string[];
+  /** Mapping of agent IDs to their tool arrays */
+  agentToolMapping: AgentToolMapping;
+}
+
 // ============================================================================
 // Mapper Functions
 // ============================================================================
@@ -352,6 +386,43 @@ export function mapToAgentifyContext(state: WizardState): AgentifyContext {
   };
 }
 
+/**
+ * Map WizardState to CedarPolicyContext for cedar-policies.prompt.md generation
+ * Extracts SecurityState and AgentDesignState for Cedar policy generation
+ *
+ * Task Group 3: Policy Context Mapper
+ *
+ * @param state - The complete wizard state
+ * @returns CedarPolicyContext for Cedar policy prompt consumption
+ */
+export function mapToCedarPolicyContext(state: WizardState): CedarPolicyContext {
+  const security = state.security || createDefaultSecurity();
+  const agentDesign = state.agentDesign || createDefaultAgentDesign();
+  const confirmedAgents = agentDesign.confirmedAgents || [];
+
+  // Build flat list of all tools across all agents
+  const allTools = buildFlatToolList(confirmedAgents);
+
+  // Build agent-to-tool mapping
+  const agentToolMapping = buildAgentToolMapping(confirmedAgents);
+
+  return {
+    security: {
+      dataSensitivity: security.dataSensitivity || 'internal',
+      complianceFrameworks: security.complianceFrameworks || [],
+      approvalGates: security.approvalGates || [],
+      guardrailNotes: security.guardrailNotes || '',
+    },
+    agents: confirmedAgents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      tools: agent.tools || [],
+    })),
+    allTools,
+    agentToolMapping,
+  };
+}
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -413,6 +484,117 @@ export function analyzeSharedTools(confirmedAgents: ProposedAgent[]): SharedTool
   return {
     sharedTools,
     perAgentTools,
+  };
+}
+
+/**
+ * Build a flat list of all tools across all agents
+ * Used for Cedar policy generation targeting
+ *
+ * Task Group 3: Policy Context Mapper
+ *
+ * @param confirmedAgents - Array of confirmed agents with their tools
+ * @returns Array of unique tool names
+ */
+export function buildFlatToolList(confirmedAgents: ProposedAgent[]): string[] {
+  if (!confirmedAgents || confirmedAgents.length === 0) {
+    return [];
+  }
+
+  const toolSet = new Set<string>();
+
+  for (const agent of confirmedAgents) {
+    const tools = agent.tools || [];
+    for (const tool of tools) {
+      toolSet.add(tool);
+    }
+  }
+
+  return Array.from(toolSet).sort();
+}
+
+/**
+ * Build agent-to-tool mapping for Cedar policy generation
+ * Maps each agent ID to its array of tools
+ *
+ * Task Group 3: Policy Context Mapper
+ *
+ * @param confirmedAgents - Array of confirmed agents with their tools
+ * @returns Object mapping agent IDs to tool arrays
+ */
+export function buildAgentToolMapping(confirmedAgents: ProposedAgent[]): AgentToolMapping {
+  if (!confirmedAgents || confirmedAgents.length === 0) {
+    return {};
+  }
+
+  const mapping: AgentToolMapping = {};
+
+  for (const agent of confirmedAgents) {
+    mapping[agent.id] = agent.tools || [];
+  }
+
+  return mapping;
+}
+
+/**
+ * Format a tool name for Cedar Action syntax
+ * Generates Action names in format: TargetName___tool_name (triple underscore)
+ *
+ * Task Group 3: Policy Context Mapper
+ *
+ * @param targetName - The system/target name (e.g., "SAP", "Salesforce")
+ * @param toolName - The tool name in snake_case (e.g., "get_inventory")
+ * @returns Formatted Cedar action name
+ */
+export function formatCedarActionName(targetName: string, toolName: string): string {
+  // Sanitize target name: remove special characters, capitalize first letter of each word
+  const sanitizedTarget = targetName
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+
+  // Sanitize tool name: ensure snake_case, remove special characters
+  const sanitizedTool = toolName
+    .replace(/[^a-zA-Z0-9_]/g, '')
+    .toLowerCase();
+
+  // Combine with triple underscore separator
+  return `${sanitizedTarget}___${sanitizedTool}`;
+}
+
+/**
+ * Extract target name from a tool identifier
+ * Parses tool names that follow the pattern "system_action" or "system___action"
+ *
+ * Task Group 3: Policy Context Mapper
+ *
+ * @param toolName - The full tool name
+ * @returns Object with target and action components
+ */
+export function parseToolName(toolName: string): { target: string; action: string } {
+  // Check for triple underscore separator first
+  if (toolName.includes('___')) {
+    const parts = toolName.split('___');
+    return {
+      target: parts[0] || 'Unknown',
+      action: parts.slice(1).join('___'),
+    };
+  }
+
+  // Fall back to underscore separator (first underscore splits target from action)
+  const underscoreIndex = toolName.indexOf('_');
+  if (underscoreIndex > 0) {
+    return {
+      target: toolName.substring(0, underscoreIndex),
+      action: toolName.substring(underscoreIndex + 1),
+    };
+  }
+
+  // No separator found - use tool name as both
+  return {
+    target: toolName,
+    action: toolName,
   };
 }
 
