@@ -4,7 +4,7 @@
   "currentStep": 7,
   "highestStepReached": 8,
   "validationAttempted": true,
-  "businessObjective": "Customer support ticket triage system that intelligently routes incoming tickets to specialized agents. A triage agent analyzes tickets and routes them to technical support, billing support, or escalation based on issue type and customer priority. Demonstrates graph-based LLM-driven routing with shared tools.",
+  "businessObjective": "Intelligent customer support triage system that reduces ticket resolution time by automatically routing issues to the right specialist. VIP customers get immediate escalation while technical and billing issues are handled by domain experts.",
   "industry": "Technology",
   "systems": [
     "TicketSystem",
@@ -40,7 +40,7 @@
     "step1InputHash": "support123"
   },
   "outcome": {
-    "primaryOutcome": "Demonstrate a graph-based multi-agent workflow with LLM-driven routing decisions and shared tools via MCP Gateway",
+    "primaryOutcome": "Reduce average ticket resolution time by 60% while ensuring VIP customers receive priority handling and complex issues are properly escalated",
     "successMetrics": [
       {
         "name": "Tickets Routed",

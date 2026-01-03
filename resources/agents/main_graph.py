@@ -42,6 +42,10 @@ from agents.shared.orchestrator_utils import (
     emit_workflow_error,
     print_workflow_summary,
     print_workflow_error_summary,
+    # Haiku router utilities
+    route_with_haiku,
+    load_routing_config,
+    get_available_agents,
 )
 
 
@@ -99,7 +103,8 @@ def get_entry_agent() -> str:
     raise NotImplementedError("Kiro must implement get_entry_agent() with the first agent ID")
 
 
-def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optional[str]:
+def route_to_next_agent(current_agent: str, response: Dict[str, Any],
+                        workflow_id: str = "", trace_id: str = "") -> Optional[str]:
     """
     Determine which agent to invoke next based on current agent's response.
 
@@ -108,11 +113,17 @@ def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optiona
     Args:
         current_agent: ID of the agent that just completed
         response: Response dict from the agent (contains 'response' key with text)
+        workflow_id: Workflow ID for Haiku router event emission
+        trace_id: Trace ID for Haiku router event emission
 
     Returns:
         Next agent ID to invoke, or None if workflow is complete.
 
     ROUTING STRATEGIES (in priority order):
+
+    0. HAIKU ROUTING - Fast, cheap routing via Claude Haiku model:
+       If config has useHaikuRouter: true, use Haiku for routing decisions.
+       Best for: Complex workflows needing intelligent routing without full Sonnet cost.
 
     1. EXPLICIT ROUTING - Agent returns route_to field (agent decides):
        If response contains {"route_to": "agent_id"}, use that directly.
@@ -131,6 +142,34 @@ def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optiona
 
     Kiro chooses the appropriate strategy based on use case complexity.
     """
+    # ==========================================================================
+    # STRATEGY 0: Haiku routing (fast, cheap LLM-based routing)
+    # ==========================================================================
+    # Uses Claude Haiku (~10x cheaper, ~3x faster than Sonnet) for routing decisions.
+    # Only activates when useHaikuRouter: true in .agentify/config.json
+    routing_config = load_routing_config()
+    if routing_config.get('useHaikuRouter', False):
+        response_text = response.get('response', '') if isinstance(response, dict) else str(response)
+        available_agents = get_available_agents()
+
+        haiku_result = route_with_haiku(
+            current_agent=current_agent,
+            response_text=response_text,
+            available_agents=available_agents,
+            workflow_id=workflow_id,
+            trace_id=trace_id
+        )
+
+        if haiku_result is not None:
+            # Check if workflow should end
+            if haiku_result.upper() == 'COMPLETE':
+                return None
+            # Valid agent ID returned, skip other strategies
+            return haiku_result
+        else:
+            # Haiku routing failed, log warning and fall through to other strategies
+            print(f"Warning: Haiku routing failed for agent '{current_agent}', falling back to other strategies", file=sys.stderr)
+
     # ==========================================================================
     # STRATEGY 1: Explicit routing (agent decided via route_to field)
     # ==========================================================================
@@ -327,7 +366,10 @@ Continue the conversation naturally, remembering the context from previous messa
                 previous_agent_name = agent_name
 
                 # Determine next agent (Graph pattern: orchestrator decides)
-                next_agent = route_to_next_agent(current_agent, response)
+                # Pass workflow_id and trace_id for Haiku router event emission
+                next_agent = route_to_next_agent(current_agent, response,
+                                                  workflow_id=args.workflow_id,
+                                                  trace_id=args.trace_id)
 
                 if next_agent:
                     # Enhance prompt with context from previous agent

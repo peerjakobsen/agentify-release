@@ -83,6 +83,10 @@ inclusion: always
 
 [Document event schema for tool calls stored in DynamoDB.]
 
+## Routing Context Integration (Optional)
+
+[Document how routing guidance flows from tech.md to the Haiku router when enabled.]
+
 ## Agent ID Reference
 
 [List all agent IDs from confirmedAgents.]
@@ -402,6 +406,114 @@ def another_tool(input_data: dict) -> str:
 ```
 
 **CRITICAL Decorator Order**: `@tool` must be ON TOP, `@instrument_tool` must be BELOW (closest to function). Python applies decorators bottom-up, so `@instrument_tool` wraps the function for observability first, then `@tool` registers it with Strands. Reversing this breaks instrumentation.
+
+## Routing Context Integration (Optional)
+
+When the Haiku router is enabled (`useHaikuRouter: true` in `.agentify/config.json`), routing guidance flows from the project's steering files to the router for fast, cheap routing decisions.
+
+### How Routing Context Flows
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Project Configuration                                                           │
+│                                                                                  │
+│  .agentify/config.json              .kiro/steering/tech.md                       │
+│  ┌──────────────────────┐           ┌──────────────────────────────┐            │
+│  │ {                    │           │ ## Routing Guidance          │            │
+│  │   "routing": {       │           │                              │            │
+│  │     "useHaikuRouter":│           │ ### Agent Responsibilities   │            │
+│  │       true           │──────────►│ - triage_agent: ...          │            │
+│  │   }                  │  triggers │ - technical_agent: ...       │            │
+│  │ }                    │  loading  │                              │            │
+│  └──────────────────────┘           │ ### Routing Rules            │            │
+│                                     │ 1. Route to technical_agent  │            │
+│                                     │    when ...                  │            │
+│                                     └──────────────────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                               │
+                                               │ get_routing_context()
+                                               ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Orchestrator Utilities (orchestrator_utils.py)                                  │
+│                                                                                  │
+│  route_with_haiku(current_agent, response, available_agents)                     │
+│  ┌──────────────────────────────────────────────────────────────────────────┐   │
+│  │ 1. Load routing config from .agentify/config.json                        │   │
+│  │ 2. Load routing guidance from .kiro/steering/tech.md                     │   │
+│  │ 3. Truncate agent response to ~500 chars                                 │   │
+│  │ 4. Build prompt: agent_name + response + agents + guidance               │   │
+│  │ 5. Invoke Haiku model (fast, ~10x cheaper than Sonnet)                   │   │
+│  │ 6. Parse response: agent_id or "COMPLETE"                                │   │
+│  │ 7. Emit router_decision event                                            │   │
+│  └──────────────────────────────────────────────────────────────────────────┘   │
+│                                               │                                  │
+│                                               ▼                                  │
+│                            On success: return next agent ID                      │
+│                            On failure: return None (fallback to strategies)      │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration Schema
+
+```json
+{
+  "routing": {
+    "useHaikuRouter": false,
+    "routerModel": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "fallbackToAgentDecision": true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `useHaikuRouter` | boolean | `false` | Enable Haiku-based routing (opt-in) |
+| `routerModel` | string | Global Haiku ID | Model ID for routing (override for SCP restrictions) |
+| `fallbackToAgentDecision` | boolean | `true` | Fall back to existing strategies on router failure |
+
+### Router Decision Event
+
+When Haiku routing succeeds, a `router_decision` event is emitted to stdout:
+
+```json
+{
+  "event_type": "router_decision",
+  "timestamp": 1234567890,
+  "workflow_id": "wf-xxx",
+  "trace_id": "32-char-hex",
+  "router_model": "haiku",
+  "from_agent": "triage_agent",
+  "next_agent": "technical_agent",
+  "duration_ms": 12
+}
+```
+
+This event appears in the Demo Viewer execution log for routing visibility.
+
+### Steering File Pattern
+
+To provide routing guidance, add a `## Routing Guidance` section to your project's `.kiro/steering/tech.md`:
+
+```markdown
+## Routing Guidance
+
+This multi-agent support system routes customer requests through specialized agents.
+
+### Agent Responsibilities
+- **triage_agent**: Initial request classification. Always starts here.
+- **technical_agent**: Handles technical issues, bugs, and feature requests.
+- **billing_agent**: Handles payment, subscription, and invoice queries.
+
+### Routing Rules
+1. Route to `technical_agent` when response mentions technical issues or bugs
+2. Route to `billing_agent` when response involves payments or subscriptions
+3. Return COMPLETE when the agent has fully resolved the request
+
+### Edge Cases
+- If classification is unclear, route to `technical_agent` as default
+```
+
+The `get_routing_context()` function extracts this section and passes it to the Haiku router prompt.
 
 ## DynamoDB Event Schema
 

@@ -179,6 +179,27 @@ export class ConfigService {
         : current.workflow,
     };
 
+    // Handle optional aws section deep merge
+    if (partial.aws !== undefined) {
+      updated.aws = current.aws
+        ? { ...current.aws, ...partial.aws }
+        : partial.aws;
+    }
+
+    // Handle optional observability section deep merge
+    if (partial.observability !== undefined) {
+      updated.observability = current.observability
+        ? { ...current.observability, ...partial.observability }
+        : partial.observability;
+    }
+
+    // Handle optional routing section deep merge
+    if (partial.routing !== undefined) {
+      updated.routing = current.routing
+        ? { ...current.routing, ...partial.routing }
+        : partial.routing;
+    }
+
     // Validate before writing
     const validation = validateConfigSchema(updated);
     if (!validation.isValid) {

@@ -63,6 +63,28 @@ python agents/main.py \
 - `AGENTIFY_TABLE_NAME` - DynamoDB table for event persistence
 - `AGENTIFY_TABLE_REGION` - AWS region for DynamoDB
 
+**Configuration (`.agentify/config.json`):**
+
+The config file supports optional routing configuration for Haiku-based routing:
+
+```json
+{
+  "routing": {
+    "useHaikuRouter": false,
+    "routerModel": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "fallbackToAgentDecision": true
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `useHaikuRouter` | `false` | Enable Haiku routing (opt-in to avoid surprise costs) |
+| `routerModel` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model ID (override for SCP restrictions) |
+| `fallbackToAgentDecision` | `true` | Fall back to other strategies on Haiku failure |
+
+When enabled, the router reads `## Routing Guidance` from `.kiro/steering/tech.md` to inform routing decisions.
+
 ---
 
 ## Stage 2: Code Generation (Kiro IDE)
@@ -102,6 +124,16 @@ def get_entry_agent() -> str:
 
 def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optional[str]:
     """Routing logic using hybrid strategy (NO keyword matching)."""
+    # Strategy 0: Haiku routing (optional, fast LLM-based routing)
+    # When useHaikuRouter: true in config, uses Claude Haiku (~10x cheaper, ~3x faster)
+    # to decide next agent based on response content and routing guidance from tech.md
+    routing_config = load_routing_config()
+    if routing_config.get('useHaikuRouter', False):
+        haiku_result = route_with_haiku(current_agent, response, get_available_agents())
+        if haiku_result:
+            return None if haiku_result == 'COMPLETE' else haiku_result
+        # Falls through to other strategies on failure
+
     # Strategy 1: Explicit routing (agent returns route_to field)
     if response.get('route_to'):
         return response['route_to']
@@ -139,6 +171,11 @@ def get_agent_display_name(agent_id: str) -> str:
 
 # NOTE: No route_to_next_agent - agents decide handoffs autonomously
 # Handoffs extracted by extract_handoff_from_response() in template
+#
+# Optional Haiku Fallback (Safety Net):
+# When useHaikuRouter: true in config, if agent doesn't specify a handoff,
+# the Haiku router acts as a safety net to determine the next agent.
+# Agent's own handoff decisions ALWAYS take priority (Swarm philosophy preserved).
 ```
 
 **Workflow Pattern:**
@@ -358,9 +395,11 @@ def lambda_handler(event, context):
 The CDK infrastructure deploys three stacks:
 
 #### NetworkingStack
-- VPC with private subnets (no NAT Gateway for cost savings)
-- VPC endpoints for AWS services (S3, DynamoDB, Lambda, Bedrock, etc.)
+- VPC with private subnets and NAT Gateway (required for Cognito M2M OAuth)
+- VPC endpoints for AWS services (S3, DynamoDB, Lambda, Bedrock, ECR, X-Ray, etc.)
 - Security groups for agent connectivity
+
+**Note**: NAT Gateway is required because M2M OAuth (client credentials flow) is not supported via VPC endpoints. The Cognito OAuth token endpoint at `{domain}.auth.{region}.amazoncognito.com` requires internet access.
 
 #### ObservabilityStack
 - DynamoDB table: `{project}-workflow-events`
@@ -568,13 +607,16 @@ Response back to Agent
 
 ### VPC Endpoint Requirements
 
-Agents run in isolated VPC subnets with no NAT Gateway. To reach services:
+Agents run in isolated VPC subnets. VPC endpoints provide efficient access to most AWS services, while NAT Gateway handles Cognito OAuth:
 
-| Service | VPC Endpoint | Purpose |
-|---------|--------------|---------|
-| `bedrock-agentcore.gateway` | Interface | MCP Gateway tool invocations |
-| `cognito-idp` | Interface | OAuth token fetching |
-| Other services | See networking.py | DynamoDB, Bedrock, SSM, etc. |
+| Service | Access Method | Purpose |
+|---------|---------------|---------|
+| `bedrock-agentcore.gateway` | VPC Endpoint | MCP Gateway tool invocations |
+| `cognito-idp` | VPC Endpoint | Cognito API calls (user pools, etc.) |
+| Cognito OAuth tokens | NAT Gateway | M2M OAuth at `{domain}.auth.{region}.amazoncognito.com` |
+| DynamoDB, Bedrock, SSM, etc. | VPC Endpoints | See networking.py for full list |
+
+**Note**: The `cognito-idp` VPC endpoint handles Cognito User Pool API operations, NOT OAuth token requests. M2M OAuth (client credentials flow) requires the NAT Gateway to reach the Cognito OAuth token endpoint, which is not supported via VPC endpoints per AWS documentation.
 
 All agents within a project share the same gateway, enabling tool reuse across the workflow.
 
@@ -768,10 +810,13 @@ AWS_PROFILE=YourProfile uv run python agents/main.py \
 {"event_type": "graph_structure", "timestamp": ..., "graph": {...}}
 {"event_type": "node_start", "node_id": "triage", ...}
 {"event_type": "node_stop", "node_id": "triage", "status": "completed", ...}
+{"event_type": "router_decision", "router_model": "haiku", "from_agent": "triage", "next_agent": "specialist_agent", "duration_ms": 12}
 {"event_type": "node_start", "node_id": "specialist_agent", ...}
 {"event_type": "node_stop", "node_id": "specialist_agent", "status": "completed", ...}
 {"event_type": "workflow_complete", "status": "success", ...}
 ```
+
+**Note:** The `router_decision` event only appears when `useHaikuRouter: true` is configured. It shows which agent the Haiku router selected and how long the routing decision took.
 
 **stderr** (Human-readable progress):
 ```

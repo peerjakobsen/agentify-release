@@ -218,6 +218,39 @@ export interface ObservabilityConfig {
 }
 
 /**
+ * Routing configuration for Haiku-based routing decisions
+ * Controls the lightweight router model used for Graph and Swarm patterns
+ *
+ * The Haiku router provides fast, cost-effective routing decisions (~10x cheaper,
+ * ~3x faster than Sonnet) while maintaining flexibility for complex workflows.
+ */
+export interface RoutingConfig {
+  /**
+   * Enable Haiku-based routing for Graph and Swarm patterns
+   * When enabled, uses Claude Haiku for routing decisions before falling back
+   * to existing strategies (agent decision, classification, static routes).
+   * @default false (opt-in to avoid surprise Bedrock costs)
+   */
+  useHaikuRouter: boolean;
+
+  /**
+   * Bedrock model ID for the router
+   * Uses global inference profile for cross-region compatibility.
+   * Can be overridden for SCP-restricted environments.
+   * @default "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+   */
+  routerModel: string;
+
+  /**
+   * Enable silent fallback to existing routing strategies on Haiku failure
+   * When true, routing failures are logged but don't block workflow execution.
+   * When false, routing failures may result in workflow errors.
+   * @default true
+   */
+  fallbackToAgentDecision: boolean;
+}
+
+/**
  * Root configuration for an Agentify project
  * Stored in .agentify/config.json
  */
@@ -254,6 +287,12 @@ export interface AgentifyConfig {
    * Optional - when omitted, observability features are disabled
    */
   observability?: ObservabilityConfig;
+
+  /**
+   * Routing configuration for Haiku-based routing decisions
+   * Optional - when omitted, Haiku routing is disabled (uses existing strategies)
+   */
+  routing?: RoutingConfig;
 }
 
 /**
@@ -410,6 +449,34 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
         } else if (aws.region.trim() === '') {
           errors.push('Invalid "aws.region" field - must be a non-empty string when provided');
         }
+      }
+    }
+  }
+
+  // Validate optional routing section
+  if (cfg.routing !== undefined) {
+    if (typeof cfg.routing !== 'object' || cfg.routing === null) {
+      errors.push('Invalid "routing" field - must be an object when provided');
+    } else {
+      const routing = cfg.routing as Record<string, unknown>;
+
+      // Validate routing.useHaikuRouter (boolean)
+      if (routing.useHaikuRouter !== undefined && typeof routing.useHaikuRouter !== 'boolean') {
+        errors.push('Invalid "routing.useHaikuRouter" field - must be a boolean when provided');
+      }
+
+      // Validate routing.routerModel (string)
+      if (routing.routerModel !== undefined) {
+        if (typeof routing.routerModel !== 'string') {
+          errors.push('Invalid "routing.routerModel" field - must be a string when provided');
+        } else if (routing.routerModel.trim() === '') {
+          errors.push('Invalid "routing.routerModel" field - must be a non-empty string when provided');
+        }
+      }
+
+      // Validate routing.fallbackToAgentDecision (boolean)
+      if (routing.fallbackToAgentDecision !== undefined && typeof routing.fallbackToAgentDecision !== 'boolean') {
+        errors.push('Invalid "routing.fallbackToAgentDecision" field - must be a boolean when provided');
       }
     }
   }

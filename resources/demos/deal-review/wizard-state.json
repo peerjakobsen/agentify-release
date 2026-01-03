@@ -4,7 +4,7 @@
   "currentStep": 7,
   "highestStepReached": 8,
   "validationAttempted": true,
-  "businessObjective": "Deal review board that collaboratively evaluates business deals and proposals. A swarm of specialist agents (legal, financial, technical, risk) dynamically hand off to each other based on what they discover during the review. The coordinator synthesizes findings into a final recommendation.",
+  "businessObjective": "Automated deal review board that accelerates M&A and partnership decisions by coordinating legal, financial, technical, and risk analysis in parallel. Ensures comprehensive due diligence while reducing review cycles from weeks to hours.",
   "industry": "Finance",
   "systems": [
     "DealManagement",
@@ -53,7 +53,7 @@
     "step1InputHash": "deal123"
   },
   "outcome": {
-    "primaryOutcome": "Demonstrate a swarm-based multi-agent workflow where specialists dynamically collaborate based on emergent findings",
+    "primaryOutcome": "Reduce deal review cycle time from 2 weeks to 2 hours while ensuring 100% coverage of legal, financial, technical, and risk considerations",
     "successMetrics": [
       {
         "name": "Review Completeness",

@@ -4,7 +4,7 @@
 # =============================================================================
 # This script tears down Agentify infrastructure in 2 phases:
 #
-#   Phase 1: Delete AgentCore agents and MCP Gateway (always succeeds)
+#   Phase 1: Delete AgentCore agents, Policy Engine, and MCP Gateway (always succeeds)
 #   Phase 2: Delete CDK stacks (only when ENIs are released)
 #
 # Note: AgentCore ENIs can take up to 8 hours to release after agent deletion.
@@ -17,6 +17,10 @@
 # =============================================================================
 
 set -e
+
+# Disable pagers globally to prevent blocking on command output
+export AWS_PAGER=""
+export PAGER=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -181,7 +185,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Destroys Agentify infrastructure in 2 phases:"
-            echo "  Phase 1: Delete AgentCore agents and MCP Gateway"
+            echo "  Phase 1: Delete AgentCore agents, Policy Engine, and MCP Gateway"
             echo "  Phase 2: Delete CDK stacks (VPC, DynamoDB, etc.)"
             echo ""
             echo "Note: AgentCore ENIs can take up to 8 hours to release after agent deletion."
@@ -256,7 +260,9 @@ if [ "$FORCE" = false ]; then
     echo ""
     echo "The following will be deleted:"
     echo "  - AgentCore agents (if any deployed)"
+    echo "  - AgentCore Policy Engine (if configured)"
     echo "  - AgentCore MCP Gateway (if configured)"
+    echo "  - SSM Parameters (/agentify/${PROJECT_NAME}/*)"
     echo "  - DynamoDB workflow events table"
     echo "  - VPC and networking resources"
     echo "  - ECR repositories (if created)"
@@ -270,19 +276,20 @@ if [ "$FORCE" = false ]; then
 fi
 
 # =============================================================================
-# PHASE 1: Cleanup (Agents + Gateway)
+# PHASE 1: Cleanup (Agents + Policy Engine + Gateway)
 # =============================================================================
 echo ""
 echo "============================================="
-echo "  Phase 1: Cleanup (Agents + Gateway)"
+echo "  Phase 1: Cleanup (Agents + Policy + Gateway)"
 echo "============================================="
 echo ""
 
 PHASE1_AGENTS_DELETED=false
+PHASE1_POLICY_DELETED=false
 PHASE1_GATEWAY_DELETED=false
 
 # Step 1: Delete AgentCore Agents
-print_step "Deleting AgentCore agents..."
+print_step "Step 1: Deleting AgentCore agents..."
 
 # Check if agentcore toolkit is installed and config exists
 if [ -f "${PROJECT_ROOT}/.bedrock_agentcore.yaml" ]; then
@@ -373,8 +380,65 @@ else
     print_warning "No AgentCore config found. Skipping agent deletion."
 fi
 
+# Step 1b: Delete AgentCore Policy Engine
+print_step "Step 1b: Deleting AgentCore Policy Engine..."
+
+INFRA_CONFIG="${PROJECT_ROOT}/.agentify/infrastructure.json"
+
+if [ -f "${INFRA_CONFIG}" ] && command -v jq &> /dev/null; then
+    POLICY_ENGINE_ID=$(jq -r '.policy.policyEngineId // empty' "${INFRA_CONFIG}" 2>/dev/null)
+
+    if [ -n "$POLICY_ENGINE_ID" ]; then
+        cd "${CDK_DIR}"
+        
+        # Ensure agentcore toolkit is available
+        if ! uv run agentcore --version &> /dev/null 2>&1; then
+            print_step "Installing AgentCore Starter Toolkit..."
+            uv add --dev bedrock-agentcore-starter-toolkit 2>/dev/null || true
+        fi
+
+        # First, list and delete all policies in the engine
+        print_step "Deleting policies from Policy Engine: ${POLICY_ENGINE_ID}"
+        
+        POLICY_LIST=$(uv run agentcore policy list-policies \
+            --policy-engine-id "$POLICY_ENGINE_ID" \
+            --region "${REGION}" 2>&1 || echo "")
+        
+        # Extract policy IDs from output (format varies, try common patterns)
+        POLICY_IDS=$(echo "$POLICY_LIST" | grep -oE '[a-zA-Z0-9_-]+-[a-zA-Z0-9]+' | sort -u || true)
+        
+        for POLICY_ID in $POLICY_IDS; do
+            # Skip if it looks like the engine ID itself
+            if [ "$POLICY_ID" != "$POLICY_ENGINE_ID" ]; then
+                print_step "Deleting policy: ${POLICY_ID}"
+                uv run agentcore policy delete-policy \
+                    --policy-engine-id "$POLICY_ENGINE_ID" \
+                    --policy-id "$POLICY_ID" \
+                    --region "${REGION}" 2>/dev/null || true
+            fi
+        done
+
+        # Now delete the Policy Engine itself
+        print_step "Deleting Policy Engine: ${POLICY_ENGINE_ID}"
+        if uv run agentcore policy delete-policy-engine \
+            --policy-engine-id "$POLICY_ENGINE_ID" \
+            --region "${REGION}" 2>/dev/null; then
+            print_success "Policy Engine deleted: ${POLICY_ENGINE_ID}"
+            PHASE1_POLICY_DELETED=true
+        else
+            print_warning "Could not delete Policy Engine ${POLICY_ENGINE_ID} (may already be deleted)"
+        fi
+        
+        cd "${PROJECT_ROOT}"
+    else
+        print_warning "No Policy Engine ID found in infrastructure.json"
+    fi
+else
+    print_warning "No infrastructure.json found. Skipping Policy Engine deletion."
+fi
+
 # Step 2: Cleanup MCP Gateway
-print_step "Cleaning up AgentCore MCP Gateway..."
+print_step "Step 2: Cleaning up AgentCore MCP Gateway..."
 
 GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
 if [ -f "${GATEWAY_CONFIG}" ]; then
@@ -391,6 +455,45 @@ if [ -f "${GATEWAY_CONFIG}" ]; then
     cd "${PROJECT_ROOT}"
 else
     print_warning "No gateway_config.json found. Skipping Gateway cleanup."
+fi
+
+# Step 2b: Cleanup SSM Parameters
+print_step "Step 2b: Cleaning up SSM Parameters..."
+
+SSM_PREFIX="/agentify/${PROJECT_NAME}"
+print_step "Deleting SSM parameters under ${SSM_PREFIX}/*"
+
+# List and delete parameters
+SSM_PARAMS=$(aws ssm get-parameters-by-path \
+    --path "${SSM_PREFIX}" \
+    --recursive \
+    --query "Parameters[].Name" \
+    --output text \
+    --region "${REGION}" 2>/dev/null || echo "")
+
+if [ -n "$SSM_PARAMS" ]; then
+    for PARAM in $SSM_PARAMS; do
+        aws ssm delete-parameter --name "$PARAM" --region "${REGION}" 2>/dev/null || true
+        print_success "Deleted SSM parameter: $PARAM"
+    done
+else
+    print_warning "No SSM parameters found under ${SSM_PREFIX}"
+fi
+
+# Also cleanup agent-specific SSM parameters
+AGENT_SSM_PREFIX="/agentify/agents"
+AGENT_PARAMS=$(aws ssm get-parameters-by-path \
+    --path "${AGENT_SSM_PREFIX}" \
+    --recursive \
+    --query "Parameters[].Name" \
+    --output text \
+    --region "${REGION}" 2>/dev/null || echo "")
+
+if [ -n "$AGENT_PARAMS" ]; then
+    for PARAM in $AGENT_PARAMS; do
+        aws ssm delete-parameter --name "$PARAM" --region "${REGION}" 2>/dev/null || true
+        print_success "Deleted SSM parameter: $PARAM"
+    done
 fi
 
 # =============================================================================
@@ -422,12 +525,17 @@ if [ -n "$VPC_ID" ]; then
         echo ""
         echo "Completed:"
         if [ "$PHASE1_AGENTS_DELETED" = true ]; then
-            echo "  - AgentCore agents deleted"
+            echo "  ✓ AgentCore agents deleted"
         else
             echo "  - AgentCore agents (none found or already deleted)"
         fi
+        if [ "$PHASE1_POLICY_DELETED" = true ]; then
+            echo "  ✓ Policy Engine deleted"
+        else
+            echo "  - Policy Engine (none found or already deleted)"
+        fi
         if [ "$PHASE1_GATEWAY_DELETED" = true ]; then
-            echo "  - MCP Gateway deleted"
+            echo "  ✓ MCP Gateway deleted"
         else
             echo "  - MCP Gateway (none found or already deleted)"
         fi
@@ -478,10 +586,22 @@ print_success "CDK stacks destroyed"
 # Return to project root
 cd "${PROJECT_ROOT}"
 
-# Clean up local config
+# Clean up local config files
+print_step "Cleaning up local configuration files..."
+
 if [ -f "${PROJECT_ROOT}/.agentify/infrastructure.json" ]; then
     rm -f "${PROJECT_ROOT}/.agentify/infrastructure.json"
-    print_success "Removed local infrastructure config"
+    print_success "Removed .agentify/infrastructure.json"
+fi
+
+if [ -f "${CDK_DIR}/gateway_config.json" ]; then
+    rm -f "${CDK_DIR}/gateway_config.json"
+    print_success "Removed gateway_config.json"
+fi
+
+if [ -f "${CDK_DIR}/cdk-outputs.json" ]; then
+    rm -f "${CDK_DIR}/cdk-outputs.json"
+    print_success "Removed cdk-outputs.json"
 fi
 
 echo ""
@@ -491,7 +611,9 @@ echo "============================================="
 echo ""
 echo "All resources have been deleted:"
 echo "  - AgentCore agents"
+echo "  - AgentCore Policy Engine"
 echo "  - AgentCore MCP Gateway"
+echo "  - SSM Parameters"
 echo "  - AWS CDK resources (VPC, DynamoDB, etc.)"
 echo ""
 echo "Notes:"

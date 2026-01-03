@@ -53,6 +53,9 @@ from agents.shared.orchestrator_utils import (
     emit_workflow_error,
     print_workflow_summary,
     print_workflow_error_summary,
+    # Haiku router utilities
+    load_routing_config,
+    route_with_haiku,
 )
 
 
@@ -141,6 +144,10 @@ def get_agent_display_name(agent_id: str) -> str:
 # SWARM PATTERN UTILITIES (DO NOT MODIFY)
 # ============================================================================
 
+# Module-level variables for context (set by main() for extract_handoff_from_response)
+_current_agent_context: Optional[str] = None
+_workflow_context: Dict[str, str] = {}
+
 
 def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
     """
@@ -151,6 +158,10 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
     2. Including JSON with "handoff_to" key in their response
     3. Returning response text like "Handing off to <agent_id>"
 
+    FALLBACK: When no explicit handoff is found and useHaikuRouter is enabled,
+    Haiku router is called as a safety net to determine the next agent.
+    Agent's own handoff decisions always take priority (Swarm philosophy).
+
     Args:
         response: Response dict from the agent (contains 'response' key with text)
 
@@ -158,6 +169,11 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
         Agent ID to hand off to, or None if no handoff (workflow complete)
     """
     response_text = response.get('response', '')
+    available = get_available_agents()
+
+    # ==========================================================================
+    # PRIMARY: Agent's own handoff decision (Swarm philosophy - agent decides)
+    # ==========================================================================
 
     # Try to parse JSON from response
     try:
@@ -168,7 +184,6 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
             handoff_to = parsed.get('handoff_to')
             if handoff_to:
                 # Validate agent exists
-                available = get_available_agents()
                 if handoff_to in available:
                     return handoff_to
                 print(f"Warning: Handoff target '{handoff_to}' not in available agents: {available}", file=sys.stderr)
@@ -179,9 +194,55 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
     handoff_pattern = re.search(r'[Hh]and(?:ing|ed)?\s*off\s*to\s*["\']?(\w+)["\']?', response_text)
     if handoff_pattern:
         handoff_to = handoff_pattern.group(1)
-        available = get_available_agents()
         if handoff_to in available:
             return handoff_to
+
+    # ==========================================================================
+    # FALLBACK: Haiku router (safety net when agent doesn't specify handoff)
+    # ==========================================================================
+    # Only activate when:
+    # 1. No explicit handoff found above
+    # 2. useHaikuRouter is enabled in config
+
+    try:
+        config = load_routing_config()
+        use_haiku = config.get('useHaikuRouter', False)
+
+        if use_haiku:
+            # Get context for Haiku routing
+            current_agent = _current_agent_context or 'unknown_agent'
+            workflow_id = _workflow_context.get('workflow_id', '')
+            trace_id = _workflow_context.get('trace_id', '')
+
+            # Log warning that Haiku fallback is activating
+            print(f"Warning: No explicit handoff from '{current_agent}', activating Haiku router as safety net", file=sys.stderr)
+
+            # Call Haiku router
+            haiku_result = route_with_haiku(
+                current_agent=current_agent,
+                response_text=response_text,
+                available_agents=available,
+                workflow_id=workflow_id,
+                trace_id=trace_id
+            )
+
+            if haiku_result:
+                # Validate Haiku-selected agent exists
+                if haiku_result == 'COMPLETE':
+                    print(f"Haiku router determined workflow complete", file=sys.stderr)
+                    return None
+                elif haiku_result in available:
+                    print(f"Haiku router selected agent: '{haiku_result}' (safety net)", file=sys.stderr)
+                    return haiku_result
+                else:
+                    print(f"Warning: Haiku-selected agent '{haiku_result}' not in available agents", file=sys.stderr)
+
+            # Haiku routing failed or returned invalid agent
+            print(f"Haiku routing did not return valid agent, completing workflow", file=sys.stderr)
+
+    except Exception as e:
+        # Log error but don't block - maintain existing behavior
+        print(f"Warning: Haiku fallback failed: {e}", file=sys.stderr)
 
     # No handoff indicated - workflow complete
     return None
@@ -202,6 +263,8 @@ def main() -> None:
     3. Continues until no handoff is indicated
     4. Emits JSON events for Demo Viewer visualization
     """
+    global _current_agent_context, _workflow_context
+
     session_id = None
     args = None
     start_time = time.time()
@@ -215,6 +278,12 @@ def main() -> None:
 
         # Extract turn_number for inclusion in all events
         turn_number = args.turn_number
+
+        # Store workflow context for extract_handoff_from_response
+        _workflow_context = {
+            'workflow_id': args.workflow_id,
+            'trace_id': args.trace_id
+        }
 
         print("Starting Swarm workflow execution:", file=sys.stderr)
         print(f"  Workflow ID: {args.workflow_id}", file=sys.stderr)
@@ -280,6 +349,9 @@ Continue the conversation naturally, remembering the context from previous messa
         while current_agent is not None and len(agents_invoked) < max_handoffs:
             agent_name = get_agent_display_name(current_agent)
             print(f"Invoking agent: {agent_name} ({current_agent})", file=sys.stderr)
+
+            # Update current agent context for extract_handoff_from_response
+            _current_agent_context = current_agent
 
             # Emit node_start event with from_agent and handoff_prompt for dual-pane UI
             emit_event({

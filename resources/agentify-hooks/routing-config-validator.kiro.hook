@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Routing Config Validator",
+  "description": "Validates .agentify/config.json routing section schema and values",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [".agentify/config.json"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this config.json for routing configuration issues.\n\n## ROUTING SECTION VALIDATION\n\nIf the 'routing' section exists, validate these fields:\n\n1. useHaikuRouter - Must be boolean (true or false, not string)\n   WRONG: \"useHaikuRouter\": \"true\"\n   CORRECT: \"useHaikuRouter\": true\n\n2. routerModel - Must be non-empty string if present\n   WRONG: \"routerModel\": \"\"\n   WRONG: \"routerModel\": null\n   CORRECT: \"routerModel\": \"global.anthropic.claude-haiku-4-5-20251001-v1:0\"\n\n3. fallbackToAgentDecision - Must be boolean if present\n   WRONG: \"fallbackToAgentDecision\": \"yes\"\n   CORRECT: \"fallbackToAgentDecision\": true\n\n## COMMON MISTAKES TO CHECK\n\n- Typo in key names: 'useHaikuRouting' (wrong) vs 'useHaikuRouter' (correct)\n- Using string 'true'/'false' instead of boolean true/false\n- Empty routerModel string\n- Missing quotes around routerModel value\n\n## DEFAULT VALUES (when not specified)\n\n- useHaikuRouter: false (opt-in to avoid surprise Bedrock costs)\n- routerModel: 'global.anthropic.claude-haiku-4-5-20251001-v1:0'\n- fallbackToAgentDecision: true (silent fallback on Haiku failure)\n\n## ACTION\n\nFix any type or spelling issues found.\nDo NOT add routing section if it doesn't exist - it's optional."
+  },
+  "shortName": "routing-config"
+}

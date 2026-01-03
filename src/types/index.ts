@@ -50,6 +50,8 @@ export type {
   OrchestrationPattern,
   WorkflowConfig,
   AwsConfig,
+  ObservabilityConfig,
+  RoutingConfig,
   AgentifyConfig,
   ConfigValidationResult,
 } from './config';

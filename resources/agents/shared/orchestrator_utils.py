@@ -12,14 +12,16 @@ This module is PRE-BUNDLED by the Agentify extension and should NOT be modified.
 import argparse
 import json
 import os
+import re
 import sys
 import uuid
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 
 import boto3
+from botocore.config import Config
 import yaml
 
 
@@ -420,3 +422,299 @@ def print_workflow_error_summary(session_id: str, workflow_id: str, trace_id: st
 
     print("Workflow execution failed. Check stdout for JSON event stream and error events.", file=sys.stderr)
     print("=" * 80, file=sys.stderr)
+
+
+# ============================================================================
+# HAIKU ROUTER UTILITIES
+# ============================================================================
+
+# Default Haiku model ID for routing decisions
+DEFAULT_HAIKU_MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Default timeout for Haiku invocation (5 seconds)
+DEFAULT_HAIKU_TIMEOUT = 5
+
+
+def invoke_haiku(prompt: str, model_id: str = DEFAULT_HAIKU_MODEL_ID,
+                 timeout: int = DEFAULT_HAIKU_TIMEOUT) -> Optional[str]:
+    """
+    Invoke Claude Haiku model via Bedrock for fast, cheap routing decisions.
+
+    Args:
+        prompt: The prompt to send to Haiku
+        model_id: Bedrock model ID (default: global.anthropic.claude-haiku-4-5-20251001-v1:0)
+        timeout: Request timeout in seconds (default: 5)
+
+    Returns:
+        Model response text, or None on any failure (enables fallback)
+    """
+    try:
+        # Configure boto3 client with timeout
+        config = Config(
+            read_timeout=timeout,
+            connect_timeout=timeout,
+            retries={'max_attempts': 1}
+        )
+
+        region = os.environ.get('AWS_REGION', 'us-east-1')
+        client = boto3.client('bedrock-runtime', region_name=region, config=config)
+
+        # Build request body for Claude Haiku
+        request_body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 100,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+
+        response = client.invoke_model(
+            modelId=model_id,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(request_body)
+        )
+
+        # Parse response
+        response_body = json.loads(response['body'].read())
+        content = response_body.get('content', [])
+
+        if content and isinstance(content, list) and len(content) > 0:
+            text_block = content[0]
+            if isinstance(text_block, dict) and 'text' in text_block:
+                return text_block['text'].strip()
+
+        return None
+
+    except Exception as e:
+        print(f"Haiku invocation failed: {e}", file=sys.stderr)
+        return None
+
+
+def get_routing_context(workspace_path: Optional[str] = None) -> str:
+    """
+    Load routing guidance from the project's .kiro/steering/tech.md file.
+
+    Looks for a section named "## Routing Guidance" or "## Agent Routing Rules"
+    and extracts the content between that header and the next ## header (or EOF).
+
+    Args:
+        workspace_path: Path to the project workspace (defaults to current working directory)
+
+    Returns:
+        Routing guidance content as string, or empty string if not found
+    """
+    if workspace_path is None:
+        workspace_path = os.getcwd()
+
+    # Try to find tech.md in .kiro/steering/
+    tech_md_path = Path(workspace_path) / '.kiro' / 'steering' / 'tech.md'
+
+    try:
+        if not tech_md_path.exists():
+            return ''
+
+        content = tech_md_path.read_text(encoding='utf-8')
+
+        # Look for "## Routing Guidance" or "## Agent Routing Rules" section
+        section_headers = ['## Routing Guidance', '## Agent Routing Rules']
+
+        for header in section_headers:
+            if header in content:
+                # Find start of section
+                start_idx = content.find(header)
+                if start_idx == -1:
+                    continue
+
+                # Move past the header line
+                start_idx = content.find('\n', start_idx)
+                if start_idx == -1:
+                    continue
+                start_idx += 1
+
+                # Find the next ## header (or end of file)
+                next_header_match = re.search(r'\n##\s', content[start_idx:])
+                if next_header_match:
+                    end_idx = start_idx + next_header_match.start()
+                else:
+                    end_idx = len(content)
+
+                section_content = content[start_idx:end_idx].strip()
+                return section_content
+
+        return ''
+
+    except (FileNotFoundError, IOError, OSError) as e:
+        print(f"Warning: Could not load routing context: {e}", file=sys.stderr)
+        return ''
+
+
+@lru_cache(maxsize=1)
+def load_routing_config(workspace_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load routing configuration from the project's .agentify/config.json file.
+
+    Extracts the 'routing' section with sensible defaults:
+    - useHaikuRouter: False (opt-in to avoid surprise costs)
+    - routerModel: global.anthropic.claude-haiku-4-5-20251001-v1:0
+    - fallbackToAgentDecision: True
+
+    Args:
+        workspace_path: Path to the project workspace (defaults to current working directory)
+
+    Returns:
+        Dict with routing configuration settings
+    """
+    defaults = {
+        'useHaikuRouter': False,
+        'routerModel': DEFAULT_HAIKU_MODEL_ID,
+        'fallbackToAgentDecision': True
+    }
+
+    if workspace_path is None:
+        workspace_path = os.getcwd()
+
+    config_path = Path(workspace_path) / '.agentify' / 'config.json'
+
+    try:
+        if not config_path.exists():
+            return defaults
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        routing = config.get('routing', {})
+
+        # Merge with defaults
+        return {
+            'useHaikuRouter': routing.get('useHaikuRouter', defaults['useHaikuRouter']),
+            'routerModel': routing.get('routerModel', defaults['routerModel']),
+            'fallbackToAgentDecision': routing.get('fallbackToAgentDecision', defaults['fallbackToAgentDecision'])
+        }
+
+    except (FileNotFoundError, IOError, OSError, json.JSONDecodeError) as e:
+        print(f"Warning: Could not load routing config: {e}", file=sys.stderr)
+        return defaults
+
+
+def emit_router_decision(workflow_id: str, trace_id: str, router_model: str,
+                         from_agent: str, next_agent: str, duration_ms: int,
+                         session_id: Optional[str] = None) -> None:
+    """
+    Emit a router_decision event for Demo Viewer visibility.
+
+    Args:
+        workflow_id: Workflow identifier
+        trace_id: OpenTelemetry trace ID
+        router_model: Model used for routing (e.g., "haiku")
+        from_agent: Agent that just completed
+        next_agent: Agent selected for next step (or "COMPLETE")
+        duration_ms: Routing decision duration in milliseconds
+        session_id: Optional session ID for correlation
+    """
+    event = {
+        "event_type": "router_decision",
+        "timestamp": get_timestamp(),
+        "workflow_id": workflow_id,
+        "trace_id": trace_id,
+        "router_model": router_model,
+        "from_agent": from_agent,
+        "next_agent": next_agent,
+        "duration_ms": duration_ms
+    }
+
+    if session_id:
+        event["session_id"] = session_id
+
+    emit_event(event)
+
+
+def route_with_haiku(current_agent: str, response_text: str,
+                     available_agents: List[str],
+                     workflow_id: str = "", trace_id: str = "",
+                     workspace_path: Optional[str] = None) -> Optional[str]:
+    """
+    Use Claude Haiku to determine the next agent based on current agent's response.
+
+    This function provides fast, cheap routing decisions (~10x cheaper, ~3x faster
+    than Sonnet) while maintaining flexibility for complex workflows.
+
+    Args:
+        current_agent: ID of the agent that just completed
+        response_text: The agent's response text (will be truncated to ~500 chars)
+        available_agents: List of available agent IDs to route to
+        workflow_id: Workflow ID for event emission
+        trace_id: Trace ID for event emission
+        workspace_path: Path to project workspace (for loading config/context)
+
+    Returns:
+        Next agent ID, "COMPLETE" if workflow should end, or None on any failure
+        (None enables fallback to existing routing strategies)
+    """
+    start_time = time.time()
+
+    try:
+        # Load configuration
+        config = load_routing_config(workspace_path)
+        model_id = config.get('routerModel', DEFAULT_HAIKU_MODEL_ID)
+
+        # Truncate response to ~500 characters for minimal context
+        truncated_response = response_text[:500] if len(response_text) > 500 else response_text
+
+        # Load routing guidance from tech.md
+        routing_context = get_routing_context(workspace_path)
+
+        # Build the routing prompt
+        agents_list = ', '.join(available_agents)
+        prompt = f"""You are a routing agent. Based on the agent response below, determine which agent should handle the next step.
+
+Current agent: {current_agent}
+Agent response (truncated): {truncated_response}
+
+Available agents: {agents_list}
+
+{f'Routing guidance: {routing_context}' if routing_context else ''}
+
+Respond with ONLY one of the following:
+- An agent ID from the available agents list (exactly as shown)
+- The word "COMPLETE" if the workflow should end (task is finished)
+
+Your response (agent ID or COMPLETE):"""
+
+        # Invoke Haiku
+        result = invoke_haiku(prompt, model_id=model_id)
+
+        if result is None:
+            return None
+
+        # Parse the result
+        result = result.strip().upper()
+
+        # Check for COMPLETE
+        if result == 'COMPLETE':
+            duration_ms = int((time.time() - start_time) * 1000)
+            if workflow_id and trace_id:
+                emit_router_decision(workflow_id, trace_id, 'haiku',
+                                    current_agent, 'COMPLETE', duration_ms)
+            return 'COMPLETE'
+
+        # Check if result matches an available agent (case-insensitive)
+        result_lower = result.lower()
+        for agent in available_agents:
+            if agent.lower() == result_lower:
+                duration_ms = int((time.time() - start_time) * 1000)
+                if workflow_id and trace_id:
+                    emit_router_decision(workflow_id, trace_id, 'haiku',
+                                        current_agent, agent, duration_ms)
+                return agent
+
+        # Result didn't match any agent or COMPLETE
+        print(f"Haiku routing result '{result}' not recognized", file=sys.stderr)
+        return None
+
+    except Exception as e:
+        print(f"Haiku routing failed: {e}", file=sys.stderr)
+        return None

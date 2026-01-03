@@ -112,9 +112,9 @@ For Graph orchestration, agents participating in routing decisions must return s
 | **Explicit** | Must return `route_to` field | `{"route_to": "billing_handler", "response": "..."}` |
 
 **Strategy Selection Guidelines:**
-- Predetermined sequences → **Static** (fill in `STATIC_ROUTES` dict)
-- Category-based routing → **Classification** (fill in `CLASSIFICATION_ROUTES` dict, update agent prompts)
-- Complex decisions → **Explicit** (update agent prompts to return `route_to` field)
+- Predetermined sequences -> **Static** (fill in `STATIC_ROUTES` dict)
+- Category-based routing -> **Classification** (fill in `CLASSIFICATION_ROUTES` dict, update agent prompts)
+- Complex decisions -> **Explicit** (update agent prompts to return `route_to` field)
 - **Avoid keyword matching** on unstructured text (fragile and hard to maintain)
 
 **Agent Prompt Template (Classification):**
@@ -183,6 +183,66 @@ Return your response as JSON:
 ```
 
 The `build_task_prompt()` function in main.py determines how dependency results are passed to dependent tasks.
+
+## Routing Guidance (Optional)
+
+This section provides hints to the Haiku routing model when `useHaikuRouter: true` is enabled in the project's `.agentify/config.json`. If the Haiku router is not enabled, this section is ignored.
+
+**When to include this section:**
+- When using Graph or Swarm orchestration patterns
+- When routing decisions require domain-specific knowledge
+- When you want to guide the lightweight router without modifying agent prompts
+
+**Section format:**
+```
+## Routing Guidance
+
+[Describe the routing logic in plain language. The Haiku router uses this guidance
+to make fast, cheap routing decisions between agents.]
+
+### Agent Responsibilities
+- **{agent_id}**: Handles {responsibility}. Route here when {condition}.
+- **{agent_id}**: Handles {responsibility}. Route here when {condition}.
+
+### Routing Rules
+1. Route to `{agent_id}` when the response indicates {condition}
+2. Route to `{agent_id}` for {category} requests
+3. Return COMPLETE when {completion condition}
+
+### Edge Cases
+- If unclear, default to `{fallback_agent_id}`
+- Never route to `{agent_id}` for {excluded_condition}
+```
+
+**Example Routing Guidance:**
+
+```markdown
+## Routing Guidance
+
+This multi-agent support system routes customer requests through specialized agents.
+
+### Agent Responsibilities
+- **triage_agent**: Initial request classification. Always starts here.
+- **technical_agent**: Handles technical issues, bugs, and feature requests.
+- **billing_agent**: Handles payment, subscription, and invoice queries.
+- **escalation_agent**: Human escalation for complex or sensitive issues.
+
+### Routing Rules
+1. Route to `technical_agent` when response mentions technical issues, errors, or bugs
+2. Route to `billing_agent` when response involves payments, invoices, or subscriptions
+3. Route to `escalation_agent` when customer is frustrated or issue requires human review
+4. Return COMPLETE when the agent has fully resolved the customer's request
+
+### Edge Cases
+- If classification is unclear, route to `technical_agent` as default
+- Never route billing issues to technical_agent
+- Always escalate requests mentioning legal or compliance concerns
+```
+
+**How Haiku Router uses this guidance:**
+- The Haiku router receives: current agent name, truncated response (~500 chars), available agents list, and this routing guidance
+- It returns a single agent ID or "COMPLETE" to end the workflow
+- On failure, the system falls back to existing routing strategies (classification, explicit, static)
 
 ## AgentCore Deployment
 
@@ -312,11 +372,11 @@ def lambda_handler(event, context):
     delimiter = "___"
     tool_name = context.client_context.custom['bedrockAgentCoreToolName']
     tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
-    
+
     # Event contains the input parameters directly
     sku = event.get('sku')
     store_id = event.get('store_id', 'ALL')
-    
+
     # Call actual SAP API or return mock data
     result = {
         "sku": sku,
@@ -324,7 +384,7 @@ def lambda_handler(event, context):
         "quantity": 42,
         "last_updated": "2025-01-15T10:30:00Z"
     }
-    
+
     return json.dumps(result)
 ```
 
@@ -575,9 +635,9 @@ forbid (
    - Workflow: Deploy agents with task dependency configuration
 
 3. **Select Routing Strategy (Graph Pattern)**: Analyze each routing decision point:
-   - Predetermined sequences → Static routing (no agent prompt changes needed)
-   - Category-based routing → Classification routing (agent prompts must return `classification` field)
-   - Complex decisions → Explicit routing (agent prompts must return `route_to` field)
+   - Predetermined sequences -> Static routing (no agent prompt changes needed)
+   - Category-based routing -> Classification routing (agent prompts must return `classification` field)
+   - Complex decisions -> Explicit routing (agent prompts must return `route_to` field)
    - Avoid keyword-matching on unstructured response text (fragile and hard to maintain)
 
 4. **Map All Approval Gates**: Every approval gate from the security configuration should have a corresponding Cedar policy example.

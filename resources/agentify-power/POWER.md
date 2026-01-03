@@ -7,7 +7,7 @@ keywords: ["agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent"
 
 # Agentify Power
 
-Quick reference for Agentify multi-agent workflow observability patterns. These 7 critical patterns ensure your agents work correctly with the Demo Viewer.
+Quick reference for Agentify multi-agent workflow observability patterns. These 9 critical patterns ensure your agents work correctly with the Demo Viewer.
 
 > For complete details, see `.kiro/steering/agentify-integration.md`
 
@@ -194,6 +194,172 @@ Environment variables required for local runs:
 
 ---
 
+## Pattern 8: Haiku Routing (Optional)
+
+Use Claude Haiku for fast, cheap routing decisions (~10x cheaper, ~3x faster than Sonnet).
+
+### When to Use Haiku Routing
+
+- **Graph pattern**: Complex multi-agent workflows with dynamic routing
+- **Swarm pattern**: Safety net when agents don't specify explicit handoffs
+- **Cost optimization**: High-volume workflows where routing costs matter
+- **Latency reduction**: Time-sensitive routing decisions
+
+### Configuration
+
+Enable in `.agentify/config.json`:
+
+```json
+{
+  "routing": {
+    "useHaikuRouter": true,
+    "routerModel": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "fallbackToAgentDecision": true
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `useHaikuRouter` | `false` | Enable Haiku routing (opt-in to avoid surprise costs) |
+| `routerModel` | Global Haiku ID | Override for SCP-restricted accounts |
+| `fallbackToAgentDecision` | `true` | Fall back silently to existing strategies on failure |
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Haiku Router Flow                            │
+│                                                                  │
+│  Agent Response                    Routing Decision              │
+│  (truncated ~500 chars)                                          │
+│         │                                                        │
+│         ▼                                                        │
+│  ┌──────────────────┐    ┌─────────────────────────────────────┐│
+│  │  route_with_     │───►│  Claude Haiku (~10x cheaper)        ││
+│  │  haiku()         │    │  - Agent name                       ││
+│  │                  │    │  - Truncated response               ││
+│  │                  │    │  - Available agents list            ││
+│  │                  │    │  - Routing guidance (from tech.md)  ││
+│  └──────────────────┘    └─────────────────────────────────────┘│
+│         │                                                        │
+│         ▼                                                        │
+│  ┌──────────────────┐                                            │
+│  │ Returns:         │                                            │
+│  │ - "agent_id"     │──► Route to specified agent                │
+│  │ - "COMPLETE"     │──► End workflow                            │
+│  │ - None           │──► Fall back to existing strategies       │
+│  └──────────────────┘                                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Routing Guidance (Optional)
+
+Add a `## Routing Guidance` section to `.kiro/steering/tech.md`:
+
+```markdown
+## Routing Guidance
+
+### Agent Responsibilities
+- **triage_agent**: Initial classification. Always starts here.
+- **technical_agent**: Handles bugs, errors, and feature requests.
+- **billing_agent**: Handles payments and subscriptions.
+
+### Routing Rules
+1. Route to `technical_agent` for technical issues
+2. Route to `billing_agent` for payment questions
+3. Return COMPLETE when request is resolved
+
+### Edge Cases
+- Default to `technical_agent` if unclear
+```
+
+### Pattern Integration
+
+**Graph Pattern (Strategy 0)**:
+```
+┌───────────────────────────────────────────────────────────────┐
+│  route_to_next_agent() Strategies                              │
+│                                                                │
+│  Strategy 0: Haiku Router (if useHaikuRouter: true)           │
+│       │                                                        │
+│       ▼ (on None/failure, fall through)                       │
+│  Strategy 1: Explicit routing (route_to field)                │
+│       │                                                        │
+│       ▼ (on None, fall through)                               │
+│  Strategy 2: Classification routing                           │
+│       │                                                        │
+│       ▼ (on None, fall through)                               │
+│  Strategy 3: Static routing                                   │
+│       │                                                        │
+│       ▼ (on None, fall through)                               │
+│  Strategy 4: Complete workflow                                │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Swarm Pattern (Safety Net)**:
+```
+┌───────────────────────────────────────────────────────────────┐
+│  extract_handoff_from_response() Flow                          │
+│                                                                │
+│  1. Check agent's own handoff decision (primary)              │
+│       │                                                        │
+│       ▼ (if no explicit handoff)                              │
+│  2. Haiku fallback (if useHaikuRouter: true)                  │
+│       │                                                        │
+│       ▼ (if Haiku fails or disabled)                          │
+│  3. No handoff (workflow may complete)                        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Router Decision Events
+
+Successful Haiku routing emits a `router_decision` event:
+
+```json
+{
+  "event_type": "router_decision",
+  "timestamp": 1234567890,
+  "workflow_id": "wf-xxx",
+  "trace_id": "32-char-hex",
+  "router_model": "haiku",
+  "from_agent": "triage_agent",
+  "next_agent": "technical_agent",
+  "duration_ms": 12
+}
+```
+
+### Cost/Speed Benefits
+
+| Model | Relative Cost | Typical Latency | Use Case |
+|-------|--------------|-----------------|----------|
+| Sonnet | 1x | ~1.5-3s | Full agent reasoning |
+| Haiku | ~0.1x (10x cheaper) | ~0.3-0.5s (3x faster) | Quick routing decisions |
+
+For a workflow with 5 routing decisions:
+- **Without Haiku**: 5 x Sonnet inference = 5x cost
+- **With Haiku**: 5 x Haiku inference = ~0.5x cost (90% savings)
+
+### Fallback Behavior
+
+The Haiku router is designed to fail gracefully:
+
+```python
+# Automatic fallback on any failure:
+# - Haiku model timeout (5s default)
+# - Invalid response format
+# - Network errors
+# - Rate limiting
+
+# Warning logged to stderr, workflow continues:
+# WARNING: Haiku routing failed for agent 'triage_agent': timeout
+# Falling back to existing routing strategies...
+```
+
+**Never blocks workflow execution** - routing failures are warnings, not errors.
+
+---
+
 ## Quick Checklist
 
 Before committing agent code, verify:
@@ -205,6 +371,7 @@ Before committing agent code, verify:
 - [ ] Lambda handlers return `json.dumps()` strings
 - [ ] `main.py` accepts `--prompt`, `--workflow-id`, `--trace-id` arguments
 - [ ] Environment variables `AGENTIFY_TABLE_NAME`, `AWS_REGION` are read
+- [ ] If using Haiku routing, `routing` section added to `.agentify/config.json`
 
 ---
 

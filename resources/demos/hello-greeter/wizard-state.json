@@ -4,7 +4,7 @@
   "currentStep": 7,
   "highestStepReached": 8,
   "validationAttempted": true,
-  "businessObjective": "Simple greeting workflow that looks up a user and generates a personalized greeting. Two agents work together: one analyzes the request and looks up user info, the other generates the greeting response.",
+  "businessObjective": "Personalized customer engagement system that instantly recognizes returning users and delivers context-aware greetings. Improves customer experience by making interactions feel personal from the first moment.",
   "industry": "Technology",
   "systems": [
     "UserDatabase"
@@ -28,7 +28,7 @@
     "step1InputHash": "simple123"
   },
   "outcome": {
-    "primaryOutcome": "Demonstrate a minimal multi-agent workflow with shared tools via MCP Gateway",
+    "primaryOutcome": "Increase customer engagement and satisfaction by delivering personalized greetings that acknowledge user history and preferences",
     "successMetrics": [
       {
         "name": "Greeting Generated",
