@@ -1709,6 +1709,113 @@ Sales presenter can point out: "See? It remembered from the previous agent."
 - `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add memory section
 - `resources/prompts/steering/structure-steering.prompt.md` — Add to directory listing `L`
 
+40. [ ] Lightweight Router Model (Haiku) — Add optional Haiku-based routing for Graph and Swarm patterns:
+
+**Problem:**
+Current routing approaches have trade-offs:
+- **Hardcoded routes**: Fast but brittle, can't handle semantic nuance
+- **Agent-decided routes**: Flexible but uses full Sonnet model for simple routing decisions (slow, expensive)
+- **Classification mapping**: Requires structured output from agents, adds complexity to agent prompts
+
+**Solution: Dedicated Haiku Router**
+A lightweight routing agent that uses Claude Haiku (~10x cheaper, ~3x faster than Sonnet) specifically for routing decisions:
+
+```python
+# New utility in orchestrator_utils.py
+async def route_with_haiku(
+    current_agent: str,
+    agent_response: str,
+    available_agents: List[str],
+    routing_context: str  # From steering files
+) -> Optional[str]:
+    """Use Haiku to determine next agent based on response content."""
+    router_prompt = f"""You are a routing classifier. Given this agent response, 
+    decide which agent should handle next. Options: {available_agents}
+    
+    Routing guidance:
+    {routing_context}
+    
+    Agent response:
+    {agent_response}
+    
+    Respond with ONLY the agent name, or 'COMPLETE' if workflow is done."""
+    
+    result = await invoke_haiku(router_prompt)
+    return None if result == 'COMPLETE' else result
+```
+
+**Graph Pattern Updates (`main_graph.py`):**
+```python
+def route_to_next_agent(current_agent: str, response: Dict[str, Any]) -> Optional[str]:
+    # Strategy 0: Haiku router (NEW - if enabled)
+    if USE_HAIKU_ROUTER:
+        return await route_with_haiku(
+            current_agent,
+            response.get('response', ''),
+            get_available_agents(),
+            get_routing_context()  # From steering files
+        )
+    
+    # Existing strategies as fallback...
+```
+
+**Swarm Pattern Updates (`main_swarm.py`):**
+```python
+def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
+    # Strategy 0: Haiku router (NEW - if enabled)
+    if USE_HAIKU_ROUTER:
+        return await route_with_haiku(
+            current_agent,
+            response.get('response', ''),
+            get_available_agents(),
+            get_routing_context()
+        )
+    
+    # Existing handoff extraction as fallback...
+```
+
+**Configuration (`.agentify/config.json`):**
+```json
+{
+  "routing": {
+    "useHaikuRouter": true,
+    "routerModel": "anthropic.claude-3-haiku-20240307-v1:0",
+    "fallbackToAgentDecision": true
+  }
+}
+```
+
+**Steering Prompt Updates:**
+- `tech-steering.prompt.md`: Add routing configuration section
+- `agentify-integration-steering.prompt.md`: Add `get_routing_context()` pattern
+
+**Demo Viewer Visibility:**
+Router decisions appear in execution log:
+```
+14:32:02  🧭 Haiku Router: "technical_agent" (12ms)
+14:32:02  ▶ Technical Agent activated
+```
+
+**When to Use Haiku Router:**
+- Complex multi-way routing (5+ possible destinations)
+- Semantic routing based on response content/sentiment
+- When routing logic shouldn't pollute agent prompts
+- High-volume demos where Sonnet routing cost adds up
+
+**When NOT to Use:**
+- Simple 2-3 way routing (use classification mapping)
+- Static pipelines (use Workflow pattern instead)
+- When agent must decide its own handoff (Swarm philosophy)
+
+**Files:**
+- `resources/agents/shared/orchestrator_utils.py` — Add `route_with_haiku()`, `invoke_haiku()`, `get_routing_context()`
+- `resources/agents/main_graph.py` — Add Haiku routing as Strategy 0
+- `resources/agents/main_swarm.py` — Add optional Haiku routing override
+- `src/services/configService.ts` — Add routing configuration schema
+- `resources/prompts/steering/tech-steering.prompt.md` — Add routing config section
+- `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add routing context pattern
+- `resources/agentify-power/POWER.md` — Add Pattern 9: Haiku Routing `M`
+
 ## Phase 4: Visual Polish
 
 25. [ ] Agent Graph Visualization — Add React Flow visualization to Demo Viewer with custom node components showing agent status (pending/running/completed/failed), animated edges during data flow, auto-layout via dagre/elkjs, and pattern-specific layouts:
@@ -1761,9 +1868,9 @@ Sales presenter can point out: "See? It remembered from the previous agent."
 
 ## Phase 5: Templates and Examples
 
-38. [ ] Industry Example Library — Expand bundled wizard-state.json examples (3 per industry: Retail, FSI, Healthcare, Manufacturing). Improve example picker UI for 12+ demos (current UI shows 3). Examples load via existing initialization flow. `M`
+58. [ ] Industry Example Library — Expand bundled wizard-state.json examples (3 per industry: Retail, FSI, Healthcare, Manufacturing). Improve example picker UI for 12+ demos (current UI shows 3). Examples load via existing initialization flow. `M`
 
-39. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
+59. [ ] Demo Script Generator — Create AI-powered talking points generator that produces demo narrative aligned with business objective and agent design `M`
 
 ## Phase 6: Enterprise Features
 
