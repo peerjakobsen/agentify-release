@@ -240,6 +240,83 @@ export class Step8LogicHandler {
   }
 
   // ============================================================================
+  // Existing Steering Files Detection
+  // ============================================================================
+
+  /**
+   * Check if steering files already exist on disk and update state accordingly.
+   * This enables proper UI display when resuming a wizard after files were generated
+   * in a previous session.
+   *
+   * @returns true if all steering files exist on disk
+   */
+  public async checkExistingSteeringFiles(): Promise<boolean> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return false;
+    }
+
+    const steeringDir = vscode.Uri.joinPath(workspaceFolder.uri, '.kiro', 'steering');
+    const existingFiles: string[] = [];
+    const existingPaths: string[] = [];
+
+    // Check each steering file
+    for (const filename of STEERING_FILES) {
+      const fileUri = vscode.Uri.joinPath(steeringDir, filename);
+      try {
+        await vscode.workspace.fs.stat(fileUri);
+        existingFiles.push(filename);
+        existingPaths.push(fileUri.fsPath);
+      } catch {
+        // File doesn't exist
+      }
+    }
+
+    // Also check ROOT_DOC_FILES (demo-strategy.md)
+    for (const [, filename] of Object.entries(ROOT_DOC_FILES)) {
+      const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filename);
+      try {
+        await vscode.workspace.fs.stat(fileUri);
+        existingFiles.push(filename);
+        existingPaths.push(fileUri.fsPath);
+      } catch {
+        // File doesn't exist
+      }
+    }
+
+    // If all steering files + DEMO.md exist, update state to reflect disk reality
+    // Note: Extension init only creates agentify-integration.md, so we check that
+    // product.md also exists to confirm this was a full wizard generation.
+    // We also require DEMO.md since TOTAL_GENERATED_FILES includes it.
+    const allSteeringFilesExist = STEERING_FILES.every(f => existingFiles.includes(f));
+    const demoFileExists = existingFiles.includes('DEMO.md');
+    const isWizardGenerated = allSteeringFilesExist && existingFiles.includes('product.md') && demoFileExists;
+
+    if (isWizardGenerated) {
+      // Disk is source of truth - ALWAYS update state to match what's on disk
+      // This handles resume scenarios where persisted state might be stale
+      this._state.completedFiles = existingFiles;
+      this._state.generatedFilePaths = existingPaths;
+      this._state.accordionExpanded = false; // Collapse since generation is complete
+
+      // Check if roadmap also exists
+      const roadmapUri = vscode.Uri.joinPath(workspaceFolder.uri, ROADMAP_OUTPUT_FILE);
+      try {
+        await vscode.workspace.fs.stat(roadmapUri);
+        this._state.roadmapGenerated = true;
+        this._state.roadmapFilePath = roadmapUri.fsPath;
+      } catch {
+        // Roadmap doesn't exist yet
+      }
+
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+    }
+
+    return allSteeringFilesExist;
+  }
+
+  // ============================================================================
   // Task 3.5 & 4.2: handleGenerate() Method - Updated for Full WizardState
   // ============================================================================
 

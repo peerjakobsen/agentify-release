@@ -252,7 +252,7 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           await vscode.commands.executeCommand('vscode.open', fileUri);
         },
         onStartOver: () => this.handleStartFresh(),
-        getWizardState: () => this._ideationState as unknown as WizardState,
+        getWizardState: () => this.ideationStateToWizardState(),
         getContext: () => this._context,
       }
     );
@@ -471,6 +471,13 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.uploadedFileMetadata = wizardState.uploadedFileMetadata;
         this._ideationState.aiGapFillingState = wizardState.aiGapFillingState;
         this._ideationState.outcome = wizardState.outcome;
+        // Determine if Step 4 was already configured (has user selections)
+        const hasStep4Data =
+          wizardState.security.complianceFrameworks.length > 0 ||
+          wizardState.security.approvalGates.length > 0 ||
+          wizardState.security.guardrailNotes.trim() !== '' ||
+          wizardState.security.skipped;
+
         this._ideationState.securityGuardrails = {
           dataSensitivity: wizardState.security.dataSensitivity,
           complianceFrameworks: wizardState.security.complianceFrameworks,
@@ -478,8 +485,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           guardrailNotes: wizardState.security.guardrailNotes,
           skipped: wizardState.security.skipped,
           aiSuggested: false,
-          industryDefaultsApplied: false,
-          aiCalled: false,
+          // Preserve existing selections by marking defaults as applied
+          industryDefaultsApplied: hasStep4Data,
+          // Prevent AI re-trigger if guardrailNotes already has content
+          aiCalled: wizardState.security.guardrailNotes.trim() !== '',
           isLoading: false,
         };
         this._ideationState.agentDesign = wizardState.agentDesign;
@@ -497,6 +506,11 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
 
         // Hide the resume banner
         this._resumeBannerState.visible = false;
+
+        // If resuming directly to Step 8, check for existing steering files
+        if (this._ideationState.currentStep === 8) {
+          await this.updateStep8CanGenerate();
+        }
 
         // Update UI
         this.updateWebviewContent();
@@ -1782,13 +1796,21 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
    * Update Step 8 canGenerate flag based on validation status
    * Task 6.7: Calculate canGenerate from step summaries
    */
-  private updateStep8CanGenerate(): void {
+  private async updateStep8CanGenerate(): Promise<void> {
     if (!this._step8Handler) return;
 
     const summaries = this._step8Handler.getStepSummaries(this.getStep8Inputs());
     const hasError = summaries.some(s => s.validationStatus === 'error');
     this._ideationState.generation.canGenerate = !hasError;
     this._step8Handler.setState(this._ideationState.generation);
+
+    // Check for existing steering files on disk (for resume scenarios)
+    // This populates completedFiles and generatedFilePaths if files exist
+    await this._step8Handler.checkExistingSteeringFiles();
+
+    // Sync updated state BACK from Step8Logic to _ideationState.generation
+    // This ensures HTML rendering sees the detected files
+    this._ideationState.generation = this._step8Handler.getState();
   }
 
   /**
