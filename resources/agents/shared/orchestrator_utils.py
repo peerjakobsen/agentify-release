@@ -602,7 +602,8 @@ def load_routing_config(workspace_path: Optional[str] = None) -> Dict[str, Any]:
 
 def emit_router_decision(workflow_id: str, trace_id: str, router_model: str,
                          from_agent: str, next_agent: str, duration_ms: int,
-                         session_id: Optional[str] = None) -> None:
+                         session_id: Optional[str] = None,
+                         agent_suggestion: Optional[str] = None) -> None:
     """
     Emit a router_decision event for Demo Viewer visibility.
 
@@ -614,6 +615,7 @@ def emit_router_decision(workflow_id: str, trace_id: str, router_model: str,
         next_agent: Agent selected for next step (or "COMPLETE")
         duration_ms: Routing decision duration in milliseconds
         session_id: Optional session ID for correlation
+        agent_suggestion: Optional agent's own routing suggestion (for comparison)
     """
     event = {
         "event_type": "router_decision",
@@ -623,7 +625,8 @@ def emit_router_decision(workflow_id: str, trace_id: str, router_model: str,
         "router_model": router_model,
         "from_agent": from_agent,
         "next_agent": next_agent,
-        "duration_ms": duration_ms
+        "duration_ms": duration_ms,
+        "agent_suggestion": agent_suggestion
     }
 
     if session_id:
@@ -635,7 +638,8 @@ def emit_router_decision(workflow_id: str, trace_id: str, router_model: str,
 def route_with_haiku(current_agent: str, response_text: str,
                      available_agents: List[str],
                      workflow_id: str = "", trace_id: str = "",
-                     workspace_path: Optional[str] = None) -> Optional[str]:
+                     workspace_path: Optional[str] = None,
+                     agent_suggestion: Optional[str] = None) -> Optional[str]:
     """
     Use Claude Haiku to determine the next agent based on current agent's response.
 
@@ -649,6 +653,9 @@ def route_with_haiku(current_agent: str, response_text: str,
         workflow_id: Workflow ID for event emission
         trace_id: Trace ID for event emission
         workspace_path: Path to project workspace (for loading config/context)
+        agent_suggestion: Optional routing suggestion from the agent (e.g., route_to
+            or handoff_to field). Passed to Haiku as a hint from the domain expert,
+            but Haiku makes the final decision.
 
     Returns:
         Next agent ID, "COMPLETE" if workflow should end, or None on any failure
@@ -669,14 +676,18 @@ def route_with_haiku(current_agent: str, response_text: str,
 
         # Build the routing prompt
         agents_list = ', '.join(available_agents)
+        suggestion_text = f"Agent's routing suggestion: {agent_suggestion}" if agent_suggestion else "Agent's routing suggestion: None"
         prompt = f"""You are a routing agent. Based on the agent response below, determine which agent should handle the next step.
 
 Current agent: {current_agent}
 Agent response (truncated): {truncated_response}
 
 Available agents: {agents_list}
+{suggestion_text}
 
 {f'Routing guidance: {routing_context}' if routing_context else ''}
+
+The agent's suggestion is a hint from a domain expert. Consider it, but make your own decision based on the response content and routing guidance. The agent may not know all available agents.
 
 Respond with ONLY one of the following:
 - An agent ID from the available agents list (exactly as shown)
@@ -698,7 +709,8 @@ Your response (agent ID or COMPLETE):"""
             duration_ms = int((time.time() - start_time) * 1000)
             if workflow_id and trace_id:
                 emit_router_decision(workflow_id, trace_id, 'haiku',
-                                    current_agent, 'COMPLETE', duration_ms)
+                                    current_agent, 'COMPLETE', duration_ms,
+                                    agent_suggestion=agent_suggestion)
             return 'COMPLETE'
 
         # Check if result matches an available agent (case-insensitive)
@@ -708,7 +720,8 @@ Your response (agent ID or COMPLETE):"""
                 duration_ms = int((time.time() - start_time) * 1000)
                 if workflow_id and trace_id:
                     emit_router_decision(workflow_id, trace_id, 'haiku',
-                                        current_agent, agent, duration_ms)
+                                        current_agent, agent, duration_ms,
+                                        agent_suggestion=agent_suggestion)
                 return agent
 
         # Result didn't match any agent or COMPLETE

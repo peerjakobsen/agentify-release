@@ -171,6 +171,9 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
     response_text = response.get('response', '')
     available = get_available_agents()
 
+    # Track agent's handoff suggestion (even if invalid) to pass as hint to Haiku
+    agent_handoff_suggestion = None
+
     # ==========================================================================
     # PRIMARY: Agent's own handoff decision (Swarm philosophy - agent decides)
     # ==========================================================================
@@ -183,6 +186,7 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
             parsed = json.loads(json_match.group())
             handoff_to = parsed.get('handoff_to')
             if handoff_to:
+                agent_handoff_suggestion = handoff_to  # Store for Haiku hint
                 # Validate agent exists
                 if handoff_to in available:
                     return handoff_to
@@ -194,6 +198,8 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
     handoff_pattern = re.search(r'[Hh]and(?:ing|ed)?\s*off\s*to\s*["\']?(\w+)["\']?', response_text)
     if handoff_pattern:
         handoff_to = handoff_pattern.group(1)
+        if not agent_handoff_suggestion:
+            agent_handoff_suggestion = handoff_to  # Store for Haiku hint
         if handoff_to in available:
             return handoff_to
 
@@ -217,13 +223,14 @@ def extract_handoff_from_response(response: Dict[str, Any]) -> Optional[str]:
             # Log warning that Haiku fallback is activating
             print(f"Warning: No explicit handoff from '{current_agent}', activating Haiku router as safety net", file=sys.stderr)
 
-            # Call Haiku router
+            # Call Haiku router with agent's suggestion as hint
             haiku_result = route_with_haiku(
                 current_agent=current_agent,
                 response_text=response_text,
                 available_agents=available,
                 workflow_id=workflow_id,
-                trace_id=trace_id
+                trace_id=trace_id,
+                agent_suggestion=agent_handoff_suggestion
             )
 
             if haiku_result:

@@ -152,12 +152,18 @@ def route_to_next_agent(current_agent: str, response: Dict[str, Any],
         response_text = response.get('response', '') if isinstance(response, dict) else str(response)
         available_agents = get_available_agents()
 
+        # Extract agent's routing suggestion (if any) to pass as hint to Haiku
+        agent_suggestion = None
+        if isinstance(response, dict):
+            agent_suggestion = response.get('route_to')
+
         haiku_result = route_with_haiku(
             current_agent=current_agent,
             response_text=response_text,
             available_agents=available_agents,
             workflow_id=workflow_id,
-            trace_id=trace_id
+            trace_id=trace_id,
+            agent_suggestion=agent_suggestion
         )
 
         if haiku_result is not None:

@@ -71,14 +71,22 @@ You will receive a JSON object with the following structure:
 
 - **perAgentTools**: Pre-computed array grouping tools exclusive to each agent. This is the complement of sharedTools - tools used by only one agent.
 
-**Important**: The `sharedTools` and `perAgentTools` arrays are pre-analyzed by the TypeScript `analyzeSharedTools()` function in `SteeringGenerationService`. Your responsibility is to format this data into clear markdown, not to perform the analysis.
+**Important**: The `sharedTools` and `perAgentTools` arrays show usage patterns (which tools are used by multiple agents). However, they do NOT determine deployment strategy.
 
-**Tool Categorization Rules**:
-- If `mockDefinitions[].isShared` is `true` → Tool is a **Gateway Lambda** (shared tool)
-- If `mockDefinitions[].isShared` is `false` AND `system` is `"INLINE"` → Tool is a **local @tool** (per-agent)
-- If `mockDefinitions[].isShared` is `false` AND `system` is NOT `"INLINE"` → Tool is a **local @tool** that interfaces with an external system but runs in-process
+### Tool Deployment Authority (CRITICAL)
 
-When `sharedTools` array is empty, fall back to checking the `isShared` field in `mockDefinitions` to determine tool deployment strategy.
+The `mockDefinitions[].isShared` flag is the **authoritative source** for deployment decisions:
+
+- `isShared: true` → **Gateway Lambda** (deployed to `cdk/gateway/handlers/`)
+- `isShared: false` → **Local @tool** (deployed to `agents/{id}/tools/`)
+
+The `sharedTools` array shows which tools are used by 2+ agents, but does NOT determine deployment. A tool can be:
+- Used by multiple agents but deployed locally (each agent gets its own copy) when `isShared: false`
+- Used by one agent but deployed via Gateway (for centralized management) when `isShared: true`
+
+**Example**: A handoff tool may be used by 4 agents but with `isShared: false`, meaning each agent has its own local copy. This enables agent-specific logic.
+
+**Always check `isShared` in mockDefinitions** to determine where a tool is deployed, not whether it appears in the `sharedTools` array.
 
 ## Output Format
 
@@ -103,29 +111,38 @@ inclusion: always
 
 [For each system in the systems array, describe its role in the workflow and what types of operations agents perform against it.]
 
-## Shared Tools
+## Shared Tools (Gateway Lambda Deployment)
 
-[Introduction paragraph explaining that shared tools are used by multiple agents and represent common integration points.]
+[Introduction explaining that these tools have `isShared: true` in mockDefinitions and are deployed as Lambda functions behind AgentCore Gateway. List ALL tools with `isShared: true`, regardless of how many agents use them.]
 
 | Tool Name | System | Used By Agents |
 |-----------|--------|----------------|
 | `{tool_name}` | {system} | {agent_1}, {agent_2} |
 
-[After the table, explain the implications of shared tools - why these tools are used across agents and how this affects design decisions.]
+**CRITICAL**: Include tools with `isShared: true` even if only used by 1 agent. The `isShared` flag determines deployment, not usage count.
+
+[After the table, explain the implications - centralized credential management, unified observability, consistent behavior across agents.]
 
 ### Shared Tool Deployment
 
-[Explain that shared tools are deployed as Lambda functions behind AgentCore Gateway, not as local @tool decorators. Include the Gateway MCP endpoint pattern and how agents connect to shared tools.]
+[Explain that shared tools (`isShared: true`) are deployed as Lambda functions behind AgentCore Gateway. Include the Gateway MCP endpoint pattern. DO NOT list handlers for tools with `isShared: false`, even if used by multiple agents.]
 
 ## Per-Agent Tools (Local Deployment)
 
-[Introduction paragraph explaining that per-agent tools are exclusive to specific agents and are deployed locally using the @tool decorator. These tools run in the same process as the agent.]
+[Introduction explaining that tools with `isShared: false` are deployed locally using the `@tool` decorator, **even if used by multiple agents**. Each agent gets its own copy of the tool, enabling agent-specific customization.]
+
+This pattern is used when:
+- Tool behavior varies by agent context
+- No centralized credential management needed
+- Each agent needs customized implementation
+
+**CRITICAL**: Include tools with `isShared: false` here, even if they appear in multiple agents' tool lists. Each agent deploys its own local copy.
 
 ### {Agent Name}
 
 - `{tool_name}` - [brief description if available from mockDefinitions]
 
-[For each agent with exclusive tools, list their tools and explain why these tools are agent-specific.]
+[For each agent with tools that have `isShared: false`, list their tools and explain why local deployment is appropriate.]
 
 ## Data Flow Patterns
 
@@ -208,7 +225,7 @@ Tools are deployed differently based on their usage pattern:
 | Per-Agent | Local @tool | `agents/{id}/tools/` | Direct function call |
 | Shared | Gateway Lambda | `cdk/gateway/handlers/` | MCP client to Gateway endpoint |
 
-**Shared tools** (used by 2+ agents) should be deployed as Lambda functions behind AgentCore Gateway. This provides:
+**Shared tools** (`isShared: true`) are deployed as Lambda functions behind AgentCore Gateway. This provides:
 - Single deployment, multiple consumers
 - Centralized credential management for enterprise systems
 - Unified observability via CloudWatch
@@ -218,24 +235,27 @@ Tools are deployed differently based on their usage pattern:
 
 **CDK Deployment:** The `cdk/stacks/gateway_tools.py` stack automatically discovers and deploys all handlers in `cdk/gateway/handlers/`. Tool schemas go in `cdk/gateway/schemas/{tool_name}.json`.
 
-**Per-agent tools** (used by 1 agent) should be deployed locally using the `@tool` decorator. This provides:
+**IMPORTANT**: Only create handlers for tools with `isShared: true`. Do NOT create handlers for tools with `isShared: false`, even if used by multiple agents.
+
+**Per-agent tools** (`isShared: false`) are deployed locally using the `@tool` decorator. This provides:
 - Simpler deployment (deploys with agent code)
 - No network overhead
 - Direct access to agent context
+- Agent-specific customization
 
 ## Guidelines
 
-1. **Use Pre-Computed Analysis**: The sharedTools and perAgentTools arrays are already computed. Do not recalculate which tools are shared - use the provided data directly.
+1. **`isShared` Flag is Authoritative**: Always check `mockDefinitions[].isShared` to determine deployment. The `sharedTools` array shows usage patterns but does NOT determine deployment strategy.
 
 2. **Match Tool Names Exactly**: When displaying tool names, use the exact names from the input. Tool names are in snake_case format (e.g., `sap_get_inventory`).
 
 3. **Group by System**: In the Connected Systems section, organize information by system to help readers understand which systems are most heavily integrated.
 
-4. **Explain Integration Implications**: Don't just list tools - explain why certain tools are shared (e.g., "Both the planner and executor agents need inventory visibility") and note that shared tools are deployed as Gateway Lambda targets.
+4. **Explain Deployment Rationale**: For shared tools (`isShared: true`), explain centralized credential management and unified observability. For per-agent tools (`isShared: false`), explain agent-specific customization.
 
-5. **Document Gateway Deployment for Shared Tools**: When listing shared tools, note that they will be deployed as Lambda functions behind AgentCore Gateway, accessible via a single MCP endpoint.
+5. **Document Gateway Handlers Correctly**: Only list `cdk/gateway/handlers/{tool_name}/` for tools with `isShared: true`. Never list handlers for tools with `isShared: false`.
 
-5. **Use Consistent Formatting**: Keep tables aligned and use consistent formatting for tool names (backticks), system names, and agent names.
+6. **Use Consistent Formatting**: Keep tables aligned and use consistent formatting for tool names (backticks), system names, and agent names.
 
 ## Fallback Instructions
 
