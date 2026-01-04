@@ -52,8 +52,11 @@ describe('Cedar Policy Prompt File', () => {
     // Check for forbid statement usage
     expect(promptContent).toContain('forbid');
 
-    // Check for annotation format
-    expect(promptContent).toContain('@annotation');
+    // Check for AWS AgentCore principal type constraint
+    expect(promptContent).toContain('principal is AgentCore::OAuthUser');
+
+    // Check that @annotation is documented as NOT supported
+    expect(promptContent).toContain('NEVER use `@annotation()`');
   });
 });
 
@@ -117,19 +120,24 @@ describe('Cedar Syntax Rules', () => {
     promptContent = fs.readFileSync(PROMPT_FILE_PATH, 'utf-8');
   });
 
-  // Test: Documents .contains() for multi-value checks
-  it('should document .contains() for multi-value claim checks', () => {
-    expect(promptContent).toContain('.contains(');
+  // Test: Documents like pattern for multi-value checks (AWS AgentCore)
+  it('should document like pattern for multi-value claim checks', () => {
+    expect(promptContent).toContain('like "*');
   });
 
-  // Test: Documents context.claims access pattern
-  it('should document context.claims access pattern', () => {
-    expect(promptContent).toContain('context.claims');
+  // Test: Documents principal.hasTag() access pattern (AWS AgentCore)
+  it('should document principal.hasTag() access pattern', () => {
+    expect(promptContent).toContain('principal.hasTag(');
   });
 
-  // Test: Documents context.input access pattern
-  it('should document context.input access pattern', () => {
-    expect(promptContent).toContain('context.input');
+  // Test: Documents principal.getTag() access pattern (AWS AgentCore)
+  it('should document principal.getTag() access pattern', () => {
+    expect(promptContent).toContain('principal.getTag(');
+  });
+
+  // Test: Documents that context.claims is NOT supported
+  it('should document that context.claims is not supported', () => {
+    expect(promptContent).toContain('`context.claims.X` - AWS AgentCore uses `principal.hasTag()/getTag()` instead');
   });
 
   // Test: Documents when clause syntax

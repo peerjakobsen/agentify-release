@@ -344,7 +344,7 @@ export class Step8LogicHandler {
     // Reset Cedar policy state
     this._state.cedarGenerating = false;
     this._state.cedarGenerated = false;
-    this._state.cedarFilePath = '';
+    this._state.cedarFilePaths = [];
     this._state.cedarError = undefined;
 
     this._callbacks.updateWebviewContent();
@@ -487,24 +487,24 @@ export class Step8LogicHandler {
       // Generate Cedar policies
       const cedarResult = await generationService.generateCedarPolicies(wizardState);
 
-      if (cedarResult.success) {
+      if (cedarResult.success && cedarResult.policies.length > 0) {
         // Get workspace folder for writing
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
           throw new Error('No workspace folder open');
         }
 
-        // Write Cedar policies to policies/main.cedar
-        const filePath = await generationService.writeCedarPolicies(
+        // Write policy description files to policies/*.txt
+        const filePaths = await generationService.writeCedarPolicies(
           workspaceFolder.uri,
-          cedarResult.content
+          cedarResult.policies
         );
 
         // Update state with success
         this._state.cedarGenerated = true;
-        this._state.cedarFilePath = filePath;
-        this._state.generatedFilePaths.push(filePath);
-        console.log(`[Step8] Cedar policies generated: ${filePath}`);
+        this._state.cedarFilePaths = filePaths;
+        this._state.generatedFilePaths.push(...filePaths);
+        console.log(`[Step8] Policy descriptions generated: ${filePaths.length} files`);
       } else {
         // Cedar generation failed - log but don't block
         this._state.cedarError = cedarResult.error || 'Unknown Cedar generation error';

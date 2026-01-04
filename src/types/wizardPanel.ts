@@ -851,8 +851,8 @@ export interface GenerationState {
   cedarGenerating: boolean;
   /** Whether Cedar policies were successfully generated */
   cedarGenerated: boolean;
-  /** Path to the generated policies/main.cedar file */
-  cedarFilePath: string;
+  /** Paths to the generated policy description files (policies/*.txt) */
+  cedarFilePaths: string[];
   /** Error message if Cedar generation failed (non-blocking) */
   cedarError?: string;
 }
@@ -1434,7 +1434,7 @@ export function createDefaultGenerationState(): GenerationState {
     // Phase 3: Cedar policy generation
     cedarGenerating: false,
     cedarGenerated: false,
-    cedarFilePath: '',
+    cedarFilePaths: [],
     cedarError: undefined,
   };
 }

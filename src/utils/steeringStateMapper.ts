@@ -176,8 +176,25 @@ export interface AgentToolMapping {
 }
 
 /**
+ * Gateway shared tool definition for Cedar policy context
+ * These are tools deployed to the MCP Gateway that can be controlled via Policy Engine
+ */
+export interface SharedToolDefinition {
+  /** Gateway target name (e.g., 'get-deal') - kebab-case */
+  targetName: string;
+  /** Tool name within target (e.g., 'get_deal') - snake_case */
+  toolName: string;
+  /** Full action name for Cedar policies (e.g., 'get-deal___get_deal') */
+  actionName: string;
+}
+
+/**
  * Context for cedar-policies.prompt.md
- * Captures security inputs and agent/tool definitions for Cedar policy generation
+ * Captures security inputs and shared tool definitions for Cedar policy generation
+ *
+ * NOTE: Policy Engine can ONLY control tools deployed to the MCP Gateway (sharedTools).
+ * Agent inline tools cannot be controlled via Policy Engine - they are executed
+ * directly by the agent without going through the Gateway.
  *
  * Task Group 3: Policy Context Mapper
  */
@@ -189,16 +206,12 @@ export interface CedarPolicyContext {
     approvalGates: string[];
     guardrailNotes: string;
   };
-  /** Agents with their tools from Step 5 */
-  agents: Array<{
-    id: string;
-    name: string;
-    tools: string[];
-  }>;
-  /** Flat list of all tools across all agents */
-  allTools: string[];
-  /** Mapping of agent IDs to their tool arrays */
-  agentToolMapping: AgentToolMapping;
+  /**
+   * Gateway shared tools that can be controlled via Policy Engine.
+   * These are tools deployed as Lambda functions behind the MCP Gateway.
+   * Action names follow the format: target-name___tool_name
+   */
+  sharedTools: SharedToolDefinition[];
 }
 
 // ============================================================================
@@ -388,7 +401,10 @@ export function mapToAgentifyContext(state: WizardState): AgentifyContext {
 
 /**
  * Map WizardState to CedarPolicyContext for cedar-policies.prompt.md generation
- * Extracts SecurityState and AgentDesignState for Cedar policy generation
+ * Extracts SecurityState and MockDataState for Cedar policy generation
+ *
+ * NOTE: Policy Engine can ONLY control tools deployed to the MCP Gateway (sharedTools).
+ * Agent inline tools are excluded - they execute directly without going through Gateway.
  *
  * Task Group 3: Policy Context Mapper
  *
@@ -397,14 +413,11 @@ export function mapToAgentifyContext(state: WizardState): AgentifyContext {
  */
 export function mapToCedarPolicyContext(state: WizardState): CedarPolicyContext {
   const security = state.security || createDefaultSecurity();
-  const agentDesign = state.agentDesign || createDefaultAgentDesign();
-  const confirmedAgents = agentDesign.confirmedAgents || [];
+  const mockData = state.mockData || createDefaultMockData();
+  const mockDefinitions = mockData.mockDefinitions || [];
 
-  // Build flat list of all tools across all agents
-  const allTools = buildFlatToolList(confirmedAgents);
-
-  // Build agent-to-tool mapping
-  const agentToolMapping = buildAgentToolMapping(confirmedAgents);
+  // Build sharedTools from mockDefinitions (these become Gateway Lambda targets)
+  const sharedTools = buildSharedToolDefinitions(mockDefinitions);
 
   return {
     security: {
@@ -413,14 +426,41 @@ export function mapToCedarPolicyContext(state: WizardState): CedarPolicyContext 
       approvalGates: security.approvalGates || [],
       guardrailNotes: security.guardrailNotes || '',
     },
-    agents: confirmedAgents.map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      tools: agent.tools || [],
-    })),
-    allTools,
-    agentToolMapping,
+    sharedTools,
   };
+}
+
+/**
+ * Build shared tool definitions from mock data definitions
+ * Transforms mock tool definitions into Gateway action names for Cedar policies
+ *
+ * @param mockDefinitions - Array of mock tool definitions from Step 6
+ * @returns Array of SharedToolDefinition with Gateway action names
+ */
+export function buildSharedToolDefinitions(
+  mockDefinitions: MockToolDefinition[]
+): SharedToolDefinition[] {
+  if (!mockDefinitions || mockDefinitions.length === 0) {
+    return [];
+  }
+
+  return mockDefinitions.map((def) => {
+    // Convert tool name to kebab-case for target name
+    // e.g., 'get_company_profile' -> 'get-company-profile'
+    const targetName = def.tool.replace(/_/g, '-');
+
+    // Tool name stays in snake_case
+    const toolName = def.tool;
+
+    // Action name is target-name___tool_name (triple underscore)
+    const actionName = `${targetName}___${toolName}`;
+
+    return {
+      targetName,
+      toolName,
+      actionName,
+    };
+  });
 }
 
 // ============================================================================

@@ -61,9 +61,10 @@ const BACKOFF_MULTIPLIER = 2;
 const STEERING_PROMPTS_PATH = 'resources/prompts/steering';
 
 /**
- * Default policy file name for Cedar policies output
+ * Policy description file extension
+ * NL policy descriptions are written as .txt files for AgentCore NL-to-Cedar API
  */
-const CEDAR_POLICY_FILE_NAME = 'main.cedar';
+const POLICY_FILE_EXTENSION = '.txt';
 
 /**
  * Mapping of output file names to prompt file names
@@ -216,16 +217,28 @@ export interface GenerationResult {
 }
 
 /**
+ * Individual policy description parsed from LLM output
+ */
+export interface PolicyDescription {
+  /** Policy name in snake_case (e.g., 'confidential_deal_access') */
+  name: string;
+  /** Natural language description for AgentCore NL-to-Cedar API */
+  description: string;
+}
+
+/**
  * Result of Cedar policy generation
- * Task Group 4: Separate result type for policy generation
+ * Task Group 4: Updated to support multiple NL policy description files
  */
 export interface CedarPolicyResult {
   /** Whether policy generation was successful */
   success: boolean;
-  /** Path to the generated policy file */
-  filePath: string;
-  /** Generated Cedar policy content */
-  content: string;
+  /** Paths to the generated policy description files */
+  filePaths: string[];
+  /** Parsed policy descriptions from LLM */
+  policies: PolicyDescription[];
+  /** Raw LLM output (for debugging) */
+  rawContent: string;
   /** Error message if generation failed */
   error?: string;
 }
@@ -651,34 +664,43 @@ export class SteeringGenerationService implements vscode.Disposable {
   // -------------------------------------------------------------------------
 
   /**
-   * Generate Cedar policies from wizard state
-   * Task 4.3: Implements generateCedarPolicies method following generateDocument pattern
+   * Generate Cedar policy descriptions from wizard state
+   * Generates natural language policy descriptions that will be converted to Cedar
+   * by AgentCore's NL-to-Cedar API during deployment (setup.sh)
    *
-   * @param state The wizard state containing security and agent design
-   * @returns CedarPolicyResult with generated content or error
+   * @param state The wizard state containing security and mock data
+   * @returns CedarPolicyResult with parsed policy descriptions
    */
   public async generateCedarPolicies(state: WizardState): Promise<CedarPolicyResult> {
-    const fileName = CEDAR_POLICY_FILE_NAME;
+    const fileName = 'policies/*.txt';
     const total = 1;
     const index = 0;
 
-    // Emit start event for policy file
+    // Emit start event for policy generation
     this._onFileStart.fire({ fileName, index, total });
 
     try {
       // Map state to Cedar policy context
       const context = mapToCedarPolicyContext(state);
 
-      // Generate Cedar policies with retry
-      const content = await this._generateCedarPoliciesWithRetry(context);
+      // Generate NL policy descriptions with retry
+      const rawContent = await this._generateCedarPoliciesWithRetry(context);
+
+      // Parse JSON array from LLM output
+      const policies = this._parsePolicyDescriptions(rawContent);
+
+      if (policies.length === 0) {
+        throw new Error('No valid policy descriptions in LLM output');
+      }
 
       // Emit complete event
-      this._onFileComplete.fire({ fileName, index, total, content });
+      this._onFileComplete.fire({ fileName, index, total, content: rawContent });
 
       return {
         success: true,
-        filePath: '', // Will be set by caller when writing to disk
-        content,
+        filePaths: [], // Will be set by caller when writing to disk
+        policies,
+        rawContent,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -688,11 +710,64 @@ export class SteeringGenerationService implements vscode.Disposable {
 
       return {
         success: false,
-        filePath: '',
-        content: '',
+        filePaths: [],
+        policies: [],
+        rawContent: '',
         error: errorMessage,
       };
     }
+  }
+
+  /**
+   * Parse policy descriptions from LLM JSON output
+   * Handles markdown code blocks and validates structure
+   *
+   * @param rawContent Raw LLM output (may be JSON or wrapped in markdown)
+   * @returns Array of parsed PolicyDescription objects
+   */
+  private _parsePolicyDescriptions(rawContent: string): PolicyDescription[] {
+    // Strip markdown code blocks if present
+    let jsonContent = rawContent.trim();
+    if (jsonContent.startsWith('```')) {
+      // Remove opening code fence (```json or ```)
+      jsonContent = jsonContent.replace(/^```[a-z]*\n?/, '');
+      // Remove closing code fence
+      jsonContent = jsonContent.replace(/\n?```$/, '');
+    }
+
+    // Parse JSON
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonContent);
+    } catch (e) {
+      console.error('[SteeringGeneration] Failed to parse policy JSON:', e);
+      console.error('[SteeringGeneration] Raw content:', rawContent.substring(0, 500));
+      return [];
+    }
+
+    // Validate it's an array
+    if (!Array.isArray(parsed)) {
+      console.error('[SteeringGeneration] Policy output is not an array');
+      return [];
+    }
+
+    // Validate and filter policy objects
+    const policies: PolicyDescription[] = [];
+    for (const item of parsed) {
+      if (
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as { name?: unknown }).name === 'string' &&
+        typeof (item as { description?: unknown }).description === 'string'
+      ) {
+        policies.push({
+          name: (item as { name: string }).name,
+          description: (item as { description: string }).description,
+        });
+      }
+    }
+
+    return policies;
   }
 
   /**
@@ -718,17 +793,17 @@ export class SteeringGenerationService implements vscode.Disposable {
   }
 
   /**
-   * Write Cedar policies to the policies/ directory
-   * Task 4.6: Implements policy file output
+   * Write policy description files to the policies/ directory
+   * Creates one .txt file per policy for AgentCore's NL-to-Cedar API
    *
    * @param workspaceUri The workspace root URI
-   * @param content The generated Cedar policy content
-   * @returns The full path to the written policy file
+   * @param policies Array of policy descriptions to write
+   * @returns Array of full paths to the written policy files
    */
   public async writeCedarPolicies(
     workspaceUri: vscode.Uri,
-    content: string
-  ): Promise<string> {
+    policies: PolicyDescription[]
+  ): Promise<string[]> {
     // Create policies/ directory if it doesn't exist
     const policiesDir = vscode.Uri.joinPath(workspaceUri, 'policies');
 
@@ -739,12 +814,18 @@ export class SteeringGenerationService implements vscode.Disposable {
       await vscode.workspace.fs.createDirectory(policiesDir);
     }
 
-    // Write the Cedar policy file
-    const policyFileUri = vscode.Uri.joinPath(policiesDir, CEDAR_POLICY_FILE_NAME);
-    const contentBytes = Buffer.from(content, 'utf-8');
-    await vscode.workspace.fs.writeFile(policyFileUri, contentBytes);
+    // Write each policy description to a separate .txt file
+    const filePaths: string[] = [];
 
-    return policyFileUri.fsPath;
+    for (const policy of policies) {
+      const fileName = `${policy.name}${POLICY_FILE_EXTENSION}`;
+      const policyFileUri = vscode.Uri.joinPath(policiesDir, fileName);
+      const contentBytes = Buffer.from(policy.description, 'utf-8');
+      await vscode.workspace.fs.writeFile(policyFileUri, contentBytes);
+      filePaths.push(policyFileUri.fsPath);
+    }
+
+    return filePaths;
   }
 
   // -------------------------------------------------------------------------
