@@ -9,9 +9,13 @@ Each Lambda function:
 - Uses Python 3.11 runtime
 - Is granted invoke permissions for Bedrock AgentCore
 - Has its ARN exported for Gateway registration
+- Automatically includes shared Python modules from the handlers/ directory
 """
 
+import atexit
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +25,75 @@ from aws_cdk import aws_lambda as lambda_
 import config
 from constructs import Construct
 
+# Track temp directories for cleanup
+_temp_dirs: list[str] = []
+
+
+def _cleanup_temp_dirs() -> None:
+    """Clean up temporary directories created during synthesis."""
+    for temp_dir in _temp_dirs:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+atexit.register(_cleanup_temp_dirs)
+
 
 def to_pascal_case(snake_str: str) -> str:
     """Convert snake_case to PascalCase."""
     return "".join(word.capitalize() for word in snake_str.split("_"))
+
+
+def _get_shared_modules(handlers_dir: Path) -> list[Path]:
+    """Find shared Python modules in the handlers directory.
+
+    These are .py files directly in handlers/ (not in subdirectories)
+    that should be bundled with each Lambda function.
+
+    Args:
+        handlers_dir: Path to the handlers directory
+
+    Returns:
+        List of paths to shared Python modules
+    """
+    shared_modules = []
+    for entry in handlers_dir.iterdir():
+        if entry.is_file() and entry.suffix == ".py":
+            shared_modules.append(entry)
+    return shared_modules
+
+
+def _create_bundled_handler_dir(handler_path: Path, shared_modules: list[Path]) -> str:
+    """Create a temporary directory with handler files and shared modules.
+
+    Args:
+        handler_path: Path to the handler directory
+        shared_modules: List of shared Python module paths to include
+
+    Returns:
+        Path to the temporary directory containing the bundled code
+    """
+    # Create a persistent temp directory (cleaned up at process exit)
+    temp_dir = tempfile.mkdtemp(prefix="agentify_lambda_")
+    _temp_dirs.append(temp_dir)
+
+    # Copy all files from the handler directory
+    for item in handler_path.iterdir():
+        if item.name == "__pycache__":
+            continue
+        dest = Path(temp_dir) / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+
+    # Copy shared modules into the bundle
+    for module in shared_modules:
+        dest = Path(temp_dir) / module.name
+        if not dest.exists():  # Don't overwrite handler's own files
+            shutil.copy2(module, dest)
+
+    return temp_dir
 
 
 class GatewayToolsStack(Stack):
@@ -102,6 +171,12 @@ class GatewayToolsStack(Stack):
         handlers = self._discover_handlers()
         handlers_dir = self._get_handlers_directory()
 
+        # Find shared Python modules in the handlers directory
+        shared_modules = _get_shared_modules(handlers_dir)
+        if shared_modules:
+            module_names = [m.name for m in shared_modules]
+            print(f"[GatewayTools] Found shared modules: {module_names}")
+
         for tool_name in handlers:
             handler_path = handlers_dir / tool_name
 
@@ -112,6 +187,13 @@ class GatewayToolsStack(Stack):
 
             pascal_name = to_pascal_case(tool_name)
 
+            # Determine the code path - bundle shared modules if they exist
+            if shared_modules:
+                code_path = _create_bundled_handler_dir(handler_path, shared_modules)
+                print(f"[GatewayTools] Bundled shared modules into {tool_name}")
+            else:
+                code_path = str(handler_path)
+
             # Create Lambda function
             fn = lambda_.Function(
                 self,
@@ -119,7 +201,7 @@ class GatewayToolsStack(Stack):
                 function_name=f"{config.PROJECT_NAME}-gateway-{tool_name}",
                 runtime=lambda_.Runtime.PYTHON_3_11,
                 handler="handler.lambda_handler",
-                code=lambda_.Code.from_asset(str(handler_path)),
+                code=lambda_.Code.from_asset(code_path),
                 timeout=Duration.seconds(30),
                 memory_size=256,
                 description=f"AgentCore Gateway tool: {tool_name}",

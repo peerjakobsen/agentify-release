@@ -218,20 +218,74 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 
-# Generate sample test data for common tool patterns
+# Handlers directory for mock data discovery
+HANDLERS_DIR="${CDK_DIR}/gateway/handlers"
+
+# Extract handler name from tool name (e.g., "get-deal___get_deal" -> "get_deal")
+get_handler_name() {
+    local tool_name="$1"
+    # Tool names follow pattern: {gateway-target}___{handler_name}
+    # Extract the part after ___ (the actual handler/function name)
+    if [[ "$tool_name" == *"___"* ]]; then
+        echo "${tool_name##*___}"
+    else
+        # Fallback: convert dashes to underscores
+        echo "$tool_name" | tr '-' '_'
+    fi
+}
+
+# Auto-discover test arguments from mock_data.json
 get_test_arguments() {
     local tool_name="$1"
+    local handler_name=$(get_handler_name "$tool_name")
+    local mock_file="${HANDLERS_DIR}/${handler_name}/mock_data.json"
 
-    # Common patterns - customize these for your specific tools
+    # If mock_data.json exists, extract test parameters from it
+    if [ -f "$mock_file" ]; then
+        local mock_data=$(cat "$mock_file")
+
+        # Mock data structure: {wrapper_key: {actual_key: data}}
+        # e.g., {"deals": {"DEAL-001": {...}}} or {"companies": {"Acme Corp": {...}}}
+        local wrapper_key=$(echo "$mock_data" | jq -r 'keys[0] // empty' 2>/dev/null)
+
+        if [ -n "$wrapper_key" ] && [ "$wrapper_key" != "null" ]; then
+            # Get the first actual key inside the wrapper
+            local first_value_key=$(echo "$mock_data" | jq -r ".[\"$wrapper_key\"] | keys[0] // empty" 2>/dev/null)
+
+            if [ -n "$first_value_key" ] && [ "$first_value_key" != "null" ]; then
+                # Determine the parameter name based on handler name patterns
+                local param_name=""
+                case "$handler_name" in
+                    *deal*) param_name="deal_id" ;;
+                    *ticket*) param_name="ticket_id" ;;
+                    *customer*) param_name="customer_id" ;;
+                    *company*|*profile*) param_name="company_name" ;;
+                    *product*|*inventory*) param_name="product_id" ;;
+                    *market*|*data*)
+                        # For market data, structure is: {market_data: {industry: {metric: data}}}
+                        local first_industry="$first_value_key"
+                        local first_metric=$(echo "$mock_data" | jq -r ".[\"$wrapper_key\"][\"$first_industry\"] | keys[0] // empty" 2>/dev/null)
+                        if [ -n "$first_metric" ] && [ "$first_metric" != "null" ]; then
+                            echo "{\"industry\": \"$first_industry\", \"metric\": \"$first_metric\"}"
+                            return
+                        fi
+                        # Fallback if nested structure not found
+                        param_name="industry"
+                        ;;
+                    *) param_name="id" ;;
+                esac
+
+                # Return the discovered key as the test value
+                echo "{\"$param_name\": \"$first_value_key\"}"
+                return
+            fi
+        fi
+    fi
+
+    # Fallback to pattern-based defaults if no mock data found
     case "$tool_name" in
         *get-deal*|*get_deal*)
             echo '{"deal_id": "DEAL-001"}'
-            ;;
-        *get-company*|*get_company*|*company-profile*|*company_profile*)
-            echo '{"company_name": "TechCorp Solutions"}'
-            ;;
-        *get-market*|*get_market*|*market-data*|*market_data*)
-            echo '{"sector": "Technology"}'
             ;;
         *get-ticket*|*get_ticket*)
             echo '{"ticket_id": "TKT-001"}'
@@ -244,9 +298,6 @@ get_test_arguments() {
             ;;
         *search*|*kb*|*knowledge*)
             echo '{"query": "test query"}'
-            ;;
-        *inventory*|*get-inventory*)
-            echo '{"product_id": "PROD-001"}'
             ;;
         *)
             # Default: empty arguments
@@ -292,12 +343,30 @@ EOF
     local error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null)
     local result=$(echo "$response" | jq -r '.result // empty' 2>/dev/null)
 
+    # Extract content text to check for Lambda errors wrapped in successful responses
+    local content_text=$(echo "$response" | jq -r '.result.content[]?.text // empty' 2>/dev/null)
+
+    # Check for JSON-RPC level errors
     if [ -n "$error" ] && [ "$error" != "null" ] && [ "$error" != "" ]; then
         local error_msg=$(echo "$response" | jq -r '.error.message // "Unknown error"')
         print_tool_fail "$tool_name"
         echo -e "      Error: ${RED}${error_msg}${NC}"
         return 1
-    elif [ -n "$result" ] && [ "$result" != "null" ]; then
+    fi
+
+    # Check for Lambda errors wrapped in result content (e.g., ImportModuleError, Exception)
+    if [ -n "$content_text" ]; then
+        if echo "$content_text" | grep -qiE "error|exception|traceback|failed|unable to import"; then
+            print_tool_fail "$tool_name"
+            # Extract and show the error message (first 200 chars)
+            local error_preview=$(echo "$content_text" | head -c 200)
+            echo -e "      Lambda Error: ${RED}${error_preview}${NC}"
+            return 1
+        fi
+    fi
+
+    # Check for successful result
+    if [ -n "$result" ] && [ "$result" != "null" ]; then
         print_tool_pass "$tool_name"
         if [ "$VERBOSE" = true ]; then
             # Show truncated result
@@ -306,9 +375,8 @@ EOF
         fi
         return 0
     else
-        # Check if response contains content (streaming response)
-        local content=$(echo "$response" | jq -r '.result.content[]?.text // empty' 2>/dev/null)
-        if [ -n "$content" ]; then
+        # Check if response contains content (streaming response) - already validated above
+        if [ -n "$content_text" ]; then
             print_tool_pass "$tool_name"
             return 0
         fi
@@ -339,6 +407,29 @@ done
 
 echo ""
 
+# Helper function to check if a tool response indicates failure
+check_tool_result() {
+    local response="$1"
+    local error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null)
+    local content_text=$(echo "$response" | jq -r '.result.content[]?.text // empty' 2>/dev/null)
+
+    # Check JSON-RPC error
+    if [ -n "$error" ] && [ "$error" != "null" ] && [ "$error" != "" ]; then
+        echo "fail"
+        return
+    fi
+
+    # Check for Lambda errors in content
+    if [ -n "$content_text" ]; then
+        if echo "$content_text" | grep -qiE "error|exception|traceback|failed|unable to import"; then
+            echo "fail"
+            return
+        fi
+    fi
+
+    echo "pass"
+}
+
 # Summary (need to re-count since subshell loses variables)
 TOTAL_PASSED=$(echo "$TOOLS" | while read -r tool; do
     if [ -n "$SPECIFIC_TOOL" ] && [ "$tool" != "$SPECIFIC_TOOL" ]; then
@@ -347,8 +438,8 @@ TOTAL_PASSED=$(echo "$TOOLS" | while read -r tool; do
     test_args=$(get_test_arguments "$tool")
     request="{\"jsonrpc\":\"2.0\",\"id\":\"test\",\"method\":\"tools/call\",\"params\":{\"name\":\"${tool}\",\"arguments\":${test_args}}}"
     response=$(curl -s -X POST "$GATEWAY_URL" -H "Content-Type: application/json" -H "Authorization: Bearer ${ACCESS_TOKEN}" -d "$request" 2>/dev/null)
-    error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null)
-    if [ -z "$error" ] || [ "$error" = "null" ]; then
+    result=$(check_tool_result "$response")
+    if [ "$result" = "pass" ]; then
         echo "pass"
     fi
 done | wc -l | tr -d ' ')
@@ -360,8 +451,8 @@ TOTAL_FAILED=$(echo "$TOOLS" | while read -r tool; do
     test_args=$(get_test_arguments "$tool")
     request="{\"jsonrpc\":\"2.0\",\"id\":\"test\",\"method\":\"tools/call\",\"params\":{\"name\":\"${tool}\",\"arguments\":${test_args}}}"
     response=$(curl -s -X POST "$GATEWAY_URL" -H "Content-Type: application/json" -H "Authorization: Bearer ${ACCESS_TOKEN}" -d "$request" 2>/dev/null)
-    error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null)
-    if [ -n "$error" ] && [ "$error" != "null" ] && [ "$error" != "" ]; then
+    result=$(check_tool_result "$response")
+    if [ "$result" = "fail" ]; then
         echo "fail"
     fi
 done | wc -l | tr -d ' ')
