@@ -190,12 +190,7 @@ if [ "$SKIP_CDK" = false ]; then
         print_success "CDK already bootstrapped"
     fi
 
-    # Synthesize first to validate
-    print_step "Running cdk synth..."
-    uv run cdk synth -c project="${PROJECT_NAME}" -c region="${REGION}" --quiet
-    print_success "CDK synthesis complete"
-
-    # Deploy all stacks (save outputs for Gateway setup)
+    # Deploy all stacks (synthesis happens automatically during deploy)
     print_step "Deploying CDK stacks (this may take 5-10 minutes)..."
     uv run cdk deploy -c project="${PROJECT_NAME}" -c region="${REGION}" --all --require-approval never --outputs-file cdk-outputs.json
     print_success "CDK deployment complete"
@@ -438,6 +433,25 @@ delete_policy_by_name() {
     fi
 }
 
+# Helper function to find existing policy engine by name in AWS
+# This prevents ConflictException when infrastructure.json is missing but engine exists
+find_existing_policy_engine() {
+    local name="$1"
+    local region="$2"
+
+    # Use AWS CLI directly for JSON output (agentcore toolkit outputs truncated tables)
+    local list_output
+    list_output=$(aws bedrock-agentcore-control list-policy-engines --region "${region}" 2>/dev/null) || return 1
+
+    # Parse JSON to find matching engine by name and extract ID
+    if command -v jq &> /dev/null; then
+        echo "$list_output" | jq -r ".policyEngines[] | select(.name == \"${name}\") | .policyEngineId" 2>/dev/null | head -1
+    else
+        # Fallback: use grep to find the ID (less reliable)
+        echo "$list_output" | grep -oE "\"policyEngineId\":\s*\"${name}-[a-zA-Z0-9]+\"" | sed 's/.*"\([^"]*\)"$/\1/' | head -1
+    fi
+}
+
 # Check if policies directory exists and has .txt files (natural language policy descriptions)
 POLICY_TXT_FILES=$(find "$POLICIES_DIR" -name "*.txt" 2>/dev/null | head -1)
 
@@ -454,14 +468,25 @@ if [ -n "$POLICY_TXT_FILES" ] && [ -f "$GATEWAY_CONFIG" ]; then
     GATEWAY_ARN=$(jq -r '.gateway_arn // empty' "$GATEWAY_CONFIG" 2>/dev/null)
 
     if [ -n "$GATEWAY_ARN" ]; then
-        # Check if Policy Engine already exists
+        # Sanitize project name for policy engine (AWS requires ^[A-Za-z][A-Za-z0-9_]*$)
+        POLICY_ENGINE_NAME=$(echo "${PROJECT_NAME}_policy_engine" | sed 's/-/_/g')
+
+        # Check if Policy Engine already exists - first in local config, then query AWS
+        # This prevents ConflictException when infrastructure.json is missing but engine exists in AWS
         EXISTING_POLICY_ENGINE_ID=$(jq -r '.policy.policyEngineId // empty' "$INFRA_CONFIG" 2>/dev/null)
 
         if [ -z "$EXISTING_POLICY_ENGINE_ID" ]; then
-            # Sanitize project name for policy engine (AWS requires ^[A-Za-z][A-Za-z0-9_]*$)
-            POLICY_ENGINE_NAME=$(echo "${PROJECT_NAME}_policy_engine" | sed 's/-/_/g')
+            # Config file doesn't have it - check AWS directly
+            print_step "Checking for existing Policy Engine in AWS..."
+            EXISTING_POLICY_ENGINE_ID=$(find_existing_policy_engine "$POLICY_ENGINE_NAME" "$REGION")
 
-            # Create new Policy Engine
+            if [ -n "$EXISTING_POLICY_ENGINE_ID" ]; then
+                print_success "Found existing Policy Engine in AWS: $EXISTING_POLICY_ENGINE_ID"
+            fi
+        fi
+
+        if [ -z "$EXISTING_POLICY_ENGINE_ID" ]; then
+            # No existing engine found - create new one
             print_step "Creating Policy Engine: ${POLICY_ENGINE_NAME}..."
 
             POLICY_ENGINE_OUTPUT=$(uv run agentcore policy create-policy-engine \
@@ -486,8 +511,7 @@ if [ -n "$POLICY_TXT_FILES" ] && [ -f "$GATEWAY_CONFIG" ]; then
                 print_warning "Attempting to list policy engines to find it..."
 
                 # Try to find the policy engine by listing (use sanitized name)
-                POLICY_ENGINE_ID=$(uv run agentcore policy list-policy-engines --region "${REGION}" 2>&1 | \
-                    grep -i "${POLICY_ENGINE_NAME}" | grep -oE "${POLICY_ENGINE_NAME}-[a-zA-Z0-9_]+" | head -1 || true)
+                POLICY_ENGINE_ID=$(find_existing_policy_engine "$POLICY_ENGINE_NAME" "$REGION")
 
                 if [ -n "$POLICY_ENGINE_ID" ]; then
                     print_success "Found Policy Engine: $POLICY_ENGINE_ID"
