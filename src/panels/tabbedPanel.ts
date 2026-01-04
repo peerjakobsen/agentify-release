@@ -1282,6 +1282,20 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._step8Handler?.handleOpenKiroFolder();
         break;
 
+      // Phase 2: Policy Generation commands
+      case 'step8GeneratePolicies':
+        this._step8Handler?.handleGeneratePolicies();
+        break;
+
+      // Phase 4: Demo Generation commands
+      case 'step8GenerateDemo':
+        this._step8Handler?.handleGenerateDemo();
+        break;
+
+      case 'step8OpenDemo':
+        this._step8Handler?.handleOpenDemo();
+        break;
+
       // Legacy command for backward compatibility
       case 'generateSteeringFiles':
         this.handleGenerateSteeringFiles();

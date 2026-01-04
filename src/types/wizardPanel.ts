@@ -764,11 +764,9 @@ export const STEERING_FILES: string[] = [
 
 /**
  * Files written to project root (human-facing documentation)
- * These are generated alongside steering files but placed at root level
+ * DEMO.md is now generated separately in Phase 4
  */
-export const ROOT_DOC_FILES: Record<string, string> = {
-  'demo-strategy.md': 'DEMO.md',
-};
+export const ROOT_DOC_FILES: Record<string, string> = {};
 
 /**
  * Validation status for a step summary
@@ -808,11 +806,11 @@ export interface FailedFile {
  * Generation state for Step 8
  * Task 1.2: Interface following MockDataState pattern
  * Task 2.6: Removed isPlaceholderMode - now using real generation
- * Phase 2: Extended with roadmap generation fields
+ * Refactored: 4-phase always-visible layout
  */
 export interface GenerationState {
   // -------------------------------------------------------------------------
-  // Phase 1: Steering File Generation
+  // Phase 1: Steering File Generation (7 files to .kiro/steering/)
   // -------------------------------------------------------------------------
 
   /** Whether steering file generation is in progress */
@@ -829,9 +827,26 @@ export interface GenerationState {
   accordionExpanded: boolean;
   /** Whether generation can proceed (no 'error' validation status) */
   canGenerate: boolean;
+  /** Whether Phase 1 steering files are complete */
+  steeringComplete: boolean;
 
   // -------------------------------------------------------------------------
-  // Phase 2: Roadmap Generation
+  // Phase 2: Policy File Generation (policies/*.txt)
+  // -------------------------------------------------------------------------
+
+  /** Whether policy generation is in progress */
+  policyGenerating: boolean;
+  /** Whether policies were successfully generated */
+  policyGenerated: boolean;
+  /** Paths to the generated policy description files (policies/*.txt) */
+  policyFilePaths: string[];
+  /** Error message if policy generation failed */
+  policyError?: string;
+  /** Whether policy generation was skipped (no security config) */
+  policySkipped: boolean;
+
+  // -------------------------------------------------------------------------
+  // Phase 3: Roadmap Generation (ROADMAP.md to project root)
   // -------------------------------------------------------------------------
 
   /** Whether roadmap generation is in progress */
@@ -844,17 +859,17 @@ export interface GenerationState {
   roadmapError?: string;
 
   // -------------------------------------------------------------------------
-  // Phase 3: Cedar Policy Generation
+  // Phase 4: Demo Strategy Generation (DEMO.md to project root)
   // -------------------------------------------------------------------------
 
-  /** Whether Cedar policy generation is in progress */
-  cedarGenerating: boolean;
-  /** Whether Cedar policies were successfully generated */
-  cedarGenerated: boolean;
-  /** Paths to the generated policy description files (policies/*.txt) */
-  cedarFilePaths: string[];
-  /** Error message if Cedar generation failed (non-blocking) */
-  cedarError?: string;
+  /** Whether demo generation is in progress */
+  demoGenerating: boolean;
+  /** Whether demo was successfully generated */
+  demoGenerated: boolean;
+  /** Path to the generated DEMO.md file */
+  demoFilePath: string;
+  /** Error message if demo generation failed */
+  demoError?: string;
 }
 
 /**
@@ -1411,31 +1426,35 @@ export function createDefaultDemoStrategyState(): DemoStrategyState {
  * Used to initialize or reset Step 8 state
  *
  * Task 1.6: Factory function following createDefaultMockDataState() pattern
- * Task 2.6: Removed isPlaceholderMode - now using real generation
- * Phase 2: Extended with roadmap generation defaults
+ * Refactored: 4-phase always-visible layout
  */
 export function createDefaultGenerationState(): GenerationState {
   return {
-    // Phase 1: Generation progress
+    // Phase 1: Steering file generation
     isGenerating: false,
     currentFileIndex: -1,
     completedFiles: [],
     failedFile: undefined,
     generatedFilePaths: [],
-    // UI state
     accordionExpanded: false,
-    // Validation
     canGenerate: true,
-    // Phase 2: Roadmap generation
+    steeringComplete: false,
+    // Phase 2: Policy file generation
+    policyGenerating: false,
+    policyGenerated: false,
+    policyFilePaths: [],
+    policyError: undefined,
+    policySkipped: false,
+    // Phase 3: Roadmap generation
     roadmapGenerating: false,
     roadmapGenerated: false,
     roadmapFilePath: '',
     roadmapError: undefined,
-    // Phase 3: Cedar policy generation
-    cedarGenerating: false,
-    cedarGenerated: false,
-    cedarFilePaths: [],
-    cedarError: undefined,
+    // Phase 4: Demo generation
+    demoGenerating: false,
+    demoGenerated: false,
+    demoFilePath: '',
+    demoError: undefined,
   };
 }
 
@@ -1602,11 +1621,13 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
     agentDesign: truncatedState.agentDesign,
     mockData: truncatedState.mockData,
     demoStrategy: truncatedState.demoStrategy,
-    // Task 7.6: Include generation state (with isGenerating always false on restore)
+    // Include generation state (with generating flags always false on restore)
     generation: {
       ...truncatedState.generation,
       isGenerating: false, // Cannot resume mid-generation
+      policyGenerating: false, // Cannot resume mid-generation
       roadmapGenerating: false, // Cannot resume mid-generation
+      demoGenerating: false, // Cannot resume mid-generation
     },
   };
 }
@@ -1614,12 +1635,20 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
 /**
  * Convert PersistedWizardState back to WizardState
  * Task 1.7: Restores state, sets uploadedFile to undefined
- * Task 7.6: Restores generation state with isGenerating = false
+ * Refactored: 4-phase layout with backwards compatibility for renamed fields
  *
  * @param persisted Previously saved state
  * @returns Full wizard state with file metadata preserved
  */
 export function persistedStateToWizardState(persisted: PersistedWizardState): WizardState {
+  // Type for backwards compatibility with old cedar* field names
+  type OldGenerationState = GenerationState & {
+    cedarGenerating?: boolean;
+    cedarGenerated?: boolean;
+    cedarFilePaths?: string[];
+    cedarError?: string;
+  };
+
   return {
     // Navigation
     currentStep: persisted.currentStep,
@@ -1642,17 +1671,38 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     agentDesign: persisted.agentDesign,
     mockData: persisted.mockData,
     demoStrategy: persisted.demoStrategy ?? createDefaultDemoStrategyState(),
-    // Task 7.6: Restore generation state with isGenerating = false
+    // Restore generation state with generating flags = false, backwards compat for cedar→policy
     generation: persisted.generation
-      ? {
-          ...persisted.generation,
-          isGenerating: false, // Cannot resume mid-generation
-          roadmapGenerating: false, // Cannot resume mid-generation
-          // Ensure roadmap fields exist even if persisted state is old
-          roadmapGenerated: (persisted.generation as GenerationState).roadmapGenerated ?? false,
-          roadmapFilePath: (persisted.generation as GenerationState).roadmapFilePath ?? '',
-          roadmapError: (persisted.generation as GenerationState).roadmapError,
-        }
+      ? (() => {
+          const gen = persisted.generation as OldGenerationState;
+          return {
+            // Phase 1
+            isGenerating: false,
+            currentFileIndex: gen.currentFileIndex ?? -1,
+            completedFiles: gen.completedFiles ?? [],
+            failedFile: gen.failedFile,
+            generatedFilePaths: gen.generatedFilePaths ?? [],
+            accordionExpanded: gen.accordionExpanded ?? false,
+            canGenerate: gen.canGenerate ?? true,
+            steeringComplete: gen.steeringComplete ?? false,
+            // Phase 2 (backwards compat: cedar* → policy*)
+            policyGenerating: false,
+            policyGenerated: gen.policyGenerated ?? gen.cedarGenerated ?? false,
+            policyFilePaths: gen.policyFilePaths ?? gen.cedarFilePaths ?? [],
+            policyError: gen.policyError ?? gen.cedarError,
+            policySkipped: gen.policySkipped ?? false,
+            // Phase 3
+            roadmapGenerating: false,
+            roadmapGenerated: gen.roadmapGenerated ?? false,
+            roadmapFilePath: gen.roadmapFilePath ?? '',
+            roadmapError: gen.roadmapError,
+            // Phase 4
+            demoGenerating: false,
+            demoGenerated: gen.demoGenerated ?? false,
+            demoFilePath: gen.demoFilePath ?? '',
+            demoError: gen.demoError,
+          };
+        })()
       : createDefaultGenerationState(),
   };
 }

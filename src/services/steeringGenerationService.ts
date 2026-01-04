@@ -86,7 +86,8 @@ export const STEERING_PROMPT_FILES: Record<string, string> = {
 };
 
 /**
- * Ordered list of steering file keys for generation
+ * Ordered list of steering file keys for Phase 1 generation
+ * Note: demo-strategy is generated separately in Phase 4
  */
 export const STEERING_FILE_KEYS = [
   'product',
@@ -95,7 +96,6 @@ export const STEERING_FILE_KEYS = [
   'customer-context',
   'integration-landscape',
   'security-policies',
-  'demo-strategy',
   'agentify-integration',
 ];
 
@@ -656,6 +656,31 @@ export class SteeringGenerationService implements vscode.Disposable {
       files,
       errors: errors.length > 0 ? errors : undefined,
     };
+  }
+
+  /**
+   * Generate a single steering file by key
+   * Phase 4: Used for generating DEMO.md separately from main steering files
+   *
+   * @param state The wizard state
+   * @param fileKey The file key (e.g., 'demo-strategy')
+   * @returns Generated content string
+   */
+  public async generateSingleFile(
+    state: WizardState,
+    fileKey: string
+  ): Promise<string> {
+    // Get context mapper for this file
+    const mapper = STATE_MAPPERS[fileKey];
+    if (!mapper) {
+      throw new Error(`No mapper found for file key: ${fileKey}`);
+    }
+
+    // Map state to context
+    const context = mapper(state);
+
+    // Generate with retry
+    return this._generateWithRetry(fileKey, context);
   }
 
   // -------------------------------------------------------------------------

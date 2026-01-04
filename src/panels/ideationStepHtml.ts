@@ -27,9 +27,10 @@ import { STEERING_FILES, ROOT_DOC_FILES } from '../types/wizardPanel';
 import { getFileReuploadIndicatorHtml } from './resumeBannerHtml';
 
 /**
- * Total files generated (steering + root docs like DEMO.md)
+ * Total Phase 1 steering files (7 files in .kiro/steering/)
+ * DEMO.md is now generated separately in Phase 4
  */
-const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES).length;
+const TOTAL_STEERING_FILES = STEERING_FILES.length;
 
 // ============================================================================
 // Types (local to tabbedPanel - should be consolidated later)
@@ -495,21 +496,30 @@ export function getStepContentHtml(state: IdeationState, validation: IdeationVal
     return getStep7Html(state);
   }
   if (state.currentStep === 8) {
-    const generationState = state.generation || {
+    const generationState: GenerationState = state.generation || {
       isGenerating: false,
       currentFileIndex: 0,
       completedFiles: [],
       generatedFilePaths: [],
       accordionExpanded: false,
       canGenerate: true,
+      steeringComplete: false,
+      // Phase 2: Policy files (renamed from cedar)
+      policyGenerating: false,
+      policyGenerated: false,
+      policyFilePaths: [],
+      policyError: undefined,
+      policySkipped: false,
+      // Phase 3: Roadmap
       roadmapGenerating: false,
       roadmapGenerated: false,
       roadmapFilePath: '',
       roadmapError: undefined,
-      cedarGenerating: false,
-      cedarGenerated: false,
-      cedarFilePaths: [],
-      cedarError: undefined,
+      // Phase 4: Demo
+      demoGenerating: false,
+      demoGenerated: false,
+      demoFilePath: '',
+      demoError: undefined,
     };
     const summaries = computeStepSummaries(state);
     return generateStep8Html(generationState, summaries);
@@ -2510,7 +2520,7 @@ export function renderFileProgressList(state: GenerationState): string {
  */
 export function renderGenerationProgress(state: GenerationState): string {
   const completedCount = state.completedFiles.length;
-  const totalCount = TOTAL_GENERATED_FILES;
+  const totalCount = TOTAL_STEERING_FILES;
 
   // Determine status of each checklist item
   const validateStatus = state.isGenerating || completedCount > 0 ? 'complete' : 'pending';
@@ -2567,9 +2577,390 @@ export function renderGenerationProgress(state: GenerationState): string {
   `;
 }
 
+// ============================================================================
+// Phase Card Render Functions (4-phase always-visible layout)
+// ============================================================================
+
+/**
+ * Phase 1: Render steering files generation section
+ * Shows progress during generation, file list on success, retry on error
+ */
+export function renderPhase1SteeringSection(state: GenerationState): string {
+  const completedCount = state.completedFiles.length;
+  const totalCount = TOTAL_STEERING_FILES;
+
+  // Show loading state
+  if (state.isGenerating) {
+    return `
+      <div class="phase-card active">
+        <div class="phase-header">
+          <span class="phase-number"><span class="spinner-icon"></span></span>
+          <div class="phase-title">
+            <h3>Steering Files</h3>
+            <span class="phase-file">.kiro/steering/*.md</span>
+          </div>
+        </div>
+        <div class="phase-progress">
+          <span class="progress-text">Generating... (${completedCount}/${totalCount} files)</span>
+          <div class="progress-accordion ${state.accordionExpanded ? 'expanded' : ''}">
+            <div class="progress-accordion-header" onclick="handleStep8Command('step8ToggleAccordion', {})">
+              <span class="accordion-chevron ${state.accordionExpanded ? 'chevron-down' : 'chevron-right'}"></span>
+              <span>View files</span>
+            </div>
+            <div class="progress-accordion-content">
+              ${renderFileProgressList(state)}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show success state
+  if (state.steeringComplete) {
+    const filesHtml = state.generatedFilePaths.map((filePath, index) => {
+      const fileName = STEERING_FILES[index] || filePath.split('/').pop() || 'unknown';
+      return `
+        <div class="generated-file-item">
+          <span class="generated-file-name">${escapeHtml(fileName)}</span>
+          <button
+            class="open-file-link"
+            onclick="handleStep8Command('step8OpenFile', { filePath: '${escapeHtml(filePath)}' })"
+          >
+            Open
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="phase-card complete">
+        <div class="phase-header">
+          <span class="phase-number complete">${getStatusIconSvg('complete')}</span>
+          <div class="phase-title">
+            <h3>Steering Files</h3>
+            <span class="phase-file">.kiro/steering/*.md</span>
+          </div>
+        </div>
+        <div class="file-list collapsed">
+          ${filesHtml}
+        </div>
+        <div class="phase-actions">
+          <button
+            class="open-folder-btn nav-btn secondary"
+            onclick="handleStep8Command('step8OpenKiroFolder', {})"
+          >
+            Open Folder
+          </button>
+          <button
+            class="regenerate-link"
+            onclick="handleStep8Command('step8Generate', {})"
+          >
+            Regenerate
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show error state
+  if (state.failedFile) {
+    return `
+      <div class="phase-card error">
+        <div class="phase-header">
+          <span class="phase-number error">${getStatusIconSvg('error')}</span>
+          <div class="phase-title">
+            <h3>Steering Files</h3>
+            <span class="phase-file">.kiro/steering/*.md</span>
+          </div>
+        </div>
+        <div class="phase-error">
+          <p class="error-details">Failed at ${escapeHtml(state.failedFile.name)}: ${escapeHtml(state.failedFile.error)}</p>
+          <div class="error-actions">
+            <button
+              class="retry-btn nav-btn primary"
+              onclick="handleStep8Command('step8Retry', {})"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show initial state with Generate button
+  const disabledGenerate = !state.canGenerate ? 'disabled' : '';
+  const generateTooltip = !state.canGenerate ? 'title="Fix validation errors to generate"' : '';
+
+  return `
+    <div class="phase-card">
+      <div class="phase-header">
+        <span class="phase-number">1</span>
+        <div class="phase-title">
+          <h3>Steering Files</h3>
+          <span class="phase-file">.kiro/steering/*.md</span>
+        </div>
+      </div>
+      <p class="phase-description">
+        Generate ${totalCount} steering files that guide Kiro in building your agent workflow.
+      </p>
+      <button
+        class="generate-btn nav-btn primary"
+        ${disabledGenerate}
+        ${generateTooltip}
+        onclick="handleStep8Command('step8Generate', {})"
+      >
+        Generate Steering Files
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Phase 2: Render policy files generation section
+ * Shows policy generation for compliance/security rules
+ */
+export function renderPhase2PolicySection(state: GenerationState): string {
+  // Skip entirely if policy was skipped (no security config)
+  if (state.policySkipped) {
+    return `
+      <div class="phase-card skipped">
+        <div class="phase-header">
+          <span class="phase-number skipped">—</span>
+          <div class="phase-title">
+            <h3>Policy Files</h3>
+            <span class="phase-file">policies/*.txt</span>
+          </div>
+        </div>
+        <p class="phase-description skipped-text">
+          Skipped — no compliance frameworks or approval gates configured in Step 4.
+        </p>
+      </div>
+    `;
+  }
+
+  // Show loading state
+  if (state.policyGenerating) {
+    return `
+      <div class="phase-card active">
+        <div class="phase-header">
+          <span class="phase-number"><span class="spinner-icon"></span></span>
+          <div class="phase-title">
+            <h3>Policy Files</h3>
+            <span class="phase-file">policies/*.txt</span>
+          </div>
+        </div>
+        <div class="phase-progress">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating policy files...</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show success state
+  if (state.policyGenerated && state.policyFilePaths.length > 0) {
+    const filesHtml = state.policyFilePaths.map((filePath) => {
+      const fileName = filePath.split('/').pop() || 'unknown';
+      return `
+        <div class="generated-file-item">
+          <span class="generated-file-name">${escapeHtml(fileName)}</span>
+          <button
+            class="open-file-link"
+            onclick="handleStep8Command('step8OpenFile', { filePath: '${escapeHtml(filePath)}' })"
+          >
+            Open
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="phase-card complete">
+        <div class="phase-header">
+          <span class="phase-number complete">${getStatusIconSvg('complete')}</span>
+          <div class="phase-title">
+            <h3>Policy Files</h3>
+            <span class="phase-file">policies/*.txt</span>
+          </div>
+        </div>
+        <div class="file-list collapsed">
+          ${filesHtml}
+        </div>
+        <div class="phase-actions">
+          <button
+            class="regenerate-link"
+            onclick="handleStep8Command('step8GeneratePolicies', {})"
+          >
+            Regenerate
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show error state
+  if (state.policyError) {
+    return `
+      <div class="phase-card error">
+        <div class="phase-header">
+          <span class="phase-number error">${getStatusIconSvg('error')}</span>
+          <div class="phase-title">
+            <h3>Policy Files</h3>
+            <span class="phase-file">policies/*.txt</span>
+          </div>
+        </div>
+        <div class="phase-error">
+          <p class="error-details">${escapeHtml(state.policyError)}</p>
+          <button
+            class="retry-btn nav-btn primary"
+            onclick="handleStep8Command('step8GeneratePolicies', {})"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show initial state with Generate button
+  return `
+    <div class="phase-card">
+      <div class="phase-header">
+        <span class="phase-number">2</span>
+        <div class="phase-title">
+          <h3>Policy Files</h3>
+          <span class="phase-file">policies/*.txt</span>
+        </div>
+      </div>
+      <p class="phase-description">
+        Generate natural language policy descriptions for AgentCore authorization.
+      </p>
+      <button
+        class="generate-btn nav-btn primary"
+        onclick="handleStep8Command('step8GeneratePolicies', {})"
+      >
+        Generate Policies
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Phase 4: Render demo strategy generation section
+ * Shows DEMO.md generation for demo narrative and talking points
+ */
+export function renderPhase4DemoSection(state: GenerationState): string {
+  // Show loading state
+  if (state.demoGenerating) {
+    return `
+      <div class="phase-card active">
+        <div class="phase-header">
+          <span class="phase-number"><span class="spinner-icon"></span></span>
+          <div class="phase-title">
+            <h3>Demo Strategy</h3>
+            <span class="phase-file">DEMO.md</span>
+          </div>
+        </div>
+        <div class="phase-progress">
+          <div class="typing-indicator">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <span class="loading-text">Generating DEMO.md...</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show success state
+  if (state.demoGenerated && state.demoFilePath) {
+    return `
+      <div class="phase-card complete">
+        <div class="phase-header">
+          <span class="phase-number complete">${getStatusIconSvg('complete')}</span>
+          <div class="phase-title">
+            <h3>Demo Strategy</h3>
+            <span class="phase-file">DEMO.md</span>
+          </div>
+        </div>
+        <div class="demo-success">
+          <p class="success-hint">Your demo script with personas, aha moments, and talking points is ready.</p>
+          <div class="phase-actions">
+            <button
+              class="open-demo-btn nav-btn primary"
+              onclick="handleStep8Command('step8OpenDemo', {})"
+            >
+              Open DEMO.md
+            </button>
+            <button
+              class="regenerate-link"
+              onclick="handleStep8Command('step8GenerateDemo', {})"
+            >
+              Regenerate
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show error state
+  if (state.demoError) {
+    return `
+      <div class="phase-card error">
+        <div class="phase-header">
+          <span class="phase-number error">${getStatusIconSvg('error')}</span>
+          <div class="phase-title">
+            <h3>Demo Strategy</h3>
+            <span class="phase-file">DEMO.md</span>
+          </div>
+        </div>
+        <div class="phase-error">
+          <p class="error-details">${escapeHtml(state.demoError)}</p>
+          <button
+            class="retry-btn nav-btn primary"
+            onclick="handleStep8Command('step8GenerateDemo', {})"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show initial state with Generate button
+  return `
+    <div class="phase-card">
+      <div class="phase-header">
+        <span class="phase-number">4</span>
+        <div class="phase-title">
+          <h3>Demo Strategy</h3>
+          <span class="phase-file">DEMO.md</span>
+        </div>
+      </div>
+      <p class="phase-description">
+        Generate a demo script with personas, narrative scenes, and aha moments.
+      </p>
+      <button
+        class="generate-btn nav-btn primary"
+        onclick="handleStep8Command('step8GenerateDemo', {})"
+      >
+        Generate Demo
+      </button>
+    </div>
+  `;
+}
+
 /**
  * Task 6.4: Render post-generation success UI
- * Shows list of generated files with open links
+ * @deprecated - Kept for reference, replaced by phase-card layout
  */
 export function renderPostGenerationSuccess(state: GenerationState): string {
   const filesHtml = state.generatedFilePaths.map((filePath, index) => {
@@ -2598,7 +2989,7 @@ export function renderPostGenerationSuccess(state: GenerationState): string {
         ${filesHtml}
       </div>
     </div>
-    ${renderPhase2RoadmapSection(state)}
+    ${renderPhase3RoadmapSection(state)}
     <div class="step8-bottom-actions">
       <button
         class="start-over-button"
@@ -2611,15 +3002,32 @@ export function renderPostGenerationSuccess(state: GenerationState): string {
 }
 
 /**
- * Phase 2: Render roadmap generation section
- * Shows Generate Roadmap button after Phase 1 steering files complete
+ * Phase 3: Render roadmap generation section
+ * Shows Generate Roadmap button with dependency warning if steering files not complete
  */
-export function renderPhase2RoadmapSection(state: GenerationState): string {
+export function renderPhase3RoadmapSection(state: GenerationState): string {
+  // Dependency warning when steering files not complete
+  const dependencyWarning = !state.steeringComplete ? `
+    <div class="dependency-warning">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM8.75 9a.75.75 0 0 1-1.5 0V5a.75.75 0 0 1 1.5 0v4z"/>
+      </svg>
+      <span>Generate steering files first for best results</span>
+    </div>
+  ` : '';
+
   // Show loading state
   if (state.roadmapGenerating) {
     return `
-      <div class="phase2-roadmap-section">
-        <h3>Phase 2: Implementation Roadmap</h3>
+      <div class="phase-card active">
+        <div class="phase-header">
+          <span class="phase-number">3</span>
+          <div class="phase-title">
+            <h3>Implementation Roadmap</h3>
+            <span class="phase-file">ROADMAP.md</span>
+          </div>
+        </div>
+        ${dependencyWarning}
         <div class="roadmap-generating">
           <div class="typing-indicator">
             <span class="dot"></span>
@@ -2635,13 +3043,15 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
   // Show success state
   if (state.roadmapGenerated && state.roadmapFilePath) {
     return `
-      <div class="phase2-roadmap-section">
-        <h3>Phase 2: Implementation Roadmap</h3>
-        <div class="roadmap-success">
-          <div class="success-message">
-            ${getStatusIconSvg('complete')}
-            <span>ROADMAP.md generated successfully!</span>
+      <div class="phase-card complete">
+        <div class="phase-header">
+          <span class="phase-number complete">${getStatusIconSvg('complete')}</span>
+          <div class="phase-title">
+            <h3>Implementation Roadmap</h3>
+            <span class="phase-file">ROADMAP.md</span>
           </div>
+        </div>
+        <div class="roadmap-success">
           <div class="roadmap-instructions">
             <p><strong>Next Step — Ask Kiro:</strong></p>
             <div class="kiro-prompt-hint">
@@ -2649,7 +3059,7 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
             </div>
             <p class="roadmap-note">Then follow Kiro's spec-driven development flow. Repeat for each item in order.</p>
           </div>
-          <div class="roadmap-actions">
+          <div class="phase-actions">
             <button
               class="open-roadmap-btn nav-btn primary"
               onclick="handleStep8Command('step8OpenRoadmap', {})"
@@ -2657,13 +3067,7 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
               Open ROADMAP.md
             </button>
             <button
-              class="open-kiro-btn nav-btn secondary"
-              onclick="handleStep8Command('step8OpenKiroFolder', {})"
-            >
-              Open Folder in Kiro
-            </button>
-            <button
-              class="regenerate-roadmap-link"
+              class="regenerate-link"
               onclick="handleStep8Command('step8GenerateRoadmap', {})"
             >
               Regenerate
@@ -2677,16 +3081,19 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
   // Show error state
   if (state.roadmapError) {
     return `
-      <div class="phase2-roadmap-section">
-        <h3>Phase 2: Implementation Roadmap</h3>
-        <div class="roadmap-error">
-          <div class="error-message">
-            ${getStatusIconSvg('error')}
-            <span>Roadmap generation failed</span>
+      <div class="phase-card error">
+        <div class="phase-header">
+          <span class="phase-number error">${getStatusIconSvg('error')}</span>
+          <div class="phase-title">
+            <h3>Implementation Roadmap</h3>
+            <span class="phase-file">ROADMAP.md</span>
           </div>
+        </div>
+        ${dependencyWarning}
+        <div class="phase-error">
           <p class="error-details">${escapeHtml(state.roadmapError)}</p>
           <button
-            class="retry-roadmap-btn nav-btn primary"
+            class="retry-btn nav-btn primary"
             onclick="handleStep8Command('step8GenerateRoadmap', {})"
           >
             Try Again
@@ -2698,13 +3105,20 @@ export function renderPhase2RoadmapSection(state: GenerationState): string {
 
   // Show initial state with Generate Roadmap button
   return `
-    <div class="phase2-roadmap-section">
-      <h3>Phase 2: Implementation Roadmap</h3>
-      <p class="phase2-description">
+    <div class="phase-card">
+      <div class="phase-header">
+        <span class="phase-number">3</span>
+        <div class="phase-title">
+          <h3>Implementation Roadmap</h3>
+          <span class="phase-file">ROADMAP.md</span>
+        </div>
+      </div>
+      ${dependencyWarning}
+      <p class="phase-description">
         Generate a step-by-step implementation roadmap with copy-paste prompts for Kiro IDE.
       </p>
       <button
-        class="generate-roadmap-btn nav-btn primary"
+        class="generate-btn nav-btn primary"
         onclick="handleStep8Command('step8GenerateRoadmap', {})"
       >
         Generate Roadmap
@@ -2781,41 +3195,40 @@ export function renderStep8ActionButtons(state: GenerationState): string {
 /**
  * Task 4.2: Generate Step 8 HTML
  * Main entry point for Step 8 rendering
+ * Refactored: 4-phase always-visible layout
  */
 export function generateStep8Html(state: GenerationState, summaries: StepSummary[]): string {
-  const isComplete = state.generatedFilePaths.length === TOTAL_GENERATED_FILES && !state.failedFile;
-  const hasError = !!state.failedFile;
-
-  // Determine which section to render
-  let contentHtml = '';
-  if (isComplete && !state.isGenerating) {
-    // Post-generation success
-    contentHtml = renderPostGenerationSuccess(state);
-  } else if (hasError && !state.isGenerating) {
-    // Error state with retry
-    contentHtml = `
-      ${renderGenerationProgress(state)}
-      ${renderGenerationError(state)}
-    `;
-  } else if (state.isGenerating || state.completedFiles.length > 0) {
-    // Generation in progress
-    contentHtml = `
-      ${renderGenerationProgress(state)}
-      ${renderStep8ActionButtons(state)}
-    `;
-  } else {
-    // Pre-generation summary
-    contentHtml = `
-      ${renderPreGenerationSummary(summaries)}
-      ${renderStep8ActionButtons(state)}
-    `;
-  }
+  // Pre-generation summary is collapsible (collapsed by default after any phase completes)
+  const anyPhaseComplete = state.steeringComplete || state.policyGenerated || state.roadmapGenerated || state.demoGenerated;
+  const summaryClass = anyPhaseComplete ? 'collapsed' : '';
 
   return `
     <div class="step8-header">
       <h2>Generate</h2>
-      <p class="step-description">Review your wizard inputs and generate steering files for your agent workflow.</p>
+      <p class="step-description">Generate project files for your agent workflow. Each phase can be generated independently.</p>
     </div>
-    ${contentHtml}
+
+    <div class="pre-gen-summary ${summaryClass}">
+      <details ${anyPhaseComplete ? '' : 'open'}>
+        <summary>Review Wizard Inputs</summary>
+        ${renderPreGenerationSummary(summaries)}
+      </details>
+    </div>
+
+    <div class="generation-phases">
+      ${renderPhase1SteeringSection(state)}
+      ${renderPhase2PolicySection(state)}
+      ${renderPhase3RoadmapSection(state)}
+      ${renderPhase4DemoSection(state)}
+    </div>
+
+    <div class="step8-bottom-actions">
+      <button
+        class="start-over-button"
+        onclick="handleStep8Command('step8StartOver', {})"
+      >
+        Start Over
+      </button>
+    </div>
   `;
 }

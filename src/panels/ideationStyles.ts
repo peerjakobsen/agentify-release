@@ -2732,5 +2732,240 @@ export function getIdeationStyles(): string {
         margin-top: 16px;
         text-align: center;
       }
+
+      /* ============================================
+         4-Phase Card Layout Styles
+         ============================================ */
+
+      .generation-phases {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin-top: 20px;
+      }
+
+      .phase-card {
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 8px;
+        padding: 16px;
+      }
+
+      .phase-card.active {
+        border-color: var(--vscode-progressBar-background, #0078d4);
+      }
+
+      .phase-card.complete {
+        border-color: var(--vscode-testing-iconPassed, #388a34);
+      }
+
+      .phase-card.error {
+        border-color: var(--vscode-testing-iconFailed, #f48771);
+      }
+
+      .phase-card.skipped {
+        opacity: 0.6;
+        border-style: dashed;
+      }
+
+      .phase-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .phase-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        border-radius: 50%;
+        background: var(--vscode-badge-background, rgba(0, 0, 0, 0.2));
+        color: var(--vscode-badge-foreground, #fff);
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .phase-number.complete,
+      .phase-number.error {
+        background: transparent;
+        width: auto;
+        height: auto;
+        padding: 0;
+      }
+
+      .phase-number.complete svg {
+        color: var(--vscode-testing-iconPassed, #388a34);
+      }
+
+      .phase-number.error svg {
+        color: var(--vscode-testing-iconFailed, #f48771);
+      }
+
+      .phase-number.skipped {
+        background: transparent;
+        color: var(--vscode-disabledForeground);
+        font-size: 16px;
+      }
+
+      .phase-title {
+        flex: 1;
+      }
+
+      .phase-title h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+
+      .phase-file {
+        display: block;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        margin-top: 2px;
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+
+      .phase-description {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin: 0 0 12px 0;
+        line-height: 1.4;
+      }
+
+      .phase-description.skipped-text {
+        font-style: italic;
+        margin: 0;
+      }
+
+      .phase-progress {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .phase-progress .progress-text {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+
+      .phase-error {
+        margin-top: 8px;
+      }
+
+      .phase-error .error-details {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin: 0 0 12px 0;
+        padding: 8px 12px;
+        background: var(--vscode-inputValidation-errorBackground, rgba(244, 135, 113, 0.1));
+        border-radius: 4px;
+      }
+
+      .phase-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .regenerate-link {
+        background: transparent;
+        border: none;
+        color: var(--vscode-textLink-foreground, #3794ff);
+        cursor: pointer;
+        font-size: 12px;
+        padding: 4px 8px;
+      }
+
+      .regenerate-link:hover {
+        text-decoration: underline;
+      }
+
+      /* Dependency Warning */
+      .dependency-warning {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--vscode-inputValidation-warningBackground, rgba(205, 155, 0, 0.1));
+        border: 1px solid var(--vscode-inputValidation-warningBorder, #cdb900);
+        border-radius: 4px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        color: var(--vscode-inputValidation-warningForeground, #cdb900);
+      }
+
+      .dependency-warning svg {
+        flex-shrink: 0;
+      }
+
+      /* Phase-specific adjustments */
+      .demo-success,
+      .roadmap-success {
+        text-align: left;
+      }
+
+      .success-hint {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin: 0 0 12px 0;
+      }
+
+      /* File list in phase cards */
+      .phase-card .file-list {
+        max-height: 200px;
+        overflow-y: auto;
+        margin-bottom: 8px;
+      }
+
+      .phase-card .file-list.collapsed {
+        max-height: 120px;
+      }
+
+      /* Pre-generation summary collapsible */
+      .pre-gen-summary {
+        margin-bottom: 16px;
+      }
+
+      .pre-gen-summary details {
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 6px;
+        padding: 0;
+      }
+
+      .pre-gen-summary summary {
+        padding: 12px 16px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+        user-select: none;
+      }
+
+      .pre-gen-summary summary:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+
+      .pre-gen-summary details[open] summary {
+        border-bottom: 1px solid var(--vscode-input-border);
+      }
+
+      .pre-gen-summary .pre-generation-summary {
+        padding: 16px;
+        margin: 0;
+        border: none;
+        border-radius: 0;
+      }
+
+      .pre-gen-summary.collapsed details {
+        opacity: 0.8;
+      }
     `;
 }

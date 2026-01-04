@@ -34,9 +34,10 @@ import type {
 import { STEERING_FILES, ROOT_DOC_FILES } from '../types/wizardPanel';
 
 /**
- * Total files generated (steering + root docs like DEMO.md)
+ * Total steering files generated in Phase 1 (7 files)
+ * DEMO.md is now generated separately in Phase 4
  */
-const TOTAL_GENERATED_FILES = STEERING_FILES.length + Object.keys(ROOT_DOC_FILES).length;
+const TOTAL_STEERING_FILES = STEERING_FILES.length;
 
 // Task 6.3: Import environment detection utility
 import { isKiroEnvironment, getKiroLearnMoreUrl } from '../utils/environment';
@@ -244,11 +245,11 @@ export class Step8LogicHandler {
   // ============================================================================
 
   /**
-   * Check if steering files already exist on disk and update state accordingly.
+   * Check if files already exist on disk and update state accordingly.
    * This enables proper UI display when resuming a wizard after files were generated
-   * in a previous session.
+   * in a previous session. Checks all 4 phases independently.
    *
-   * @returns true if all steering files exist on disk
+   * @returns true if all Phase 1 steering files exist on disk
    */
   public async checkExistingSteeringFiles(): Promise<boolean> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -260,7 +261,7 @@ export class Step8LogicHandler {
     const existingFiles: string[] = [];
     const existingPaths: string[] = [];
 
-    // Check each steering file
+    // Phase 1: Check each steering file
     for (const filename of STEERING_FILES) {
       const fileUri = vscode.Uri.joinPath(steeringDir, filename);
       try {
@@ -272,43 +273,59 @@ export class Step8LogicHandler {
       }
     }
 
-    // Also check ROOT_DOC_FILES (demo-strategy.md)
-    for (const [, filename] of Object.entries(ROOT_DOC_FILES)) {
-      const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filename);
-      try {
-        await vscode.workspace.fs.stat(fileUri);
-        existingFiles.push(filename);
-        existingPaths.push(fileUri.fsPath);
-      } catch {
-        // File doesn't exist
-      }
-    }
-
-    // If all steering files + DEMO.md exist, update state to reflect disk reality
-    // Note: Extension init only creates agentify-integration.md, so we check that
-    // product.md also exists to confirm this was a full wizard generation.
-    // We also require DEMO.md since TOTAL_GENERATED_FILES includes it.
+    // Phase 1 completion check (7 steering files)
     const allSteeringFilesExist = STEERING_FILES.every(f => existingFiles.includes(f));
-    const demoFileExists = existingFiles.includes('DEMO.md');
-    const isWizardGenerated = allSteeringFilesExist && existingFiles.includes('product.md') && demoFileExists;
+    const isPhase1Complete = allSteeringFilesExist && existingFiles.includes('product.md');
 
-    if (isWizardGenerated) {
-      // Disk is source of truth - ALWAYS update state to match what's on disk
-      // This handles resume scenarios where persisted state might be stale
+    if (isPhase1Complete) {
+      // Update Phase 1 state
       this._state.completedFiles = existingFiles;
       this._state.generatedFilePaths = existingPaths;
-      this._state.accordionExpanded = false; // Collapse since generation is complete
+      this._state.accordionExpanded = false;
+      this._state.steeringComplete = true;
+    }
 
-      // Check if roadmap also exists
-      const roadmapUri = vscode.Uri.joinPath(workspaceFolder.uri, ROADMAP_OUTPUT_FILE);
-      try {
-        await vscode.workspace.fs.stat(roadmapUri);
-        this._state.roadmapGenerated = true;
-        this._state.roadmapFilePath = roadmapUri.fsPath;
-      } catch {
-        // Roadmap doesn't exist yet
+    // Phase 2: Check for policy files in policies/ directory
+    const policiesDir = vscode.Uri.joinPath(workspaceFolder.uri, 'policies');
+    const policyFilePaths: string[] = [];
+    try {
+      const entries = await vscode.workspace.fs.readDirectory(policiesDir);
+      for (const [filename] of entries) {
+        if (filename.endsWith('.txt')) {
+          const fileUri = vscode.Uri.joinPath(policiesDir, filename);
+          policyFilePaths.push(fileUri.fsPath);
+        }
       }
+      if (policyFilePaths.length > 0) {
+        this._state.policyGenerated = true;
+        this._state.policyFilePaths = policyFilePaths;
+      }
+    } catch {
+      // Policies directory doesn't exist
+    }
 
+    // Phase 3: Check if ROADMAP.md exists
+    const roadmapUri = vscode.Uri.joinPath(workspaceFolder.uri, ROADMAP_OUTPUT_FILE);
+    try {
+      await vscode.workspace.fs.stat(roadmapUri);
+      this._state.roadmapGenerated = true;
+      this._state.roadmapFilePath = roadmapUri.fsPath;
+    } catch {
+      // Roadmap doesn't exist yet
+    }
+
+    // Phase 4: Check if DEMO.md exists
+    const demoUri = vscode.Uri.joinPath(workspaceFolder.uri, 'DEMO.md');
+    try {
+      await vscode.workspace.fs.stat(demoUri);
+      this._state.demoGenerated = true;
+      this._state.demoFilePath = demoUri.fsPath;
+    } catch {
+      // DEMO.md doesn't exist yet
+    }
+
+    // Update UI if any phase was detected
+    if (isPhase1Complete || policyFilePaths.length > 0 || this._state.roadmapGenerated || this._state.demoGenerated) {
       this._callbacks.updateWebviewContent();
       this._callbacks.syncStateToWebview();
     }
@@ -341,11 +358,13 @@ export class Step8LogicHandler {
     this._state.generatedFilePaths = [];
     this._state.accordionExpanded = true; // Auto-expand during generation
 
-    // Reset Cedar policy state
-    this._state.cedarGenerating = false;
-    this._state.cedarGenerated = false;
-    this._state.cedarFilePaths = [];
-    this._state.cedarError = undefined;
+    // Reset Phase 1 completion and policy state
+    this._state.steeringComplete = false;
+    this._state.policyGenerating = false;
+    this._state.policyGenerated = false;
+    this._state.policyFilePaths = [];
+    this._state.policyError = undefined;
+    this._state.policySkipped = false;
 
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
@@ -373,13 +392,10 @@ export class Step8LogicHandler {
         // Success - all steering files generated
         this._state.generatedFilePaths = result.files;
         this._state.accordionExpanded = false; // Auto-collapse on success
+        this._state.steeringComplete = true; // Mark Phase 1 as complete
 
-        // Phase 3: Generate Cedar policies if security configuration warrants it
-        // This is non-blocking - Cedar failure won't fail steering file generation
-        await this.generateCedarPoliciesIfNeeded(wizardState);
-
-        // Task 4.5: Show success toast with action (updated for Cedar)
-        this.showSuccessToast(result.files.length, result.backupPath, this._state.cedarGenerated);
+        // Show success toast (policy generation is now manual in Phase 2)
+        this.showSuccessToast(result.files.length, result.backupPath, false);
       } else if (result.error) {
         // Partial failure
         this._state.failedFile = {
@@ -408,17 +424,16 @@ export class Step8LogicHandler {
   /**
    * Show success toast with optional actions
    * Task 4.5: Shows toast with file count and backup path info
-   * Phase 3: Extended to show Cedar policy generation status
    */
   private showSuccessToast(
     fileCount: number,
     backupPath?: string,
-    cedarGenerated: boolean = false
+    policyGenerated: boolean = false
   ): void {
     let message = `Successfully generated ${fileCount} steering file${fileCount !== 1 ? 's' : ''} in .kiro/steering/`;
 
-    if (cedarGenerated) {
-      message += ` + Cedar policies in policies/`;
+    if (policyGenerated) {
+      message += ` + policies in policies/`;
     }
 
     if (backupPath) {
@@ -453,41 +468,45 @@ export class Step8LogicHandler {
   }
 
   // ============================================================================
-  // Phase 3: Cedar Policy Generation
+  // Phase 2: Policy File Generation
   // ============================================================================
 
   /**
-   * Generate Cedar policies if security configuration warrants it
-   * Phase 3: Called after steering file generation succeeds
-   * Cedar failure is non-blocking - won't fail overall generation
-   *
-   * @param wizardState The full wizard state
+   * Generate policy files (Phase 2)
+   * Manual trigger for policy generation based on security configuration
    */
-  private async generateCedarPoliciesIfNeeded(wizardState: WizardState): Promise<void> {
+  public async handleGeneratePolicies(): Promise<void> {
     const context = this._callbacks.getContext();
     if (!context) {
-      console.warn('[Step8] No extension context available for Cedar generation');
+      vscode.window.showErrorMessage('No extension context available for policy generation');
       return;
     }
 
+    const wizardState = this._callbacks.getWizardState();
     const generationService = getSteeringGenerationService(context);
 
-    // Check if Cedar generation should run based on security config
+    // Check if policy generation should run based on security config
     if (!generationService.shouldGenerateCedarPolicies(wizardState)) {
-      console.log('[Step8] Cedar policy generation not needed (no compliance frameworks or approval gates)');
+      this._state.policySkipped = true;
+      this._state.policyError = 'No compliance frameworks or approval gates configured';
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+      vscode.window.showInformationMessage('Policy generation skipped - no security configuration requires policies');
       return;
     }
 
-    // Update state to indicate Cedar generation is starting
-    this._state.cedarGenerating = true;
-    this._state.cedarError = undefined;
+    // Update state to indicate policy generation is starting
+    this._state.policyGenerating = true;
+    this._state.policyError = undefined;
+    this._state.policySkipped = false;
     this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
 
     try {
-      // Generate Cedar policies
-      const cedarResult = await generationService.generateCedarPolicies(wizardState);
+      // Generate policy descriptions
+      const policyResult = await generationService.generateCedarPolicies(wizardState);
 
-      if (cedarResult.success && cedarResult.policies.length > 0) {
+      if (policyResult.success && policyResult.policies.length > 0) {
         // Get workspace folder for writing
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
@@ -497,28 +516,126 @@ export class Step8LogicHandler {
         // Write policy description files to policies/*.txt
         const filePaths = await generationService.writeCedarPolicies(
           workspaceFolder.uri,
-          cedarResult.policies
+          policyResult.policies
         );
 
         // Update state with success
-        this._state.cedarGenerated = true;
-        this._state.cedarFilePaths = filePaths;
-        this._state.generatedFilePaths.push(...filePaths);
+        this._state.policyGenerated = true;
+        this._state.policyFilePaths = filePaths;
         console.log(`[Step8] Policy descriptions generated: ${filePaths.length} files`);
+
+        vscode.window.showInformationMessage(
+          `Generated ${filePaths.length} policy file${filePaths.length !== 1 ? 's' : ''} in policies/`
+        );
       } else {
-        // Cedar generation failed - log but don't block
-        this._state.cedarError = cedarResult.error || 'Unknown Cedar generation error';
-        console.warn(`[Step8] Cedar policy generation failed: ${this._state.cedarError}`);
+        // Policy generation failed
+        this._state.policyError = policyResult.error || 'Unknown policy generation error';
+        console.warn(`[Step8] Policy generation failed: ${this._state.policyError}`);
+        vscode.window.showErrorMessage(`Policy generation failed: ${this._state.policyError}`);
       }
     } catch (error) {
-      // Unexpected error - log but don't block steering file success
+      // Unexpected error
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this._state.cedarError = errorMessage;
-      console.error(`[Step8] Cedar policy generation error: ${errorMessage}`);
+      this._state.policyError = errorMessage;
+      console.error(`[Step8] Policy generation error: ${errorMessage}`);
+      vscode.window.showErrorMessage(`Policy generation failed: ${errorMessage}`);
     } finally {
-      this._state.cedarGenerating = false;
+      this._state.policyGenerating = false;
       this._callbacks.updateWebviewContent();
       this._callbacks.syncStateToWebview();
+    }
+  }
+
+  // ============================================================================
+  // Phase 4: Demo Strategy Generation
+  // ============================================================================
+
+  /**
+   * Generate DEMO.md at project root (Phase 4)
+   * Manual trigger for demo strategy file generation
+   */
+  public async handleGenerateDemo(): Promise<void> {
+    const context = this._callbacks.getContext();
+    if (!context) {
+      vscode.window.showErrorMessage('No extension context available for demo generation');
+      return;
+    }
+
+    const wizardState = this._callbacks.getWizardState();
+
+    // Update state to indicate demo generation is starting
+    this._state.demoGenerating = true;
+    this._state.demoError = undefined;
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+
+    try {
+      const generationService = getSteeringGenerationService(context);
+
+      // Generate demo strategy content using the existing prompt
+      const content = await generationService.generateSingleFile(wizardState, 'demo-strategy');
+
+      // Get workspace folder for writing
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        throw new Error('No workspace folder open');
+      }
+
+      // Write DEMO.md to project root
+      const demoUri = vscode.Uri.joinPath(workspaceFolder.uri, 'DEMO.md');
+      await vscode.workspace.fs.writeFile(demoUri, Buffer.from(content, 'utf-8'));
+
+      // Update state with success
+      this._state.demoGenerated = true;
+      this._state.demoFilePath = demoUri.fsPath;
+      console.log('[Step8] DEMO.md generated successfully');
+
+      vscode.window.showInformationMessage(
+        'DEMO.md generated successfully!',
+        'Open File'
+      ).then((selection) => {
+        if (selection === 'Open File') {
+          this.handleOpenDemo();
+        }
+      });
+    } catch (error) {
+      // Unexpected error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this._state.demoError = errorMessage;
+      console.error(`[Step8] Demo generation error: ${errorMessage}`);
+      vscode.window.showErrorMessage(`Demo generation failed: ${errorMessage}`);
+    } finally {
+      this._state.demoGenerating = false;
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+    }
+  }
+
+  /**
+   * Open the generated DEMO.md file in the editor
+   */
+  public async handleOpenDemo(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder open');
+      return;
+    }
+
+    const demoUri = vscode.Uri.joinPath(workspaceFolder.uri, 'DEMO.md');
+
+    try {
+      // Check if file exists
+      await vscode.workspace.fs.stat(demoUri);
+
+      // Open the file in the editor
+      await vscode.window.showTextDocument(demoUri, {
+        preview: false,
+        viewColumn: vscode.ViewColumn.One,
+      });
+    } catch {
+      vscode.window.showErrorMessage(
+        'DEMO.md not found. Generate it first using the "Generate Demo" button.'
+      );
     }
   }
 
@@ -639,9 +756,10 @@ export class Step8LogicHandler {
           ...result.files,
         ];
         this._state.accordionExpanded = false; // Auto-collapse on success
+        this._state.steeringComplete = true; // Mark Phase 1 as complete
 
         // Show success toast
-        this.showSuccessToast(TOTAL_GENERATED_FILES);
+        this.showSuccessToast(TOTAL_STEERING_FILES);
       } else if (result.error) {
         // Retry also failed
         this._state.failedFile = {
