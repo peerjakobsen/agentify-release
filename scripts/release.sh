@@ -24,7 +24,7 @@ VERSION=$1
 VSIX_FILE="dist/agentify-${VERSION}.vsix"
 PUBLIC_DIR="public-release"
 RELEASES_DIR="${PUBLIC_DIR}/releases"
-PUBLIC_REPO="github.com/peerjakobsen/agentify-release"
+PUBLIC_REPO="https://github.com/peerjakobsen/agentify-release.git"
 
 echo -e "${YELLOW}Releasing Agentify v${VERSION}...${NC}"
 
@@ -55,10 +55,10 @@ echo -e "${GREEN}Private repo commit complete.${NC}"
 
 # Push subtree to public repo
 echo "Pushing subtree to public repo..."
-git subtree push --prefix="$PUBLIC_DIR" "git@${PUBLIC_REPO}.git" main
+git subtree push --prefix="$PUBLIC_DIR" "$PUBLIC_REPO" main
 
 echo -e "${GREEN}Release v${VERSION} complete!${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Verify the release at https://${PUBLIC_REPO}"
+echo "  1. Verify the release at https://github.com/peerjakobsen/agentify-release"
 echo "  2. Create a GitHub release with the VSIX file"
