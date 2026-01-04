@@ -348,6 +348,7 @@ Kiro injects Lambda handlers into the **existing** CDK folder structure. Each ha
 
 ```
 cdk/gateway/handlers/
+├── common_utils.py             # Shared utilities (auto-bundled with each Lambda)
 ├── zendesk_get_ticket/
 │   ├── handler.py              # Lambda handler
 │   ├── mock_data.json          # Mock data bundled with Lambda
@@ -365,6 +366,8 @@ cdk/gateway/handlers/
     ├── mock_data.json
     └── requirements.txt
 ```
+
+**Shared Modules:** Kiro may refactor common code (like request parsing, error handling) into shared modules at the `handlers/` level. The CDK automatically detects `.py` files in the `handlers/` directory and bundles them with each Lambda function. No manual copying required.
 
 **Handler Pattern:**
 ```python
@@ -409,24 +412,32 @@ The CDK infrastructure deploys three stacks:
 
 #### GatewayToolsStack
 - Auto-discovers handlers in `cdk/gateway/handlers/*/`
+- Auto-bundles shared `.py` modules from `handlers/` into each Lambda
 - Creates Lambda function per tool: `{project}-gateway-{tool_name}`
 - Grants Bedrock AgentCore invoke permissions
 - Exports Lambda ARNs for gateway registration
 
 ### Auto-Discovery Pattern
 
-The GatewayToolsStack scans for tool handlers:
+The GatewayToolsStack scans for tool handlers and shared modules:
 
 ```python
 # cdk/stacks/gateway_tools.py
 handlers_dir = Path('gateway/handlers')
+
+# Find shared .py modules in handlers/ (e.g., common_utils.py)
+shared_modules = [f for f in handlers_dir.iterdir() if f.suffix == '.py']
+
 for tool_dir in handlers_dir.iterdir():
     if tool_dir.is_dir() and (tool_dir / 'handler.py').exists():
-        # Create Lambda function
+        # Create bundled directory with handler + shared modules
+        # Create Lambda function from bundled code
         # Export ARN
 ```
 
-This allows Kiro to simply add new handlers to the directory structure without modifying CDK code.
+This allows Kiro to:
+- Add new handlers to the directory structure without modifying CDK code
+- Refactor common code into shared modules that are automatically bundled
 
 ### Deployment Commands
 
@@ -462,6 +473,57 @@ The orchestrate script:
 - Separates stdout (JSON events) from stderr (human-readable progress)
 - Queries DynamoDB for tool events after completion
 - Shows formatted table of tool invocations per agent
+
+### Testing Gateway Tools
+
+Use `test_gateway.sh` to validate all deployed Lambda tools:
+
+```bash
+# Test all gateway tools
+./scripts/test_gateway.sh
+
+# List tools without invoking
+./scripts/test_gateway.sh --list-only
+
+# Test specific tool with verbose output
+./scripts/test_gateway.sh --tool get-deal___get_deal --verbose
+```
+
+**Auto-Discovery of Test Data:**
+
+The test script automatically discovers valid test parameters from `mock_data.json` files:
+
+```
+Mock data structure:        Test parameters generated:
+{
+  "deals": {                → {"deal_id": "DEAL-001"}
+    "DEAL-001": {...},
+    "DEAL-002": {...}
+  }
+}
+
+{
+  "companies": {            → {"company_name": "Acme Corp"}
+    "Acme Corp": {...}
+  }
+}
+
+{
+  "market_data": {          → {"industry": "Technology", "metric": "pricing"}
+    "Technology": {
+      "pricing": {...}
+    }
+  }
+}
+```
+
+This means Kiro can generate any mock data structure and the test script will find valid values automatically.
+
+**Error Detection:**
+
+The script detects both:
+- JSON-RPC level errors (gateway failures)
+- Lambda errors wrapped in successful responses (e.g., `ImportModuleError`, validation failures)
 
 ### IAM Role & Policy Creation
 
