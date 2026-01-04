@@ -15,6 +15,7 @@ build/
 
 # VS Code Extension
 *.vsix
+!public-release/releases/*.vsix
 
 # Python
 __pycache__/
