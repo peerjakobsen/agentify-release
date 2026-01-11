@@ -159,6 +159,61 @@ export interface WorkflowErrorEvent extends BaseEvent {
   execution_time_ms?: number;
 }
 
+// ============================================================================
+// Parallel Execution Events (Swarm Pattern)
+// ============================================================================
+
+/**
+ * Event indicating parallel node execution has started
+ * Emitted when an agent hands off to multiple agents simultaneously
+ */
+export interface ParallelNodeStartEvent extends BaseEvent {
+  /** Event type discriminator */
+  type: 'parallel_node_start';
+  /** IDs of nodes executing in parallel */
+  node_ids: string[];
+  /** Display names of the parallel nodes */
+  node_names: string[];
+  /** Name of the agent that triggered parallel execution */
+  from_agent: string | null;
+}
+
+/**
+ * Event indicating one of the parallel nodes has completed
+ * Emitted for each parallel agent as they finish
+ */
+export interface ParallelNodeStopEvent extends BaseEvent {
+  /** Event type discriminator */
+  type: 'parallel_node_stop';
+  /** ID of the node that completed */
+  node_id: string;
+  /** Display name of the node */
+  node_name: string;
+  /** Completion status */
+  status: NodeCompletionStatus;
+  /** Agent's response content */
+  response?: string;
+  /** Error message if status is 'error' */
+  error?: string;
+  /** Number of parallel agents completed so far */
+  completed_count: number;
+  /** Total number of parallel agents */
+  total_count: number;
+}
+
+/**
+ * Event indicating all parallel agents have completed and convergence is ready
+ * Emitted before invoking the convergence agent
+ */
+export interface ConvergenceReadyEvent extends BaseEvent {
+  /** Event type discriminator */
+  type: 'convergence_ready';
+  /** ID of the convergence node to be invoked */
+  convergence_node: string | null;
+  /** IDs of agents that completed parallel execution */
+  completed_agents: string[];
+}
+
 /**
  * Union of all stdout event types
  */
@@ -168,7 +223,10 @@ export type StdoutEvent =
   | NodeStopEvent
   | NodeStreamEvent
   | WorkflowCompleteEvent
-  | WorkflowErrorEvent;
+  | WorkflowErrorEvent
+  | ParallelNodeStartEvent
+  | ParallelNodeStopEvent
+  | ConvergenceReadyEvent;
 
 // ============================================================================
 // DynamoDB Events (Tool Call Tracking)
@@ -323,4 +381,25 @@ export function isStdoutEvent(event: AgentifyEvent): event is StdoutEvent {
  */
 export function isDynamoDbEvent(event: AgentifyEvent): event is DynamoDbEvent {
   return 'event_type' in event;
+}
+
+/**
+ * Type guard for ParallelNodeStartEvent
+ */
+export function isParallelNodeStartEvent(event: AgentifyEvent): event is ParallelNodeStartEvent {
+  return 'type' in event && event.type === 'parallel_node_start';
+}
+
+/**
+ * Type guard for ParallelNodeStopEvent
+ */
+export function isParallelNodeStopEvent(event: AgentifyEvent): event is ParallelNodeStopEvent {
+  return 'type' in event && event.type === 'parallel_node_stop';
+}
+
+/**
+ * Type guard for ConvergenceReadyEvent
+ */
+export function isConvergenceReadyEvent(event: AgentifyEvent): event is ConvergenceReadyEvent {
+  return 'type' in event && event.type === 'convergence_ready';
 }

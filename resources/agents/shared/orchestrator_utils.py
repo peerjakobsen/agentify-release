@@ -288,7 +288,8 @@ def invoke_agent_remotely(agent_id: str, prompt: str, session_id: str) -> Dict[s
         if 'text/event-stream' in content_type:
             for line in response['response'].iter_lines():
                 if line:
-                    raw_bytes += line
+                    # Preserve line separators for proper parsing
+                    raw_bytes += line + b'\n'
             decoded = raw_bytes.decode('utf-8')
             lines = decoded.split('\n')
             content = [line[6:] for line in lines if line.startswith('data: ')]

@@ -264,7 +264,8 @@ deploy_agent() {
 store_agent_id() {
     print_step "Storing ${AGENT_NAME} ID in SSM Parameter Store..."
 
-    AGENT_ID=$(grep -A 10 "^  ${AGENT_NAME}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" | \
+    # agent_id is nested ~35 lines deep under bedrock_agentcore: section
+    AGENT_ID=$(grep -A 50 "^  ${AGENT_NAME}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" | \
                grep "agent_id:" | head -1 | sed 's/.*agent_id: *//' | tr -d ' "')
 
     if [ -n "$AGENT_ID" ]; then
@@ -294,7 +295,8 @@ store_agent_id() {
 add_iam_permissions() {
     print_step "Adding IAM permissions for ${AGENT_NAME}..."
 
-    EXECUTION_ROLE=$(grep -A 15 "^  ${AGENT_NAME}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" | \
+    # execution_role is ~12 lines deep under aws: section, use 25 for safety
+    EXECUTION_ROLE=$(grep -A 25 "^  ${AGENT_NAME}:" "${PROJECT_ROOT}/.bedrock_agentcore.yaml" | \
                      grep "execution_role:" | head -1 | sed 's/.*arn:aws:iam::[0-9]*:role\///' | tr -d ' ')
 
     if [ -z "$EXECUTION_ROLE" ]; then

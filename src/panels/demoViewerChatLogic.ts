@@ -46,7 +46,7 @@ import {
   getStdoutEventParser,
   type StdoutEventParser,
 } from '../services/stdoutEventParser';
-import type { MergedEvent, StdoutEvent, NodeStreamEvent, NodeStartEvent, NodeStopEvent, GraphStructureEvent, WorkflowCompleteEvent, WorkflowErrorEvent, ToolCallEvent, DynamoDbEvent } from '../types/events';
+import type { MergedEvent, StdoutEvent, NodeStreamEvent, NodeStartEvent, NodeStopEvent, GraphStructureEvent, WorkflowCompleteEvent, WorkflowErrorEvent, ToolCallEvent, DynamoDbEvent, ParallelNodeStartEvent, ParallelNodeStopEvent } from '../types/events';
 import { isToolCallEvent } from '../types/events';
 import { formatTime } from '../utils/timerFormatter';
 import { getDynamoDbPollingService } from '../services/dynamoDbPollingService';
@@ -92,6 +92,13 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
   /** Collected tool call events from DynamoDB polling */
   private _toolEvents: ToolCallEvent[] = [];
+
+  /** Tracks parallel execution state to prevent false "Awaiting your response" */
+  private _parallelExecutionState: {
+    isActive: boolean;
+    expectedAgents: string[];
+    completedAgents: string[];
+  } = { isActive: false, expectedAgents: [], completedAgents: [] };
 
   // -------------------------------------------------------------------------
   // Constructor
@@ -293,6 +300,9 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     // Reset tool events collection
     this._toolEvents = [];
 
+    // Reset parallel execution state
+    this._parallelExecutionState = { isActive: false, expectedAgents: [], completedAgents: [] };
+
     // Update UI
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
@@ -413,6 +423,12 @@ export class DemoViewerChatLogic implements vscode.Disposable {
         break;
       case 'workflow_error':
         this.handleWorkflowErrorEvent(event as WorkflowErrorEvent);
+        break;
+      case 'parallel_node_start':
+        this.handleParallelNodeStartEvent(event as ParallelNodeStartEvent);
+        break;
+      case 'parallel_node_stop':
+        this.handleParallelNodeStopEvent(event as ParallelNodeStopEvent);
         break;
     }
   }
@@ -555,13 +571,17 @@ export class DemoViewerChatLogic implements vscode.Disposable {
 
     // Partial Execution Detection:
     // Check if the stopped agent is the entry agent AND workflow is still running
+    // BUT NOT if parallel execution is active (agents are running in parallel)
     const isWorkflowRunning = this._uiState.isWorkflowRunning;
+    const isParallelActive = this._parallelExecutionState.isActive;
 
-    if (isEntryAgent && isWorkflowRunning) {
+    if (isEntryAgent && isWorkflowRunning && !isParallelActive) {
       // Optimistically set status to 'partial'
       // This will be overridden to 'complete' if workflow_complete arrives immediately
       this.updateWorkflowStatus('partial');
       console.log(`[DemoViewerChatLogic] Entry agent stopped, set workflowStatus to 'partial'`);
+    } else if (isEntryAgent && isWorkflowRunning && isParallelActive) {
+      console.log(`[DemoViewerChatLogic] Entry agent stopped but parallel execution active, NOT setting 'partial'`);
     }
 
     this._callbacks.updateWebviewContent();
@@ -633,6 +653,70 @@ export class DemoViewerChatLogic implements vscode.Disposable {
     const eventAny = event as unknown as { error?: string };
     const errorMessage = event.error_message || eventAny.error || 'Unknown workflow error';
     this.handleWorkflowError(errorMessage);
+  }
+
+  /**
+   * Handles parallel_node_start event
+   * Sets parallel execution state to active to prevent false "Awaiting your response"
+   * Updates pipeline stages to show parallel agents as active
+   */
+  private handleParallelNodeStartEvent(event: ParallelNodeStartEvent): void {
+    const nodeIds = event.node_ids || [];
+    const nodeNames = event.node_names || nodeIds;
+
+    console.log(`[DemoViewerChatLogic] Parallel execution started: ${nodeNames.join(', ')}`);
+
+    // Set parallel execution state
+    this._parallelExecutionState = {
+      isActive: true,
+      expectedAgents: [...nodeIds],
+      completedAgents: [],
+    };
+
+    // Update pipeline stages for all parallel agents as active
+    for (let i = 0; i < nodeIds.length; i++) {
+      const displayName = nodeNames[i] || nodeIds[i];
+      this._sessionState = updatePipelineStage(this._sessionState, displayName, 'active');
+    }
+
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+  }
+
+  /**
+   * Handles parallel_node_stop event
+   * Tracks completion of parallel agents and clears parallel state when all complete
+   * Updates pipeline stage status
+   */
+  private handleParallelNodeStopEvent(event: ParallelNodeStopEvent): void {
+    const nodeId = event.node_id;
+    const nodeName = event.node_name || nodeId;
+    const completedCount = event.completed_count;
+    const totalCount = event.total_count;
+
+    console.log(`[DemoViewerChatLogic] Parallel agent completed: ${nodeName} (${completedCount}/${totalCount})`);
+
+    // Track completed agent
+    if (!this._parallelExecutionState.completedAgents.includes(nodeId)) {
+      this._parallelExecutionState.completedAgents.push(nodeId);
+    }
+
+    // Update pipeline stage
+    const status = event.status === 'completed' ? 'completed' : 'pending';
+    this._sessionState = updatePipelineStage(this._sessionState, nodeName, status);
+
+    // Check if all parallel agents have completed
+    if (completedCount >= totalCount) {
+      console.log(`[DemoViewerChatLogic] All parallel agents completed, clearing parallel state`);
+      this._parallelExecutionState = {
+        isActive: false,
+        expectedAgents: [],
+        completedAgents: [],
+      };
+    }
+
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
   }
 
   /**

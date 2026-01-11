@@ -361,6 +361,40 @@ def _create_instrumented_stream(original_stream, tool_name: str):
     return instrumented_stream
 
 
+def _get_mcp_tool_name(tool) -> str:
+    """
+    Extract the tool name from an MCP tool object.
+
+    Strands MCPAgentTool objects store the name in various attributes depending
+    on the version. This function checks multiple locations to find the name.
+
+    Args:
+        tool: MCPAgentTool proxy object
+
+    Returns:
+        Tool name string, or 'unknown_tool' if not found
+    """
+    # Try direct 'name' attribute (preferred)
+    if hasattr(tool, 'name') and isinstance(tool.name, str):
+        return tool.name
+
+    # Try 'tool_name' attribute
+    if hasattr(tool, 'tool_name') and isinstance(tool.tool_name, str):
+        return tool.tool_name
+
+    # Try nested 'tool.name' (MCP schema structure)
+    if hasattr(tool, 'tool') and hasattr(tool.tool, 'name'):
+        return tool.tool.name
+
+    # Try '__name__' (function-like objects)
+    if hasattr(tool, '__name__') and isinstance(tool.__name__, str):
+        return tool.__name__
+
+    # Last resort: return unknown rather than Python repr
+    logger.warning('Could not extract name from MCP tool: %s', type(tool).__name__)
+    return 'unknown_tool'
+
+
 def _instrument_gateway_tools(gateway_tools: list) -> list:
     """
     Instrument MCP Gateway tools by monkey-patching their stream method.
@@ -377,7 +411,7 @@ def _instrument_gateway_tools(gateway_tools: list) -> list:
         Same list (tools are modified in place)
     """
     for tool in gateway_tools:
-        tool_name = getattr(tool, 'name', str(tool))
+        tool_name = _get_mcp_tool_name(tool)
         if hasattr(tool, 'stream'):
             # Monkey-patch the stream method with instrumented version
             original_stream = tool.stream

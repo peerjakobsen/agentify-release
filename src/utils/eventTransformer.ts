@@ -17,6 +17,9 @@ import {
   isToolCallEvent,
   isWorkflowCompleteEvent,
   isWorkflowErrorEvent,
+  isParallelNodeStartEvent,
+  isParallelNodeStopEvent,
+  isConvergenceReadyEvent,
 } from '../types/events';
 import type { LogEntry, LogEventType } from '../types/logPanel';
 
@@ -83,6 +86,19 @@ export function transformEventToLogEntry(mergedEvent: MergedEvent): LogEntry | n
 
   if (isWorkflowErrorEvent(event)) {
     return transformWorkflowErrorEvent(event, mergedEvent);
+  }
+
+  // Handle parallel execution events
+  if (isParallelNodeStartEvent(event)) {
+    return transformParallelNodeStartEvent(event, mergedEvent);
+  }
+
+  if (isParallelNodeStopEvent(event)) {
+    return transformParallelNodeStopEvent(event, mergedEvent);
+  }
+
+  if (isConvergenceReadyEvent(event)) {
+    return transformConvergenceReadyEvent(event, mergedEvent);
   }
 
   // Unknown event type - skip
@@ -241,10 +257,113 @@ function transformWorkflowErrorEvent(
   };
 }
 
+/**
+ * Transforms a parallel_node_start event to LogEntry
+ * Summary format: "⫘ Parallel execution: agent1, agent2, agent3"
+ */
+function transformParallelNodeStartEvent(
+  event: ReturnType<typeof extractParallelNodeStartEvent>,
+  mergedEvent: MergedEvent
+): LogEntry {
+  const agentList = event.node_names.join(', ');
+  return {
+    id: generateLogEntryId(event.timestamp),
+    timestamp: event.timestamp,
+    eventType: 'node_start' as LogEventType,
+    agentName: 'Parallel',
+    summary: `\u2AEC Parallel execution started: ${agentList}`,
+    payload: {
+      workflow_id: event.workflow_id,
+      node_ids: event.node_ids,
+      node_names: event.node_names,
+      from_agent: event.from_agent,
+    },
+    isExpanded: false,
+    isTruncationExpanded: false,
+    status: 'neutral',
+  };
+}
+
+/**
+ * Transforms a parallel_node_stop event to LogEntry
+ * Summary format: "✓ agent_name completed (2/3)" or "✗ agent_name failed"
+ */
+function transformParallelNodeStopEvent(
+  event: ReturnType<typeof extractParallelNodeStopEvent>,
+  mergedEvent: MergedEvent
+): LogEntry {
+  const isCompleted = event.status === 'completed';
+  const progress = `(${event.completed_count}/${event.total_count})`;
+
+  return {
+    id: generateLogEntryId(event.timestamp),
+    timestamp: event.timestamp,
+    eventType: 'node_stop' as LogEventType,
+    agentName: event.node_name,
+    summary: isCompleted
+      ? `\u2713 ${event.node_name} completed ${progress}`
+      : `\u2717 ${event.node_name} failed ${progress}`,
+    payload: {
+      workflow_id: event.workflow_id,
+      node_id: event.node_id,
+      node_name: event.node_name,
+      status: event.status,
+      completed_count: event.completed_count,
+      total_count: event.total_count,
+      ...(event.response && { response: event.response }),
+      ...(event.error && { error: event.error }),
+    },
+    isExpanded: false,
+    isTruncationExpanded: false,
+    status: isCompleted ? 'success' : 'error',
+  };
+}
+
+/**
+ * Transforms a convergence_ready event to LogEntry
+ * Summary format: "⫘ Parallel complete → converging to risk"
+ */
+function transformConvergenceReadyEvent(
+  event: ReturnType<typeof extractConvergenceReadyEvent>,
+  mergedEvent: MergedEvent
+): LogEntry {
+  const convergeTarget = event.convergence_node || 'workflow end';
+  return {
+    id: generateLogEntryId(event.timestamp),
+    timestamp: event.timestamp,
+    eventType: 'node_start' as LogEventType,
+    agentName: 'Convergence',
+    summary: `\u2AEC Parallel complete \u2192 converging to ${convergeTarget}`,
+    payload: {
+      workflow_id: event.workflow_id,
+      convergence_node: event.convergence_node,
+      completed_agents: event.completed_agents,
+    },
+    isExpanded: false,
+    isTruncationExpanded: false,
+    status: 'success',
+  };
+}
+
 // Type extraction helpers for TypeScript inference
 function extractNodeStartEvent(event: AgentifyEvent) {
   if (isNodeStartEvent(event)) return event;
   throw new Error('Not a NodeStartEvent');
+}
+
+function extractParallelNodeStartEvent(event: AgentifyEvent) {
+  if (isParallelNodeStartEvent(event)) return event;
+  throw new Error('Not a ParallelNodeStartEvent');
+}
+
+function extractParallelNodeStopEvent(event: AgentifyEvent) {
+  if (isParallelNodeStopEvent(event)) return event;
+  throw new Error('Not a ParallelNodeStopEvent');
+}
+
+function extractConvergenceReadyEvent(event: AgentifyEvent) {
+  if (isConvergenceReadyEvent(event)) return event;
+  throw new Error('Not a ConvergenceReadyEvent');
 }
 
 function extractNodeStopEvent(event: AgentifyEvent) {
