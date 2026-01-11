@@ -2,7 +2,7 @@
   "name": "agentify",
   "displayName": "Agentify",
   "description": "AI agent workflow observability and ideation for Kiro IDE",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "agentify",
   "engines": {
     "vscode": "^1.85.0"
