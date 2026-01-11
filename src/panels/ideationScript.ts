@@ -501,6 +501,19 @@ export function getIdeationScript(): string {
             vscode.postMessage({ command: 'step8OpenKiroFolder' });
             break;
 
+          // Phase 2: Policy generation commands
+          case 'step8GeneratePolicies':
+            vscode.postMessage({ command: 'step8GeneratePolicies' });
+            break;
+
+          // Phase 3: Demo files generation commands
+          case 'step8GenerateDemo':
+            vscode.postMessage({ command: 'step8GenerateDemo' });
+            break;
+          case 'step8OpenDemo':
+            vscode.postMessage({ command: 'step8OpenDemo' });
+            break;
+
           default:
             console.warn('Unknown Step 8 command:', command);
         }

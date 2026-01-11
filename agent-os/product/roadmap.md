@@ -1383,7 +1383,7 @@ In multi-agent workflows, earlier agents often fetch data that later agents also
 - Same data fetched twice (latency, cost, inconsistency risk)
 
 **Solution: Memory as a Tool (Option B)**
-Provide `search_memory()` and `store_to_memory()` tools that agents can use. Agent prompts include generic guidance to check memory before calling external tools. LLM decides when to apply the pattern based on context.
+Provide `search_memory()` and `store_context()` tools that agents can use. Agent prompts include generic guidance to check memory before calling external tools. LLM decides when to apply the pattern based on context.
 
 **Why Option B (vs. auto-injection):**
 - **Demo visibility**: Tool calls appear in execution log ("🔧 search_memory → ticket context")
@@ -1391,45 +1391,128 @@ Provide `search_memory()` and `store_to_memory()` tools that agents can use. Age
 - **Graceful degradation**: Returns "no context found" if memory empty
 - **Simple implementation**: Two tools, one prompt addition
 
+**Wizard Step 4 Updates (Security & Guardrails):**
+
+Add memory configuration to Step 4 UI:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `crossAgentMemoryEnabled` | Toggle | `true` | Enable memory sharing between agents in same workflow |
+| `memoryExpiryDays` | Dropdown | `7` | How long to retain memory (1, 7, 30 days) |
+
+**UI Layout:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Security & Guardrails                                       │
+├─────────────────────────────────────────────────────────────┤
+│ Data Sensitivity: [Confidential ▼]                          │
+│ Compliance: ☑ SOC 2  ☐ HIPAA  ☐ PCI-DSS                    │
+│                                                             │
+│ ── Memory Settings ──────────────────────────────────────── │
+│ ☑ Enable cross-agent memory sharing                         │
+│   Allows agents to share fetched data within a workflow,    │
+│   reducing duplicate API calls and improving consistency.   │
+│                                                             │
+│   Memory retention: [7 days ▼]                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Files:**
+- `src/panels/ideationStep4Logic.ts` — Add memory toggle state
+- `src/panels/ideationStep4Html.ts` — Add memory UI section
+- `src/types/wizardPanel.ts` — Add `SecurityGuardrailsState.crossAgentMemoryEnabled`
+
+**Configuration Schema** (`.agentify/config.json`):
+```json
+{
+  "memory": {
+    "crossAgent": {
+      "enabled": true,
+      "expiryDays": 7
+    }
+  }
+}
+```
+
+The wizard writes this config, and `setup-memory.sh` reads it to decide whether to create the memory resource.
+
 **Infrastructure Setup (AgentCore CLI):**
 
-Memory is created via AgentCore CLI (not CDK), following the documented AgentCore pattern:
+Memory is created via AgentCore CLI (not CDK), following the documented AgentCore pattern. A dedicated `setup-memory.sh` script handles creation, following the same pattern as `setup-gateway.sh`.
 
+**New Script** (`resources/scripts/setup-memory.sh`):
 ```bash
-# Create memory with semantic strategy for cross-agent context sharing
-agentcore memory create agentify-cross-agent-memory \
-  --strategies '[{"semanticMemoryStrategy": {"name": "AgentContext"}}]' \
-  --event-expiry-days 7 \
-  --wait
+#!/bin/bash
+# Creates AgentCore Memory resource for cross-agent context sharing.
+# Reads config from .agentify/config.json, writes MEMORY_ID to infrastructure.json.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONFIG_JSON="${PROJECT_ROOT}/.agentify/config.json"
+INFRA_JSON="${PROJECT_ROOT}/.agentify/infrastructure.json"
+
+# Load configuration
+PROJECT_NAME=$(jq -r '.projectName // "agentify-project"' "$CONFIG_JSON")
+REGION=$(jq -r '.aws.region // "us-east-1"' "$CONFIG_JSON")
+MEMORY_ENABLED=$(jq -r '.memory.crossAgent.enabled // true' "$CONFIG_JSON")
+EXPIRY_DAYS=$(jq -r '.memory.crossAgent.expiryDays // 7' "$CONFIG_JSON")
+
+# Check if memory is enabled in config
+if [ "$MEMORY_ENABLED" != "true" ]; then
+    echo "Cross-agent memory disabled in config, skipping..."
+    exit 0
+fi
+
+MEMORY_NAME="${PROJECT_NAME}-cross-agent-memory"
+
+# Check if memory already exists
+echo "Checking for existing memory resource..."
+EXISTING=$(agentcore memory list --region "$REGION" 2>/dev/null | grep "$MEMORY_NAME" || true)
+
+if [ -n "$EXISTING" ]; then
+    MEMORY_ID=$(echo "$EXISTING" | awk '{print $1}')
+    echo "Memory already exists: $MEMORY_ID"
+else
+    # Create new memory resource
+    echo "Creating AgentCore Memory: $MEMORY_NAME"
+    MEMORY_OUTPUT=$(agentcore memory create "$MEMORY_NAME" \
+        --strategies '[{"semanticMemoryStrategy": {"name": "AgentContext"}}]' \
+        --event-expiry-days "$EXPIRY_DAYS" \
+        --region "$REGION" \
+        --wait 2>&1)
+
+    # Extract memory ID from output
+    MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -oP 'Memory ID: \K[^\s]+' || \
+        agentcore memory list --region "$REGION" | grep "$MEMORY_NAME" | awk '{print $1}')
+
+    if [ -z "$MEMORY_ID" ]; then
+        echo "Error: Failed to create memory resource"
+        echo "Output: $MEMORY_OUTPUT"
+        exit 1
+    fi
+
+    echo "Memory created: $MEMORY_ID"
+fi
+
+# Update infrastructure.json with memory config
+echo "Updating infrastructure.json..."
+jq --arg mid "$MEMORY_ID" '.memory.memoryId = $mid' \
+    "$INFRA_JSON" > tmp.json && mv tmp.json "$INFRA_JSON"
+
+echo "✓ Cross-agent memory configured: $MEMORY_ID"
 ```
 
 **Setup Script Updates** (`scripts/setup.sh`):
 ```bash
-# Create AgentCore Memory (after CDK stacks, before agent deployment)
-echo "Creating AgentCore Memory..."
-MEMORY_OUTPUT=$(agentcore memory create agentify-cross-agent-memory \
-  --strategies '[{"semanticMemoryStrategy": {"name": "AgentContext"}}]' \
-  --event-expiry-days 7 \
-  --region $REGION \
-  --wait 2>&1)
+# Step 2b: Create Cross-Agent Memory (after CDK, before agents)
+echo ""
+echo "Step 2b: Setting up cross-agent memory..."
+./scripts/setup-memory.sh
 
-# Extract memory ID from output
-MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -oP 'Memory ID: \K[^\s]+' || \
-  agentcore memory list --region $REGION | grep agentify-cross-agent | awk '{print $1}')
-
-if [ -z "$MEMORY_ID" ]; then
-  echo "Error: Failed to create or find memory resource"
-  exit 1
-fi
-
-# Update infrastructure.json with memory config
-jq --arg mid "$MEMORY_ID" '.memory.memoryId = $mid' \
-  .agentify/infrastructure.json > tmp.json && mv tmp.json .agentify/infrastructure.json
-
-echo "Memory ID: $MEMORY_ID"
-
-# Export for agent deployment
-export MEMORY_ID=$MEMORY_ID
+# Load MEMORY_ID for agent deployment
+MEMORY_ID=$(jq -r '.memory.memoryId // empty' "${PROJECT_ROOT}/.agentify/infrastructure.json")
 ```
 
 **Agent Deployment Updates** (`scripts/setup.sh` Step 3):
@@ -1490,7 +1573,7 @@ fi
 **New Pre-Bundled Module:**
 ```
 resources/agents/shared/
-├── memory_client.py    # search_memory, store_to_memory tools
+├── memory_client.py    # search_memory, store_context tools
 └── ...existing files...
 ```
 
@@ -1526,13 +1609,13 @@ def search_memory(query: str) -> str:
     if not _memory_client or not _memory_id or not _session_id:
         return "Memory not initialized. Use external tools."
     try:
-        # Search semantic memory scoped to THIS session only
-        results = _memory_client.search_memory(
+        # retrieve_memories() is the correct SDK method for semantic search
+        # Searches LTM records extracted by memory strategies from stored events
+        results = _memory_client.retrieve_memories(
             memory_id=_memory_id,
-            session_id=_session_id,  # CRITICAL: Scope to current workflow session
+            namespace=f"/workflow/{_session_id}/context",
             query=query,
-            namespace="/agent/context",
-            max_results=3
+            top_k=3
         )
         if results:
             return "\n".join([r.get('content', '') for r in results])
@@ -1543,20 +1626,22 @@ def search_memory(query: str) -> str:
 
 @tool
 @instrument_tool
-def store_to_memory(key: str, value: str) -> str:
+def store_context(key: str, value: str) -> str:
     """Store findings for downstream agents in this workflow.
 
     Memory is scoped to the current session - other users/workflows cannot access.
+    Note: Data stored via create_event() is auto-extracted to LTM by memory strategies.
     """
     if not _memory_client or not _memory_id or not _session_id:
         return "Memory not initialized."
     try:
-        # Store to semantic memory scoped to THIS session
-        _memory_client.store_memory(
+        # create_event() stores as conversational event
+        # Semantic strategy auto-extracts to LTM for retrieve_memories() searches
+        _memory_client.create_event(
             memory_id=_memory_id,
-            session_id=_session_id,  # CRITICAL: Scope to current workflow session
-            content=f"{key}: {value}",
-            namespace="/agent/context"
+            actor_id="agent",
+            session_id=_session_id,
+            messages=[(f"[{key}]: {value}", "assistant")]
         )
         return f"Stored: {key}"
     except Exception as e:
@@ -1586,11 +1671,11 @@ Add **Pattern 8: Cross-Agent Memory** to POWER.md:
 ```markdown
 ## Pattern 8: Cross-Agent Memory
 
-Use `search_memory()` before external calls, `store_to_memory()` after retrieving data.
+Use `search_memory()` before external calls, `store_context()` after retrieving data.
 
 ```python
 # CORRECT - Import from shared, use memory tools
-from agents.shared.memory_client import init_memory, search_memory, store_to_memory
+from agents.shared.memory_client import init_memory, search_memory, store_context
 
 # In main.py orchestrator - initialize memory first
 init_memory(session_id)
@@ -1609,7 +1694,7 @@ def get_customer_info(customer_id: str) -> dict:
     result = external_api.get_customer(customer_id)
 
     # Store for downstream agents
-    store_to_memory(f"customer_{customer_id}", json.dumps(result))
+    store_context(f"customer_{customer_id}", json.dumps(result))
     return result
 
 # WRONG - Never recreate memory_client locally
@@ -1632,10 +1717,10 @@ Add to **Quick Checklist**:
 1. **observability-enforcer.kiro.hook** — Add memory functions to local definition check:
    ```json
    // Add to LOCAL DEFINITIONS list in prompt:
-   "- init_memory\n- search_memory\n- store_to_memory"
+   "- init_memory\n- search_memory\n- store_context"
 
    // Add to CORRECT imports section:
-   "from agents.shared.memory_client import init_memory, search_memory, store_to_memory"
+   "from agents.shared.memory_client import init_memory, search_memory, store_context"
    ```
 
 2. **cli-contract-validator.kiro.hook** — Add memory initialization check:
@@ -1661,7 +1746,7 @@ Add to **Quick Checklist**:
    To avoid duplicate external calls and share context:
 
    - Use `search_memory(query)` before calling external tools to check if relevant data exists
-   - Use `store_to_memory(key, value)` after retrieving important data for downstream agents
+   - Use `store_context(key, value)` after retrieving important data for downstream agents
 
    This reduces latency, cost, and ensures consistency across the workflow.
    ```
@@ -1674,7 +1759,7 @@ Generated agent prompts will include:
 ```
 ## Memory Usage
 Before calling external tools, use search_memory() to check if previous agents
-already retrieved the needed data. Store important findings with store_to_memory()
+already retrieved the needed data. Store important findings with store_context()
 for downstream agents.
 ```
 
@@ -1696,18 +1781,259 @@ Sales presenter can point out: "See? It remembered from the previous agent."
 - AgentCore Memory SDK (`bedrock_agentcore.memory`)
 
 **Files:**
-- `resources/scripts/setup.sh` — Add `agentcore memory create` (Step 2), pass `MEMORY_ID` to agent deploy (Step 3)
+
+*Wizard UI:*
+- `src/panels/ideationStep4Logic.ts` — Add memory toggle state handling
+- `src/panels/ideationStep4Html.ts` — Add memory settings UI section
+- `src/types/wizardPanel.ts` — Add `SecurityGuardrailsState.crossAgentMemoryEnabled`, `memoryExpiryDays`
+
+*Scripts:*
+- `resources/scripts/setup-memory.sh` — **New script** for AgentCore Memory creation
+- `resources/scripts/setup.sh` — Call `setup-memory.sh` in Step 2b, pass `MEMORY_ID` to agent deploy
 - `resources/scripts/orchestrate.sh` — Load `MEMORY_ID` from infrastructure.json, export for main.py
 - `resources/scripts/destroy.sh` — Add `agentcore memory delete` for cleanup
-- `resources/agents/shared/memory_client.py` — New pre-bundled module
+
+*Bundled Code:*
+- `resources/agents/shared/memory_client.py` — **New pre-bundled module** with memory tools
 - `resources/agents/shared/__init__.py` — Export memory functions
-- `resources/agents/main_graph.py`, `main_swarm.py`, `main_workflow.py` — Add `init_memory()` call
+- `resources/agents/main_graph.py`, `main_swarm.py`, `main_workflow.py` — Add `init_memory()` call in DO NOT MODIFY section
+
+*Extension Services:*
 - `src/services/workflowTriggerService.ts` — Pass `MEMORY_ID` env var (read from infrastructure.json)
+
+*Kiro Guidance:*
 - `resources/agentify-power/POWER.md` — Add Pattern 8 (memory) and Quick Checklist items
 - `resources/agentify-hooks/observability-enforcer.kiro.hook` — Add memory functions to local definition check
 - `resources/agentify-hooks/cli-contract-validator.kiro.hook` — Add `init_memory()` validation
 - `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add memory section
-- `resources/prompts/steering/structure-steering.prompt.md` — Add to directory listing `L`
+- `resources/prompts/steering/structure-steering.prompt.md` — Add to directory listing
+
+39.5. [ ] Persistent Session Memory — Enable agents to learn from past workflow sessions using AgentCore Memory's semantic and event strategies:
+
+**Problem:**
+Generated demos often need to remember user preferences, historical interactions, and learned patterns across multiple workflow sessions. Item #39 covers within-session memory sharing, but doesn't address persistent learning that survives across separate workflow runs.
+
+**Use Cases:**
+1. **User Preference Learning**: Remember what users like/dislike across sessions (e.g., meal preferences, communication styles)
+2. **Historical Context**: Access past interactions when relevant (e.g., "last time you asked about...")
+3. **Progressive Personalization**: Improve responses over time based on accumulated feedback
+4. **Session Continuity**: Resume interrupted workflows with full context
+
+**AgentCore Memory Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AgentCore Memory                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Short-Term Memory (STM)              Long-Term Memory (LTM)    │
+│  ─────────────────────────            ─────────────────────     │
+│  • Event-based auto-expiry            • Semantic strategies     │
+│  • Active session context             • Vector similarity search│
+│  • Workflow state tracking            • Namespace organization  │
+│  • 7-day default TTL                  • Permanent until deleted │
+│                                                                  │
+│  Use: Current workflow session        Use: Cross-session learning│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Memory Strategies (from wizard Step 4 or defaults):**
+- `SemanticStrategy`: Natural language queries against past interactions
+- `SummaryStrategy`: Condensed summaries of long conversations
+- `UserPreferenceStrategy`: Explicit preference storage (likes, dislikes, settings)
+- `CustomStrategy`: Domain-specific memory patterns
+
+**Namespace Patterns (generated from wizard context):**
+```
+/{project}/preferences/{user_id}     # User-specific preferences
+/{project}/history/{session_type}    # Historical interactions by type
+/{project}/feedback/{entity_type}    # User feedback/ratings
+/{project}/context/{domain}          # Domain-specific learned context
+```
+
+**Implementation Components:**
+
+1. **Wizard Step 4 Extension (Security & Guardrails):**
+   - Add "Memory Persistence" section with:
+     - Memory strategy dropdown (Semantic, Summary, User Preference, Custom)
+     - Retention policy selector (7 days, 30 days, 1 year, permanent)
+     - Namespace prefix configuration
+   - AI suggests appropriate strategies based on business objective
+
+2. **New Pre-Bundled Module** (`resources/agents/shared/persistent_memory.py`):
+   ```python
+   import os
+   from typing import Optional
+   from strands import tool
+   from agents.shared.instrumentation import instrument_tool
+   from bedrock_agentcore.memory.session import MemorySessionManager
+
+   _session_manager = None
+   _memory_session = None
+   _user_id: Optional[str] = None
+
+   def init_persistent_memory(user_id: str, memory_id: Optional[str] = None) -> bool:
+       """Initialize persistent memory for cross-session learning."""
+       global _session_manager, _memory_session, _user_id
+       memory_id = memory_id or os.environ.get('PERSISTENT_MEMORY_ID')
+       if not memory_id:
+           print("Warning: PERSISTENT_MEMORY_ID not set")
+           return False
+       _user_id = user_id
+       _session_manager = MemorySessionManager(
+           memory_id=memory_id,
+           region_name=os.environ.get('AWS_REGION', 'us-east-1')
+       )
+       # Create session for user - enables cross-session persistence
+       _memory_session = _session_manager.create_memory_session(
+           actor_id=_user_id,
+           session_id=f"persistent_{_user_id}"
+       )
+       return True
+
+   @tool
+   @instrument_tool
+   def remember_preference(category: str, preference: str, value: str) -> str:
+       """Store a user preference for future sessions.
+
+       Note: LTM extraction is AUTOMATIC - you cannot write directly to LTM.
+       Preferences stored as turns; user_preference strategy extracts them.
+       """
+       if not _memory_session:
+           return "Persistent memory not initialized."
+       try:
+           from bedrock_agentcore.memory.constants import ConversationalMessage, MessageRole
+           # add_turns() triggers automatic LTM extraction via memory strategies
+           content = f"User preference - Category: {category}, {preference}: {value}"
+           _memory_session.add_turns(
+               messages=[ConversationalMessage(content, MessageRole.ASSISTANT)]
+           )
+           return f"Remembered: {preference}"
+       except Exception as e:
+           return f"Failed to remember: {preference}"
+
+   @tool
+   @instrument_tool
+   def recall_preferences(query: str, category: str = None) -> str:
+       """Search past preferences using natural language."""
+       if not _memory_session:
+           return "Persistent memory not initialized."
+       namespace_prefix = f"/preferences/{_user_id}"
+       if category:
+           namespace_prefix += f"/{category}"
+
+       memories = _memory_session.search_long_term_memories(
+           query=query,
+           namespace_prefix=namespace_prefix,
+           top_k=5
+       )
+       if memories:
+           return "\n".join([m.get('content', '') for m in memories])
+       return "No relevant preferences found."
+
+   @tool
+   @instrument_tool
+   def log_feedback(entity_type: str, entity_id: str, rating: int, notes: str = "") -> str:
+       """Log user feedback for learning."""
+       if not _memory_session:
+           return "Persistent memory not initialized."
+       try:
+           from bedrock_agentcore.memory.constants import ConversationalMessage, MessageRole
+           content = f"User feedback - {entity_type}/{entity_id}: {rating}/5"
+           if notes:
+               content += f", {notes}"
+           # add_turns() triggers automatic LTM extraction
+           _memory_session.add_turns(
+               messages=[ConversationalMessage(content, MessageRole.ASSISTANT)]
+           )
+           return f"Feedback logged for {entity_id}"
+       except Exception as e:
+           return f"Failed to log feedback"
+   ```
+
+   **Critical: LTM Extraction is Automatic**
+   - You CANNOT write directly to Long-Term Memory
+   - `add_turns()` stores conversational events
+   - Memory strategies (semantic, user_preference, summary) automatically extract knowledge
+   - `search_long_term_memories()` searches the extracted LTM records
+   - This is a fundamental AgentCore Memory architecture decision
+
+3. **Steering Prompt Updates:**
+   - `agentify-integration-steering.prompt.md`: Add persistent memory patterns
+   - `structure-steering.prompt.md`: Include `persistent_memory.py` in shared utilities
+   - `tech-steering.prompt.md`: Document memory strategy selection guidance
+
+4. **Setup Script Updates** (`scripts/setup.sh`):
+   ```bash
+   # Step 2c: Create Persistent Memory (if enabled in config)
+   MEMORY_PERSISTENCE=$(jq -r '.memory.persistence.enabled // false' "$CONFIG_JSON")
+   if [ "$MEMORY_PERSISTENCE" = "true" ]; then
+       STRATEGY=$(jq -r '.memory.persistence.strategy // "semantic"' "$CONFIG_JSON")
+       RETENTION=$(jq -r '.memory.persistence.retentionDays // 30' "$CONFIG_JSON")
+
+       PERSISTENT_MEMORY_OUTPUT=$(agentcore memory create "${PROJECT_NAME}-persistent" \
+           --strategies "[{\"${STRATEGY}MemoryStrategy\": {\"name\": \"PersistentLearning\"}}]" \
+           --event-expiry-days "$RETENTION" \
+           --region "${REGION}" \
+           --wait 2>&1)
+
+       PERSISTENT_MEMORY_ID=$(echo "$PERSISTENT_MEMORY_OUTPUT" | grep -oP 'Memory ID: \K[^\s]+')
+
+       jq --arg pmid "$PERSISTENT_MEMORY_ID" \
+           '.memory.persistentMemoryId = $pmid' \
+           "$INFRA_CONFIG" > tmp.json && mv tmp.json "$INFRA_CONFIG"
+   fi
+   ```
+
+5. **Configuration Schema** (`.agentify/config.json`):
+   ```json
+   {
+     "memory": {
+       "crossAgent": {
+         "enabled": true,
+         "memoryId": "..."
+       },
+       "persistence": {
+         "enabled": true,
+         "strategy": "semantic",
+         "retentionDays": 30,
+         "namespacePrefix": "/myproject",
+         "persistentMemoryId": "..."
+       }
+     }
+   }
+   ```
+
+6. **Demo Viewer Integration:**
+   - Memory operations appear in execution log:
+     ```
+     14:32:02  💾 remember_preference → /preferences/user123/food
+     14:32:03  🔍 recall_preferences → "Found 3 relevant preferences"
+     14:32:04  ⭐ log_feedback → dish_rating: 4/5
+     ```
+   - "Memory Explorer" panel (optional) showing stored preferences
+
+**Relationship to Item #39:**
+- Item #39 = `agents/shared/memory_client.py` (cross-agent within workflow)
+- This item = `agents/shared/persistent_memory.py` (cross-session learning)
+- Both use AgentCore Memory SDK but serve different purposes
+- Can be used together: cross-agent for workflow efficiency, persistent for learning
+
+**Wizard Flow:**
+1. Step 4 captures memory persistence settings
+2. Step 5 (Agent Design) auto-adds memory tools to relevant agents
+3. Step 8 generates config and steering with memory patterns
+4. Roadmap includes memory initialization in appropriate items
+
+**Files:**
+- `resources/agents/shared/persistent_memory.py` — New pre-bundled module
+- `resources/agents/shared/__init__.py` — Export persistent memory functions
+- `resources/scripts/setup.sh` — Add Step 2c for persistent memory creation
+- `resources/scripts/destroy.sh` — Add persistent memory cleanup
+- `src/panels/tabbedPanel.ts` — Add memory persistence UI to Step 4
+- `src/types/wizard.ts` — Add `MemoryPersistenceConfig` to `SecurityGuardrailsState`
+- `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add persistent memory section
+- `resources/prompts/steering/structure-steering.prompt.md` — Include in directory listing
+- `resources/agentify-power/POWER.md` — Add Pattern 10: Persistent Memory `L`
 
 40. [x] Lightweight Router Model (Haiku) — Add optional Haiku-based routing for Graph and Swarm patterns:
 
