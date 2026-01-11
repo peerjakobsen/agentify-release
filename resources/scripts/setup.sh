@@ -4,6 +4,7 @@
 # =============================================================================
 # This is the main orchestrator that coordinates all setup tasks:
 #   - CDK infrastructure (VPC, DynamoDB, Lambda functions)
+#   - Cross-Agent Memory (AgentCore Memory for data sharing)
 #   - MCP Gateway (tool registration, OAuth)
 #   - Policy Engine (Cedar policies from NL descriptions)
 #   - Agent deployment (single agent to AgentCore Runtime)
@@ -11,13 +12,14 @@
 # Each step is handled by a dedicated script that can also run standalone.
 #
 # Usage:
-#   ./scripts/setup.sh                    # Deploy infrastructure + Gateway + Policy
-#   ./scripts/setup.sh --skip-cdk         # Skip CDK, deploy Gateway + Policy only
+#   ./scripts/setup.sh                    # Deploy infrastructure + Memory + Gateway + Policy
+#   ./scripts/setup.sh --skip-cdk         # Skip CDK, deploy Memory + Gateway + Policy only
 #   ./scripts/setup.sh --agent my_agent   # Deploy everything + agent
 #   ./scripts/setup.sh --skip-cdk --agent my_agent  # Deploy agent only
 #
 # Individual scripts (can run standalone):
 #   ./scripts/setup-cdk.sh                # CDK infrastructure only
+#   ./scripts/setup-memory.sh             # Cross-Agent Memory only
 #   ./scripts/setup-gateway.sh            # MCP Gateway only
 #   ./scripts/setup-policies.sh           # Policy Engine only
 #   ./scripts/setup-agent.sh -a NAME      # Single agent only
@@ -53,6 +55,7 @@ show_help() {
     echo ""
     echo "Individual scripts (can run standalone):"
     echo "  ./scripts/setup-cdk.sh          # CDK infrastructure"
+    echo "  ./scripts/setup-memory.sh       # Cross-Agent Memory"
     echo "  ./scripts/setup-gateway.sh      # MCP Gateway"
     echo "  ./scripts/setup-policies.sh     # Policy Engine"
     echo "  ./scripts/setup-agent.sh -a X   # Single agent"
@@ -114,23 +117,28 @@ else
 fi
 echo ""
 
-# Step 2: MCP Gateway
-print_step "Step 2: MCP Gateway"
+# Step 2: Cross-Agent Memory
+print_step "Step 2: Cross-Agent Memory"
+"${SCRIPT_DIR}/setup-memory.sh" ${REGION_ARG}
+echo ""
+
+# Step 3: MCP Gateway
+print_step "Step 3: MCP Gateway"
 "${SCRIPT_DIR}/setup-gateway.sh" ${REGION_ARG}
 echo ""
 
-# Step 3: Policy Engine
-print_step "Step 3: Policy Engine"
+# Step 4: Policy Engine
+print_step "Step 4: Policy Engine"
 "${SCRIPT_DIR}/setup-policies.sh" ${REGION_ARG}
 echo ""
 
-# Step 4: Agent Deployment (if specified)
+# Step 5: Agent Deployment (if specified)
 if [ -n "$AGENT_NAME" ]; then
-    print_step "Step 4: Agent Deployment"
+    print_step "Step 5: Agent Deployment"
     "${SCRIPT_DIR}/setup-agent.sh" --agent "${AGENT_NAME}" ${REGION_ARG}
     echo ""
 else
-    print_step "Step 4: No agent specified (use --agent NAME to deploy an agent)"
+    print_step "Step 5: No agent specified (use --agent NAME to deploy an agent)"
 fi
 
 # =============================================================================
@@ -160,6 +168,7 @@ echo "  4. Use Demo Viewer to visualize workflow execution"
 echo ""
 echo "Individual setup scripts (can run standalone):"
 echo "  - CDK infrastructure:  ./scripts/setup-cdk.sh"
+echo "  - Cross-Agent Memory:  ./scripts/setup-memory.sh"
 echo "  - MCP Gateway:         ./scripts/setup-gateway.sh"
 echo "  - Policy Engine:       ./scripts/setup-policies.sh"
 echo "  - Single agent:        ./scripts/setup-agent.sh -a <agent_name>"

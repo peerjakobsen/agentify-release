@@ -75,7 +75,9 @@
     "complianceFrameworks": ["SOC 2"],
     "approvalGates": ["Before data modification"],
     "guardrailNotes": "Demo with mock customer data. PII must be masked in responses. Escalation actions require approval.",
-    "skipped": false
+    "skipped": false,
+    "crossAgentMemoryEnabled": true,
+    "memoryExpiryDays": 7
   },
   "agentDesign": {
     "proposedAgents": [

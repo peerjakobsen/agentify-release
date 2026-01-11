@@ -276,6 +276,41 @@ export interface PolicyConfig {
 }
 
 /**
+ * Cross-agent memory settings within memory configuration
+ * Controls how agents share data within workflow sessions
+ */
+export interface CrossAgentMemoryConfig {
+  /**
+   * Enable cross-agent memory sharing
+   * When enabled, agents can share fetched data via AgentCore Memory
+   * @default true
+   */
+  enabled: boolean;
+
+  /**
+   * Memory retention period in days
+   * After this period, stored memory items will expire
+   * @default 7
+   */
+  expiryDays: number;
+}
+
+/**
+ * Memory configuration for AgentCore Memory integration
+ * Controls cross-agent memory sharing within workflow sessions
+ *
+ * Note: memoryId is a runtime value stored in infrastructure.json after
+ * setup-memory.sh creates the memory resource, not in config.json.
+ */
+export interface MemoryConfig {
+  /**
+   * Cross-agent memory sharing settings
+   * Controls whether agents share fetched data within a workflow session
+   */
+  crossAgent: CrossAgentMemoryConfig;
+}
+
+/**
  * Root configuration for an Agentify project
  * Stored in .agentify/config.json
  */
@@ -325,6 +360,13 @@ export interface AgentifyConfig {
    * Note: policyEngineId and policyEngineArn are stored in infrastructure.json
    */
   policy?: PolicyConfig;
+
+  /**
+   * Memory configuration for AgentCore Memory integration
+   * Optional - when omitted, cross-agent memory is disabled
+   * Note: memoryId is stored in infrastructure.json after setup-memory.sh
+   */
+  memory?: MemoryConfig;
 }
 
 /**
@@ -527,6 +569,38 @@ export function validateConfigSchema(config: unknown): ConfigValidationResult {
           errors.push('Invalid "policy.mode" field - must be a string when provided');
         } else if (!validModes.includes(policy.mode)) {
           errors.push('Invalid "policy.mode" field - must be "LOG_ONLY" or "ENFORCE"');
+        }
+      }
+    }
+  }
+
+  // Validate optional memory section
+  if (cfg.memory !== undefined) {
+    if (typeof cfg.memory !== 'object' || cfg.memory === null) {
+      errors.push('Invalid "memory" field - must be an object when provided');
+    } else {
+      const memory = cfg.memory as Record<string, unknown>;
+
+      // Validate memory.crossAgent (required when memory is present)
+      if (memory.crossAgent === undefined) {
+        errors.push('Missing "memory.crossAgent" field - required when memory is configured');
+      } else if (typeof memory.crossAgent !== 'object' || memory.crossAgent === null) {
+        errors.push('Invalid "memory.crossAgent" field - must be an object');
+      } else {
+        const crossAgent = memory.crossAgent as Record<string, unknown>;
+
+        // Validate crossAgent.enabled (boolean)
+        if (crossAgent.enabled !== undefined && typeof crossAgent.enabled !== 'boolean') {
+          errors.push('Invalid "memory.crossAgent.enabled" field - must be a boolean when provided');
+        }
+
+        // Validate crossAgent.expiryDays (number)
+        if (crossAgent.expiryDays !== undefined) {
+          if (typeof crossAgent.expiryDays !== 'number') {
+            errors.push('Invalid "memory.crossAgent.expiryDays" field - must be a number when provided');
+          } else if (crossAgent.expiryDays < 1 || crossAgent.expiryDays > 365) {
+            errors.push('Invalid "memory.crossAgent.expiryDays" field - must be between 1 and 365');
+          }
         }
       }
     }

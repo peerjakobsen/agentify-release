@@ -490,6 +490,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           // Prevent AI re-trigger if guardrailNotes already has content
           aiCalled: wizardState.security.guardrailNotes.trim() !== '',
           isLoading: false,
+          // Cross-Agent Memory Feature: Restore memory settings from wizard state
+          crossAgentMemoryEnabled: wizardState.security.crossAgentMemoryEnabled ?? true,
+          memoryExpiryDays: wizardState.security.memoryExpiryDays ?? 7,
         };
         this._ideationState.agentDesign = wizardState.agentDesign;
         this._ideationState.mockData = wizardState.mockData;
@@ -617,6 +620,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         approvalGates: this._ideationState.securityGuardrails.approvalGates,
         guardrailNotes: this._ideationState.securityGuardrails.guardrailNotes,
         skipped: this._ideationState.securityGuardrails.skipped,
+        // Cross-Agent Memory Feature: Include memory settings in persisted state
+        crossAgentMemoryEnabled: this._ideationState.securityGuardrails.crossAgentMemoryEnabled,
+        memoryExpiryDays: this._ideationState.securityGuardrails.memoryExpiryDays,
       },
       agentDesign: this._ideationState.agentDesign,
       mockData: this._ideationState.mockData,
@@ -926,6 +932,17 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this._ideationState.securityGuardrails.aiSuggested = false;
         this.syncStateToWebview();
         this.saveState(); // Task 6.4: Debounced save
+        break;
+      // Cross-Agent Memory Feature: Memory settings handlers
+      case 'toggleCrossAgentMemory':
+        this._ideationState.securityGuardrails.crossAgentMemoryEnabled = message.value as boolean;
+        this.syncStateToWebview();
+        this.saveState();
+        break;
+      case 'updateMemoryExpiryDays':
+        this._ideationState.securityGuardrails.memoryExpiryDays = message.value as number;
+        this.syncStateToWebview();
+        this.saveState();
         break;
       case 'skipSecurityStep':
         // Apply sensible defaults
@@ -1632,6 +1649,9 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         approvalGates: this._ideationState.securityGuardrails.approvalGates,
         guardrailNotes: this._ideationState.securityGuardrails.guardrailNotes,
         skipped: this._ideationState.securityGuardrails.skipped,
+        // Cross-Agent Memory Feature: Include memory settings in steering context
+        crossAgentMemoryEnabled: this._ideationState.securityGuardrails.crossAgentMemoryEnabled,
+        memoryExpiryDays: this._ideationState.securityGuardrails.memoryExpiryDays,
       },
       agentDesign: this._ideationState.agentDesign,
       mockData: this._ideationState.mockData,

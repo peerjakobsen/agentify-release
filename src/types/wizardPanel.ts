@@ -457,7 +457,26 @@ export const INDUSTRY_COMPLIANCE_DEFAULTS: Record<string, string[]> = {
 };
 
 /**
+ * Default memory expiry in days for cross-agent memory
+ * Cross-Agent Memory Feature: Default expiry value
+ */
+export const DEFAULT_MEMORY_EXPIRY_DAYS = 7;
+
+/**
+ * Minimum memory expiry in days
+ * Cross-Agent Memory Feature: Minimum allowed expiry
+ */
+export const MIN_MEMORY_EXPIRY_DAYS = 1;
+
+/**
+ * Maximum memory expiry in days
+ * Cross-Agent Memory Feature: Maximum allowed expiry
+ */
+export const MAX_MEMORY_EXPIRY_DAYS = 365;
+
+/**
  * Security and guardrails state for Step 4
+ * Cross-Agent Memory Feature: Extended with memory configuration fields
  */
 export interface SecurityState {
   /** Data sensitivity classification */
@@ -470,6 +489,10 @@ export interface SecurityState {
   guardrailNotes: string;
   /** Whether this step was skipped */
   skipped: boolean;
+  /** Whether cross-agent memory is enabled for data sharing between agents */
+  crossAgentMemoryEnabled: boolean;
+  /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
+  memoryExpiryDays: number;
 }
 
 // ============================================================================
@@ -1084,6 +1107,7 @@ export interface WizardValidationState {
  * Task 1.6: Extended with Step 7 Demo Strategy commands
  * Task 1.5: Extended with Step 8 Generation commands
  * Phase 2: Extended with Roadmap Generation commands
+ * Cross-Agent Memory Feature: Extended with memory settings commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -1141,6 +1165,14 @@ export const WIZARD_COMMANDS = {
   ACCEPT_OUTCOME_SUGGESTIONS: 'acceptOutcomeSuggestions',
   /** Reset outcome suggestions and return to Phase 1 */
   RESET_OUTCOME_SUGGESTIONS: 'resetOutcomeSuggestions',
+  // -------------------------------------------------------------------------
+  // Step 4: Security & Guardrails commands (Roadmap Item 17)
+  // Cross-Agent Memory Feature: Commands for memory configuration
+  // -------------------------------------------------------------------------
+  /** Toggle cross-agent memory enabled/disabled */
+  TOGGLE_CROSS_AGENT_MEMORY: 'toggleCrossAgentMemory',
+  /** Update memory expiry days slider value */
+  UPDATE_MEMORY_EXPIRY_DAYS: 'updateMemoryExpiryDays',
   // Step 5: Agent Design commands (Roadmap Item 18)
   /** Regenerate agent design proposal */
   REGENERATE_AGENT_PROPOSAL: 'regenerateAgentProposal',
@@ -1461,6 +1493,7 @@ export function createDefaultGenerationState(): GenerationState {
 /**
  * Default wizard state factory
  * Creates a fresh WizardState with default values
+ * Cross-Agent Memory Feature: Includes memory configuration defaults
  */
 export function createDefaultWizardState(): WizardState {
   return {
@@ -1477,13 +1510,15 @@ export function createDefaultWizardState(): WizardState {
     aiGapFillingState: createDefaultAIGapFillingState(),
     // Step 3: Outcome Definition
     outcome: createDefaultOutcomeDefinitionState(),
-    // Step 4: Security & Guardrails
+    // Step 4: Security & Guardrails (includes cross-agent memory)
     security: {
       dataSensitivity: 'internal',
       complianceFrameworks: [],
       approvalGates: [],
       guardrailNotes: '',
       skipped: false,
+      crossAgentMemoryEnabled: true,
+      memoryExpiryDays: DEFAULT_MEMORY_EXPIRY_DAYS,
     },
     // Step 5: Agent Design
     agentDesign: createDefaultAgentDesignState(),
@@ -1636,6 +1671,7 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
  * Convert PersistedWizardState back to WizardState
  * Task 1.7: Restores state, sets uploadedFile to undefined
  * Refactored: 4-phase layout with backwards compatibility for renamed fields
+ * Cross-Agent Memory Feature: Includes backwards compatibility for memory fields
  *
  * @param persisted Previously saved state
  * @returns Full wizard state with file metadata preserved
@@ -1648,6 +1684,14 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     cedarFilePaths?: string[];
     cedarError?: string;
   };
+
+  // Type for backwards compatibility with old SecurityState without memory fields
+  type OldSecurityState = SecurityState & {
+    crossAgentMemoryEnabled?: boolean;
+    memoryExpiryDays?: number;
+  };
+
+  const oldSecurity = persisted.security as OldSecurityState;
 
   return {
     // Navigation
@@ -1667,7 +1711,12 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     // Step 2-8: State Objects
     aiGapFillingState: persisted.aiGapFillingState,
     outcome: persisted.outcome,
-    security: persisted.security,
+    // Security state with backwards compatibility for memory fields
+    security: {
+      ...persisted.security,
+      crossAgentMemoryEnabled: oldSecurity.crossAgentMemoryEnabled ?? true,
+      memoryExpiryDays: oldSecurity.memoryExpiryDays ?? DEFAULT_MEMORY_EXPIRY_DAYS,
+    },
     agentDesign: persisted.agentDesign,
     mockData: persisted.mockData,
     demoStrategy: persisted.demoStrategy ?? createDefaultDemoStrategyState(),

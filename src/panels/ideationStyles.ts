@@ -329,6 +329,65 @@ export function getIdeationStyles(): string {
         color: var(--vscode-descriptionForeground);
       }
 
+      /* Cross-Agent Memory Settings */
+      .memory-settings-section {
+        margin-top: 8px;
+      }
+      .memory-toggle-row {
+        margin-bottom: 12px;
+      }
+      .memory-toggle-row .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--vscode-foreground);
+      }
+      .memory-toggle-row .toggle-label input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+        cursor: pointer;
+      }
+      .memory-toggle-row .toggle-text {
+        font-weight: 500;
+      }
+      .memory-expiry-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .memory-expiry-row.disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      .memory-expiry-row .expiry-label {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .memory-expiry-select {
+        width: 100%;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .memory-expiry-select:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .memory-expiry-select:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .expiry-text {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        margin-top: 4px;
+      }
+
       /* Step 2: AI Gap-Filling Chat Styles */
       .step2-header {
         display: flex;

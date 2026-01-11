@@ -50,6 +50,9 @@ from agents.shared.orchestrator_utils import (
     print_workflow_error_summary,
 )
 
+# Cross-Agent Memory: Import memory initialization (DO NOT MODIFY)
+from agents.shared import init_memory
+
 
 # ============================================================================
 # CUSTOMIZATION SECTION (Kiro fills this in based on steering files)
@@ -294,6 +297,13 @@ def main() -> None:
         if args.conversation_context:
             print(f"  Conversation Context: (provided)", file=sys.stderr)
         print("", file=sys.stderr)
+
+        # Cross-Agent Memory: Initialize memory for data sharing between agents
+        # This enables agents to share fetched data via search_memory/store_context tools
+        if init_memory(session_id):
+            print("  Cross-Agent Memory: enabled", file=sys.stderr)
+        else:
+            print("  Cross-Agent Memory: disabled (MEMORY_ID not configured)", file=sys.stderr)
 
         # Load and validate DAG
         dag = define_task_dag()

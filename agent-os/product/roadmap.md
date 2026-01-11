@@ -1374,7 +1374,7 @@ Flag external file references as errors. Suggest fixes for return format issues.
 - `src/utils/chatStateUtils.ts` — Turn tracking utilities
 - `resources/agents/shared/orchestrator_utils.py` — Parse conversation context arg `L`
 
-39. [ ] Cross-Agent Memory — Enable agents to share context via AgentCore Memory, reducing duplicate external calls:
+39. [x] Cross-Agent Memory — Enable agents to share context via AgentCore Memory, reducing duplicate external calls:
 
 **Problem:**
 In multi-agent workflows, earlier agents often fetch data that later agents also need:
@@ -1852,14 +1852,37 @@ Generated demos often need to remember user preferences, historical interactions
 
 **Implementation Components:**
 
-1. **Wizard Step 4 Extension (Security & Guardrails):**
-   - Add "Memory Persistence" section with:
-     - Memory strategy dropdown (Semantic, Summary, User Preference, Custom)
-     - Retention policy selector (7 days, 30 days, 1 year, permanent)
-     - Namespace prefix configuration
-   - AI suggests appropriate strategies based on business objective
+1. **Wizard Step 4 (Security & Guardrails) - Infrastructure Only:**
+   - "Long-Term Memory" toggle (enables persistent learning across sessions)
+   - Retention policy selector (7 days, 30 days, 1 year, permanent)
+   - These are infrastructure/security settings shared across all agents
+   - Namespace prefix auto-generated from project name
 
-2. **New Pre-Bundled Module** (`resources/agents/shared/persistent_memory.py`):
+2. **Wizard Step 5 Extension (Agent Design) - Per-Agent Memory:**
+   - Each agent card includes collapsible "Memory Configuration" section:
+     - [ ] Uses Short-Term Memory (enables `search_memory`, `store_context` tools)
+     - [ ] Uses Long-Term Memory (enables `remember_preference`, `recall_preferences` tools)
+       - Strategy dropdown: Semantic, Summary, User Preference, Custom
+   - AI suggests memory configuration based on agent role:
+     - Customer-facing agents: Suggest LTM with user_preference strategy
+     - Data processing agents: Suggest STM only
+     - Coordinator agents: Suggest both STM and LTM with semantic strategy
+   - User can override AI suggestions
+   - Edit tracking via `memoryEdited` flag (consistent with existing `toolsEdited`)
+   - Per-agent config stored in `ProposedAgent.memory` object:
+     ```typescript
+     interface ProposedAgent {
+       // ... existing fields
+       memory?: {
+         usesShortTermMemory: boolean;
+         usesLongTermMemory: boolean;
+         ltmStrategy?: 'semantic' | 'summary' | 'user_preference' | 'custom';
+       };
+       memoryEdited?: boolean;
+     }
+     ```
+
+3. **New Pre-Bundled Module** (`resources/agents/shared/persistent_memory.py`):
    ```python
    import os
    from typing import Optional
@@ -1957,12 +1980,12 @@ Generated demos often need to remember user preferences, historical interactions
    - `search_long_term_memories()` searches the extracted LTM records
    - This is a fundamental AgentCore Memory architecture decision
 
-3. **Steering Prompt Updates:**
+4. **Steering Prompt Updates:**
    - `agentify-integration-steering.prompt.md`: Add persistent memory patterns
    - `structure-steering.prompt.md`: Include `persistent_memory.py` in shared utilities
    - `tech-steering.prompt.md`: Document memory strategy selection guidance
 
-4. **Setup Script Updates** (`scripts/setup.sh`):
+5. **Setup Script Updates** (`scripts/setup.sh`):
    ```bash
    # Step 2c: Create Persistent Memory (if enabled in config)
    MEMORY_PERSISTENCE=$(jq -r '.memory.persistence.enabled // false' "$CONFIG_JSON")
@@ -1984,7 +2007,7 @@ Generated demos often need to remember user preferences, historical interactions
    fi
    ```
 
-5. **Configuration Schema** (`.agentify/config.json`):
+6. **Configuration Schema** (`.agentify/config.json`):
    ```json
    {
      "memory": {
@@ -2003,7 +2026,7 @@ Generated demos often need to remember user preferences, historical interactions
    }
    ```
 
-6. **Demo Viewer Integration:**
+7. **Demo Viewer Integration:**
    - Memory operations appear in execution log:
      ```
      14:32:02  💾 remember_preference → /preferences/user123/food
@@ -2019,8 +2042,12 @@ Generated demos often need to remember user preferences, historical interactions
 - Can be used together: cross-agent for workflow efficiency, persistent for learning
 
 **Wizard Flow:**
-1. Step 4 captures memory persistence settings
-2. Step 5 (Agent Design) auto-adds memory tools to relevant agents
+1. Step 4 enables memory infrastructure (toggle + retention policy)
+2. Step 5 (Agent Design) allows explicit per-agent memory configuration:
+   - User chooses which agents use short-term memory (cross-agent sharing)
+   - User chooses which agents use long-term memory (persistent learning)
+   - User selects LTM strategy per agent (semantic, summary, user_preference)
+   - AI suggests defaults based on agent role, user can override
 3. Step 8 generates config and steering with memory patterns
 4. Roadmap includes memory initialization in appropriate items
 
@@ -2031,6 +2058,9 @@ Generated demos often need to remember user preferences, historical interactions
 - `resources/scripts/destroy.sh` — Add persistent memory cleanup
 - `src/panels/tabbedPanel.ts` — Add memory persistence UI to Step 4
 - `src/types/wizard.ts` — Add `MemoryPersistenceConfig` to `SecurityGuardrailsState`
+- `src/panels/ideationStep5Logic.ts` — Add memory config to `ProposedAgent` interface
+- `src/panels/webview/ideationStep5.ts` — Add per-agent memory UI section
+- `src/types/wizardPanel.ts` — Add memory fields to `AgentDesignState`
 - `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add persistent memory section
 - `resources/prompts/steering/structure-steering.prompt.md` — Include in directory listing
 - `resources/agentify-power/POWER.md` — Add Pattern 10: Persistent Memory `L`

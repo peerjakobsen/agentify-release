@@ -86,7 +86,9 @@
       "Before financial transactions"
     ],
     "guardrailNotes": "Demo with synthetic deal data. No real financial or legal information.",
-    "skipped": false
+    "skipped": false,
+    "crossAgentMemoryEnabled": true,
+    "memoryExpiryDays": 7
   },
   "agentDesign": {
     "proposedAgents": [

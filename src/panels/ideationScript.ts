@@ -158,6 +158,13 @@ export function getIdeationScript(): string {
       function skipSecurityStep() {
         vscode.postMessage({ command: 'skipSecurityStep' });
       }
+      // Cross-Agent Memory Feature: Memory settings functions
+      function toggleCrossAgentMemory(enabled) {
+        vscode.postMessage({ command: 'toggleCrossAgentMemory', value: enabled });
+      }
+      function updateMemoryExpiryDays(days) {
+        vscode.postMessage({ command: 'updateMemoryExpiryDays', value: days });
+      }
 
       // Step 5: Agent Design functions - Phase 1
       function regenerateAgentProposal() {

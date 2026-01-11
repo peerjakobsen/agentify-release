@@ -53,7 +53,9 @@
     "complianceFrameworks": [],
     "approvalGates": [],
     "guardrailNotes": "Simple demo with mock data only.",
-    "skipped": true
+    "skipped": true,
+    "crossAgentMemoryEnabled": false,
+    "memoryExpiryDays": 7
   },
   "agentDesign": {
     "proposedAgents": [

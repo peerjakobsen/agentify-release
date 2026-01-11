@@ -6,9 +6,15 @@
 import type { OutcomeDefinitionService } from '../services/outcomeDefinitionService';
 import type { SystemAssumption } from '../types/wizardPanel';
 import { INDUSTRY_COMPLIANCE_MAPPING } from './ideationConstants';
+import {
+  DEFAULT_MEMORY_EXPIRY_DAYS,
+  MIN_MEMORY_EXPIRY_DAYS,
+  MAX_MEMORY_EXPIRY_DAYS,
+} from '../types/wizardPanel';
 
 /**
  * Security & Guardrails state
+ * Cross-Agent Memory Feature: Extended with memory configuration fields
  */
 export interface SecurityGuardrailsState {
   dataSensitivity: string;
@@ -20,6 +26,10 @@ export interface SecurityGuardrailsState {
   skipped: boolean;
   industryDefaultsApplied: boolean;
   isLoading: boolean;
+  /** Whether cross-agent memory is enabled for data sharing between agents */
+  crossAgentMemoryEnabled: boolean;
+  /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
+  memoryExpiryDays: number;
 }
 
 /**
@@ -43,6 +53,7 @@ export interface Step4Callbacks {
 
 /**
  * Create default Security & Guardrails state
+ * Cross-Agent Memory Feature: Includes memory configuration defaults
  */
 export function createDefaultSecurityGuardrailsState(): SecurityGuardrailsState {
   return {
@@ -55,7 +66,20 @@ export function createDefaultSecurityGuardrailsState(): SecurityGuardrailsState 
     skipped: false,
     industryDefaultsApplied: false,
     isLoading: false,
+    crossAgentMemoryEnabled: true,
+    memoryExpiryDays: DEFAULT_MEMORY_EXPIRY_DAYS,
   };
+}
+
+/**
+ * Validate memory expiry days value is within allowed range
+ * Cross-Agent Memory Feature: Validation helper
+ */
+export function validateMemoryExpiryDays(days: number): number {
+  if (typeof days !== 'number' || isNaN(days)) {
+    return DEFAULT_MEMORY_EXPIRY_DAYS;
+  }
+  return Math.max(MIN_MEMORY_EXPIRY_DAYS, Math.min(MAX_MEMORY_EXPIRY_DAYS, Math.round(days)));
 }
 
 /**
@@ -201,5 +225,25 @@ Please provide practical security considerations specific to this demo scenario.
    */
   public resetIndustryDefaults(): void {
     this._state.industryDefaultsApplied = false;
+  }
+
+  /**
+   * Toggle cross-agent memory enabled/disabled
+   * Cross-Agent Memory Feature: Handler for memory toggle
+   */
+  public toggleCrossAgentMemory(enabled: boolean): void {
+    this._state.crossAgentMemoryEnabled = enabled;
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+  }
+
+  /**
+   * Update memory expiry days
+   * Cross-Agent Memory Feature: Handler for expiry dropdown
+   */
+  public updateMemoryExpiryDays(days: number): void {
+    this._state.memoryExpiryDays = validateMemoryExpiryDays(days);
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
   }
 }

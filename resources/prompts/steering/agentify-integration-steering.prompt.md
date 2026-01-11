@@ -6,13 +6,15 @@ You are an AI assistant that transforms wizard state JSON into a Kiro steering d
 
 1. **Explain Pre-Bundled Utilities**: Document that `agents/shared/` is pre-bundled and should be IMPORTED, not recreated.
 
-2. **Document Import Patterns**: Show how to import `@instrument_tool`, context management functions, and DynamoDB client.
+2. **Document Import Patterns**: Show how to import `@instrument_tool`, context management functions, DynamoDB client, and memory functions.
 
 3. **Document AgentCore Handler Pattern**: Define how agents expose entry points using `@app.entrypoint`.
 
 4. **Specify DynamoDB Event Schema**: Document the event schema for tool calls stored in DynamoDB and polled by the Demo Viewer.
 
-5. **Emphasize "Import, Don't Create"**: Clearly communicate that Kiro should never recreate these utilities.
+5. **Document Memory Initialization**: Explain how to initialize cross-agent memory in the orchestrator.
+
+6. **Emphasize "Import, Don't Create"**: Clearly communicate that Kiro should never recreate these utilities.
 
 ## Input Schema
 
@@ -65,7 +67,7 @@ inclusion: always
 
 ## Import Patterns
 
-[Show import statements for instrument_tool, context management, and DynamoDB client.]
+[Show import statements for instrument_tool, context management, DynamoDB client, and memory functions.]
 
 ## @instrument_tool Decorator Usage
 
@@ -74,6 +76,14 @@ inclusion: always
 ## Instrumentation Context Usage
 
 [Document HOW TO USE set_instrumentation_context() and clear_instrumentation_context().]
+
+## Cross-Agent Memory Initialization
+
+[Document how to initialize memory in the orchestrator using init_memory().]
+
+## Memory Tools Usage
+
+[Document how to use search_memory() and store_context() tools in agents.]
 
 ## AgentCore Handler Pattern
 
@@ -128,6 +138,7 @@ The Demo Viewer polls DynamoDB for tool call events to visualize workflow execut
 | `agents/shared/instrumentation.py` | Tool observability | `instrument_tool`, `set_instrumentation_context`, `clear_instrumentation_context` |
 | `agents/shared/dynamodb_client.py` | Event persistence | `write_tool_event`, `query_tool_events`, `get_tool_events_table_name` |
 | `agents/shared/gateway_client.py` | Gateway integration | `GatewayTokenManager`, `invoke_with_gateway` |
+| `agents/shared/memory_client.py` | Cross-agent memory | `init_memory`, `search_memory`, `store_context` |
 
 ### Import Pattern
 
@@ -144,6 +155,9 @@ from agents.shared.dynamodb_client import write_tool_event
 
 # Import Gateway client (PRE-BUNDLED - do not recreate)
 from agents.shared.gateway_client import GatewayTokenManager, invoke_with_gateway
+
+# Import Memory client (PRE-BUNDLED - do not recreate)
+from agents.shared import init_memory, search_memory, store_context
 ```
 
 ## Instrumentation Context Pattern
@@ -178,6 +192,103 @@ finally:
 | `set_instrumentation_context(session_id, agent_name)` | Start of handler | Enable event emission |
 | `get_instrumentation_context()` | Internal use | Returns `(session_id, agent_name)` |
 | `clear_instrumentation_context()` | End of handler (finally block) | Prevent context leakage |
+
+## Cross-Agent Memory Initialization
+
+Cross-agent memory enables agents to share fetched data, reducing duplicate API calls and improving response consistency.
+
+### Memory Initialization in Orchestrator
+
+**CRITICAL**: Initialize memory once per workflow in the orchestrator (main.py), NOT in individual agents.
+
+```python
+# In main.py - import at module level
+from agents.shared import init_memory
+
+# In main() - after session_id is generated, BEFORE first agent invocation
+session_id = generate_session_id()
+
+# Initialize cross-agent memory
+if init_memory(session_id):
+    print("  Cross-Agent Memory: enabled", file=sys.stderr)
+else:
+    print("  Cross-Agent Memory: disabled (MEMORY_ID not configured)", file=sys.stderr)
+
+# Now safe to invoke agents...
+```
+
+### How Memory Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  Cross-Agent Memory Flow                         │
+│                                                                  │
+│  Orchestrator (main.py)                                          │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  init_memory(session_id)                                  │   │
+│  │    - Reads MEMORY_ID from environment                     │   │
+│  │    - Initializes AgentCore Memory client                  │   │
+│  │    - Sets namespace: /workflow/{session_id}/context       │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                              ▼                                   │
+│  Agent 1                   Agent 2                   Agent 3    │
+│  ┌─────────────┐          ┌─────────────┐          ┌─────────┐  │
+│  │store_context│ ────────►│search_memory│ ────────►│search_  │  │
+│  │ (saves data)│          │(retrieves)  │          │ memory  │  │
+│  └─────────────┘          └─────────────┘          └─────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Environment Variables
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `MEMORY_ID` | AgentCore Memory resource ID | `.agentify/infrastructure.json` |
+
+## Memory Tools Usage
+
+Agents use pre-bundled `search_memory()` and `store_context()` tools to share data.
+
+### Including Memory Tools in Agent
+
+```python
+from agents.shared import search_memory, store_context
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+from .tools import my_local_tool
+
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[search_memory, store_context, my_local_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
+```
+
+### Tool Behavior
+
+**search_memory(query: str)** - Search for previously stored context:
+- Returns matching data if found
+- Returns "Memory not initialized. Use external tools." if memory unavailable
+- Never raises exceptions (fire-and-forget pattern)
+
+**store_context(key: str, value: str)** - Store data for other agents:
+- Returns "Stored: {key}" on success
+- Returns "Failed to store: {key}" on error (logged, not raised)
+- Data is scoped to workflow session via namespace
+
+### Graceful Degradation
+
+Memory tools are designed to fail gracefully:
+
+```python
+# If MEMORY_ID not configured, tools return helpful messages:
+result = search_memory("customer info")
+# Returns: "Memory not initialized. Use external tools."
+
+# Agents can fall back to direct API calls when memory unavailable
+```
 
 ## DynamoDB Client Usage
 
@@ -240,14 +351,15 @@ MCP tools returned by `list_tools_sync()` are **proxy objects** that reference t
 
 ```python
 from agents.shared.gateway_client import invoke_with_gateway
+from agents.shared import search_memory, store_context
 from .prompts import SYSTEM_PROMPT
 from .tools import my_local_tool
 
 def invoke_my_agent(prompt: str) -> str:
-    """Invoke agent with local and Gateway tools."""
+    """Invoke agent with local, memory, and Gateway tools."""
     return invoke_with_gateway(
         prompt=prompt,
-        local_tools=[my_local_tool],
+        local_tools=[search_memory, store_context, my_local_tool],
         system_prompt=SYSTEM_PROMPT
     )
 ```
@@ -609,6 +721,7 @@ List of agent IDs for instrumentation context:
 | `AWS_REGION` | AWS region for DynamoDB | Environment |
 | `AGENTIFY_TABLE_NAME` | DynamoDB table name (fallback) | Environment |
 | `AGENT_MODEL_ID` | Bedrock model ID for agents | Environment |
+| `MEMORY_ID` | AgentCore Memory resource ID | `.agentify/infrastructure.json` |
 
 **Preferred**: Table name from SSM Parameter Store at `/agentify/services/dynamodb/tool-events-table`
 
@@ -636,13 +749,15 @@ Events are displayed in the Demo Viewer as:
 
 2. **Clear Context in Finally**: Use a `finally` block to call `clear_instrumentation_context()` to prevent context leakage.
 
-3. **Decorator Order Matters**: `@tool` must be ON TOP, `@instrument_tool` BELOW (closest to function). Python applies decorators bottom-up.
+3. **Initialize Memory in Orchestrator**: Call `init_memory(session_id)` once in main.py, NOT in individual agents.
 
-4. **Fire-and-Forget**: Never let DynamoDB write failures block tool execution.
+4. **Decorator Order Matters**: `@tool` must be ON TOP, `@instrument_tool` BELOW (closest to function). Python applies decorators bottom-up.
 
-5. **Lazy Import Agents**: Import agent modules inside the handler function to minimize cold start time.
+5. **Fire-and-Forget**: Never let DynamoDB or Memory write failures block tool execution.
 
-6. **Use session_id Consistently**: The same `session_id` should be used for all agents in a single workflow execution.
+6. **Lazy Import Agents**: Import agent modules inside the handler function to minimize cold start time.
+
+7. **Use session_id Consistently**: The same `session_id` should be used for all agents in a single workflow execution.
 
 ## Important Notes
 
@@ -655,3 +770,4 @@ Events are displayed in the Demo Viewer as:
 - The instrumentation is transparent to tool implementations - they don't need to know about observability.
 - DynamoDB polling is the primary source for Demo Viewer visualization.
 - Tool events have 2-hour TTL for automatic cleanup (adjust in production).
+- Memory tools (`search_memory`, `store_context`) should be imported from `agents.shared`, not defined locally.

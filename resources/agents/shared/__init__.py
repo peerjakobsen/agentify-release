@@ -30,6 +30,11 @@ chronological tool execution timelines across multi-agent workflows.
 - `GatewayTokenManager`: OAuth token management for MCP Gateway authentication
 - `invoke_with_gateway()`: Execute agent with proper MCP session lifecycle
 
+### Cross-Agent Memory
+- `init_memory()`: Initialize AgentCore Memory for cross-agent data sharing
+- `search_memory()`: Search for context stored by other agents
+- `store_context()`: Store context for downstream agents to access
+
 ## Integration Patterns for Agent Developers
 
 ### AgentCore Handler Pattern
@@ -88,12 +93,30 @@ def extract_user_id(request: str) -> dict:
     }
 ```
 
+### Cross-Agent Memory Pattern
+
+For sharing data between agents in a workflow:
+
+```python
+from agents.shared.memory_client import init_memory, search_memory, store_context
+
+# In main.py orchestrator - initialize once per session
+init_memory(session_id)
+
+# In agent tools - store context for downstream agents
+store_context("customer_profile", "Premium tier, 5 years loyalty")
+
+# In downstream agent - search for previously stored context
+results = search_memory("customer loyalty status")
+```
+
 ## Configuration
 
 ### Environment Variables
 
 - `AWS_REGION`: AWS region for DynamoDB and SSM (default: 'us-east-1')
 - `AGENTIFY_TABLE_NAME`: DynamoDB table name (fallback configuration)
+- `MEMORY_ID`: AgentCore Memory resource ID for cross-agent memory
 
 ### SSM Parameter Store
 
@@ -106,6 +129,7 @@ def extract_user_id(request: str) -> dict:
 3. **Correct decorator order**: @tool first, then @instrument_tool on top
 4. **Same session_id**: Use consistent session_id across workflow agents
 5. **Lazy imports**: Import agent modules inside handlers for faster cold starts
+6. **Init memory early**: Call init_memory() before first agent invocation
 """
 
 from .instrumentation import (
@@ -123,14 +147,29 @@ from .dynamodb_client import (
 
 from .gateway_client import GatewayTokenManager, invoke_with_gateway
 
+from .memory_client import (
+    init_memory,
+    search_memory,
+    store_context,
+    get_memory_status
+)
+
 __all__ = [
+    # Instrumentation
     'instrument_tool',
     'set_instrumentation_context',
     'get_instrumentation_context',
     'clear_instrumentation_context',
+    # DynamoDB
     'write_tool_event',
     'query_tool_events',
     'get_tool_events_table_name',
+    # Gateway
     'GatewayTokenManager',
-    'invoke_with_gateway'
+    'invoke_with_gateway',
+    # Memory
+    'init_memory',
+    'search_memory',
+    'store_context',
+    'get_memory_status'
 ]

@@ -2,12 +2,12 @@
 name: "agentify"
 displayName: "Agentify Observability"
 description: "Observability patterns for Agentify multi-agent workflows with Demo Viewer integration"
-keywords: ["agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent", "tool", "handler", "instrumentation"]
+keywords: ["agent", "workflow", "Strands", "orchestrator", "demo", "multi-agent", "tool", "handler", "instrumentation", "memory"]
 ---
 
 # Agentify Power
 
-Quick reference for Agentify multi-agent workflow observability patterns. These 9 critical patterns ensure your agents work correctly with the Demo Viewer.
+Quick reference for Agentify multi-agent workflow observability patterns. These 10 critical patterns ensure your agents work correctly with the Demo Viewer.
 
 > For complete details, see `.kiro/steering/agentify-integration.md`
 
@@ -22,13 +22,14 @@ Quick reference for Agentify multi-agent workflow observability patterns. These 
 from agents.shared.instrumentation import instrument_tool, set_instrumentation_context, clear_instrumentation_context
 from agents.shared.dynamodb_client import write_tool_event
 from agents.shared.gateway_client import invoke_with_gateway
+from agents.shared import init_memory, search_memory, store_context
 
 # WRONG - Never define these locally
 def instrument_tool(func):  # BLOCKING ERROR
     ...
 ```
 
-The `agents/shared/` directory contains pre-built infrastructure for observability and Gateway integration.
+The `agents/shared/` directory contains pre-built infrastructure for observability, Gateway integration, and cross-agent memory.
 
 ---
 
@@ -176,6 +177,7 @@ python agents/main.py \
 Environment variables required for local runs:
 - `AGENTIFY_TABLE_NAME` - DynamoDB table for tool events
 - `AWS_REGION` - AWS region for DynamoDB
+- `MEMORY_ID` - AgentCore Memory ID for cross-agent data sharing (optional)
 
 ---
 
@@ -191,6 +193,7 @@ Environment variables required for local runs:
 | Missing `flush=True` | stdout buffering delays events | Always `print(json.dumps(event), flush=True)` |
 | Using ISO timestamps | Demo Viewer expects epoch ms | Use `int(time.time() * 1000)` |
 | Forgetting mock_data.json | Can't test Lambda locally | Co-locate mock_data.json with handler.py |
+| Defining memory functions locally | Bypasses shared memory client | Import from `agents.shared` |
 
 ---
 
@@ -360,18 +363,162 @@ The Haiku router is designed to fail gracefully:
 
 ---
 
+## Pattern 9: Cross-Agent Memory
+
+Enable agents to share fetched data via AgentCore Memory, reducing duplicate API calls and improving response consistency.
+
+### When to Use Cross-Agent Memory
+
+- **Data sharing**: Multiple agents need the same external data (customer info, inventory, etc.)
+- **Reducing API calls**: First agent fetches, subsequent agents retrieve from memory
+- **Response consistency**: Ensure all agents work with the same data snapshot
+- **Demo workflows**: Show efficient multi-agent data sharing in real-time
+
+### Configuration
+
+Enable in `.agentify/config.json`:
+
+```json
+{
+  "memory": {
+    "crossAgent": {
+      "enabled": true,
+      "expiryDays": 7
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `true` | Enable cross-agent memory |
+| `expiryDays` | `7` | Memory retention period (1, 7, or 30 days) |
+
+### Memory Initialization (Orchestrator)
+
+**CRITICAL**: Initialize memory once per workflow in the orchestrator, NOT in individual agents.
+
+```python
+# In main.py orchestrator - before first agent invocation
+from agents.shared import init_memory
+
+# Initialize memory with session_id for namespace isolation
+if init_memory(session_id):
+    print("Cross-Agent Memory: enabled", file=sys.stderr)
+else:
+    print("Cross-Agent Memory: disabled (MEMORY_ID not configured)", file=sys.stderr)
+```
+
+### Memory Tools (Agents)
+
+Agents use pre-bundled `search_memory()` and `store_context()` tools.
+
+```python
+# CORRECT - Import from shared (pre-bundled)
+from agents.shared import search_memory, store_context
+
+# Include in agent's local_tools list
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[search_memory, store_context, my_other_tool],
+        system_prompt=SYSTEM_PROMPT
+    )
+
+# WRONG - Never define these locally
+@tool
+@instrument_tool
+def search_memory(query: str) -> str:  # BLOCKING ERROR
+    ...
+```
+
+### Tool Behavior
+
+**search_memory(query: str)** - Search for previously stored data:
+```python
+# Returns matching context or graceful message if unavailable
+result = search_memory("customer TKT-001")
+# Returns: "Found: customer_info: {...}" or "Memory not initialized. Use external tools."
+```
+
+**store_context(key: str, value: str)** - Store data for other agents:
+```python
+# Stores data with session-scoped namespace
+result = store_context("customer_info", json.dumps(customer_data))
+# Returns: "Stored: customer_info" or "Failed to store: customer_info"
+```
+
+### Fire-and-Forget Pattern
+
+Memory operations never block agent execution:
+
+```python
+# Memory errors are logged as warnings, never raised
+# This ensures workflow continues even if memory unavailable
+
+try:
+    _memory_client.create_event(...)
+    return f"Stored: {key}"
+except Exception as e:
+    logger.warning(f"Memory store error: {e}")
+    return f"Failed to store: {key}"  # Don't raise - agent continues
+```
+
+### Decorator Stacking
+
+Memory tools use the same decorator pattern as other tools:
+
+```python
+# CORRECT - @tool on top, @instrument_tool below
+@tool                    # Registers with Strands
+@instrument_tool         # Captures events for Demo Viewer
+def search_memory(query: str) -> str:
+    """Search cross-agent memory for relevant context."""
+    ...
+
+# WRONG - Reversed order
+@instrument_tool
+@tool                    # BLOCKING ERROR
+def search_memory(query: str) -> str:
+    ...
+```
+
+### Namespace Isolation
+
+Memory is scoped to workflow session:
+
+```
+/workflow/{session_id}/context
+         │
+         └── Each workflow execution has isolated memory
+             - Session A cannot access Session B's data
+             - Data expires based on expiryDays config
+```
+
+### Environment Variables
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `MEMORY_ID` | AgentCore Memory resource ID | `.agentify/infrastructure.json` |
+
+The `setup-memory.sh` script creates the Memory resource and stores `MEMORY_ID` in infrastructure.json. The orchestrate.sh script exports it for the Python subprocess.
+
+---
+
 ## Quick Checklist
 
 Before committing agent code, verify:
 
 - [ ] All tool functions have `@tool` on top, `@instrument_tool` below
 - [ ] Handler functions use try/finally with context management
-- [ ] No local definitions of `instrument_tool`, `write_tool_event`, etc.
+- [ ] No local definitions of `instrument_tool`, `write_tool_event`, `search_memory`, `store_context`, etc.
 - [ ] Agent.py uses `invoke_with_gateway()`, not direct `MCPClient`
 - [ ] Lambda handlers return `json.dumps()` strings
 - [ ] `main.py` accepts `--prompt`, `--workflow-id`, `--trace-id` arguments
 - [ ] Environment variables `AGENTIFY_TABLE_NAME`, `AWS_REGION` are read
 - [ ] If using Haiku routing, `routing` section added to `.agentify/config.json`
+- [ ] If using cross-agent memory, `init_memory(session_id)` called in orchestrator
+- [ ] Memory tools imported from `agents.shared`, not defined locally
 
 ---
 

@@ -124,10 +124,11 @@ project-root/
 │   │       ├── __init__.py
 │   │       └── {tool_name}.py     # Local tool implementations
 │   └── shared/                    # PRE-BUNDLED by Agentify (DO NOT MODIFY)
-│       ├── __init__.py            # Module exports
+│       ├── __init__.py            # Module exports (init_memory, search_memory, store_context)
 │       ├── instrumentation.py     # @instrument_tool decorator (pre-bundled)
 │       ├── dynamodb_client.py     # Fire-and-forget events (pre-bundled)
 │       ├── gateway_client.py      # Gateway integration (pre-bundled)
+│       ├── memory_client.py       # Cross-agent memory (pre-bundled)
 │       └── orchestrator_utils.py  # CLI, events, SDK calls (pre-bundled)
 ├── cdk/                           # AWS CDK infrastructure (Python)
 │   ├── app.py                     # CDK app entry point
@@ -156,7 +157,8 @@ project-root/
 │   └── handlers/                  # Gateway Lambda handler tests
 │       └── test_{tool_name}.py
 ├── .agentify/
-│   └── config.json                # Agentify configuration
+│   ├── config.json                # Agentify configuration (memory, routing settings)
+│   └── infrastructure.json        # Infrastructure outputs (MEMORY_ID, etc.)
 ├── .kiro/
 │   └── steering/                  # Kiro steering documents
 │       ├── product.md
@@ -247,6 +249,9 @@ When placing tools, use this decision tree:
 3. **Is this a utility function (not an agent tool)?**
    - YES → Place in `agents/shared/utils/`
 
+4. **Is this a cross-agent memory tool?**
+   - NO, use pre-bundled → Import from `agents.shared` (search_memory, store_context)
+
 ## Agent Folder Template
 
 For each agent in `confirmedAgents`, generate this structure:
@@ -283,15 +288,16 @@ if __name__ == '__main__':
 
 **Why this matters**: AgentCore Runtime health checks connect to the container from outside. If the handler binds to `localhost` (default), connections from outside the container are refused. The Dockerfile sets `DOCKER_CONTAINER=1` to enable this detection.
 
-**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `cdk/gateway/handlers/`.
+**Note**: Only agent-specific tools go in `agents/{agent_id}/tools/`. Shared tools are deployed as Gateway Lambda targets in `cdk/gateway/handlers/`. Memory tools (`search_memory`, `store_context`) are imported from `agents.shared`.
 
 ### Agent File Contents
 
-**agent.py** - Creates the Strands agent with local and Gateway tools:
+**agent.py** - Creates the Strands agent with local, memory, and Gateway tools:
 ```python
 """Agent definition for {Agent Name}."""
 
 from agents.shared.gateway_client import invoke_with_gateway
+from agents.shared import search_memory, store_context
 from .prompts import SYSTEM_PROMPT
 from .tools import {local_tool_imports}
 
@@ -307,7 +313,7 @@ def invoke_{agent_id}_agent(prompt: str) -> str:
     """
     return invoke_with_gateway(
         prompt=prompt,
-        local_tools=[{local_tools}],
+        local_tools=[search_memory, store_context, {local_tools}],
         system_prompt=SYSTEM_PROMPT
     )
 ```
@@ -334,12 +340,37 @@ def {tool_name}(param: str) -> dict:
 
     This is a LOCAL tool - only this agent uses it.
     For shared tools, see cdk/gateway/handlers/.
+    For memory tools, import from agents.shared.
     """
     # Implementation runs in same process as agent
     pass
 ```
 
 **CRITICAL Decorator Order**: `@tool` must be ON TOP, `@instrument_tool` must be BELOW (closest to function). Python applies decorators bottom-up, so `@instrument_tool` wraps the function for observability first, then `@tool` registers it with Strands. Reversing this breaks instrumentation.
+
+## Shared Module Exports
+
+The `agents/shared/__init__.py` exports pre-bundled utilities for agent use:
+
+```python
+"""
+Shared utilities for Agentify agents.
+
+PRE-BUNDLED by Agentify extension - DO NOT RECREATE.
+
+Available exports:
+- init_memory: Initialize cross-agent memory (call once in orchestrator)
+- search_memory: Search for previously stored context
+- store_context: Store data for other agents to retrieve
+
+Import pattern:
+    from agents.shared import init_memory, search_memory, store_context
+"""
+
+from .memory_client import init_memory, search_memory, store_context
+
+__all__ = ['init_memory', 'search_memory', 'store_context']
+```
 
 ## CDK Infrastructure
 
@@ -391,7 +422,7 @@ Deploys Lambda functions for shared tools:
 ### Deployment Sequence
 
 1. `uv sync --all-extras` - Install dependencies (from project root)
-2. `./scripts/setup.sh` - Deploy infrastructure + Gateway (or manually below)
+2. `./scripts/setup.sh` - Deploy infrastructure + Memory + Gateway (or manually below)
 3. `cd cdk && uv sync && uv run cdk deploy --all --outputs-file cdk-outputs.json` - Deploy CDK stacks
 4. `uv run python cdk/gateway/setup_gateway.py` - Create Gateway and register Lambda targets
 
@@ -412,7 +443,7 @@ import json
 
 def lambda_handler(event, context):
     """Gateway Lambda handler for {system} {operation}.
-    
+
     This tool is SHARED - multiple agents can use it via Gateway MCP endpoint.
     """
     # Gateway passes tool name with target prefix
@@ -420,13 +451,13 @@ def lambda_handler(event, context):
     tool_name = context.client_context.custom.get('bedrockAgentCoreToolName', '')
     if delimiter in tool_name:
         tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
-    
+
     # Event contains input parameters directly from tool schema
     param = event.get('param')
-    
+
     # Implementation
     result = {"status": "success", "data": param}
-    
+
     return json.dumps(result)
 ```
 
@@ -469,6 +500,40 @@ Tools follow the snake_case pattern: `{system}_{operation}`
 | Snowflake | `snowflake` |
 | Workday | `workday` |
 
+## Configuration Files
+
+### .agentify/config.json
+
+Stores Agentify configuration including memory settings:
+
+```json
+{
+  "memory": {
+    "crossAgent": {
+      "enabled": true,
+      "expiryDays": 7
+    }
+  },
+  "routing": {
+    "useHaikuRouter": false
+  }
+}
+```
+
+### .agentify/infrastructure.json
+
+Stores infrastructure outputs after setup:
+
+```json
+{
+  "region": "us-east-1",
+  "memory": {
+    "memoryId": "mem-xxx..."
+  },
+  "workflow_events_table": "project-workflow-events"
+}
+```
+
 ## Guidelines
 
 1. **Map Agent IDs to Folders**: Each `confirmedAgents[].id` becomes a folder under `agents/`. Use the ID directly without modification.
@@ -480,6 +545,8 @@ Tools follow the snake_case pattern: `{system}_{operation}`
 4. **Include Entry Point**: Always include `agents/main.py` as the workflow entry point that orchestrates all agents.
 
 5. **Mock Data Bundling**: For Gateway Lambda handlers, include `mock_data.json` in the same directory as `handler.py`. Mock data is bundled with each Lambda at deploy time.
+
+6. **Import Memory Tools**: Always import `search_memory` and `store_context` from `agents.shared`, never define them locally.
 
 ## Fallback Instructions
 
@@ -519,3 +586,4 @@ Tool schemas should be defined in individual tool files following the Strands @t
 - Do not include implementation code beyond structural examples.
 - Reference the `agentify_observability` package in the shared utilities section.
 - Include `.agentify/` and `.kiro/steering/` in the project structure.
+- Memory tools (`search_memory`, `store_context`) should always be imported from `agents.shared`, not defined locally.

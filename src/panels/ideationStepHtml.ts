@@ -96,6 +96,10 @@ interface SecurityGuardrailsState {
   skipped: boolean;
   industryDefaultsApplied: boolean;
   isLoading: boolean;
+  /** Whether cross-agent memory is enabled for data sharing between agents */
+  crossAgentMemoryEnabled: boolean;
+  /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
+  memoryExpiryDays: number;
 }
 
 // Step 5: Agent Design types
@@ -1055,6 +1059,18 @@ export function getStep4Html(state: IdeationState): string {
     ? '<span class="ai-suggested-badge">✨ AI suggested</span>'
     : '';
 
+  // Cross-Agent Memory Feature: Memory Settings UI
+  const memoryEnabled = securityState.crossAgentMemoryEnabled ?? true;
+  const memoryExpiryDays = securityState.memoryExpiryDays ?? 7;
+  const memoryDisabledClass = !memoryEnabled ? 'disabled' : '';
+
+  // Memory expiry dropdown options
+  const memoryExpiryOptions = [1, 7, 30].map(days => {
+    const selected = memoryExpiryDays === days ? 'selected' : '';
+    const label = days === 1 ? '1 day' : `${days} days`;
+    return `<option value="${days}" ${selected}>${label}</option>`;
+  }).join('');
+
   return `
       <div class="step-content">
         <h2>Security & Guardrails</h2>
@@ -1098,6 +1114,35 @@ export function getStep4Html(state: IdeationState): string {
             oninput="updateGuardrailNotes(this.value)"
             ${isLoading ? 'disabled' : ''}
           >${escapeHtml(securityState.guardrailNotes)}</textarea>
+        </div>
+
+        <div class="form-section memory-settings-section">
+          <label class="form-label">Memory Settings</label>
+          <p class="field-description">Cross-agent memory allows agents to share fetched data, reducing duplicate API calls and improving response consistency.</p>
+          
+          <div class="memory-toggle-row">
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                ${memoryEnabled ? 'checked' : ''}
+                onchange="toggleCrossAgentMemory(this.checked)"
+              >
+              <span class="toggle-text">Enable Cross-Agent Memory</span>
+            </label>
+          </div>
+
+          <div class="memory-expiry-row ${memoryDisabledClass}">
+            <label class="expiry-label">
+              <span class="expiry-text">Memory Retention Period</span>
+              <select
+                class="memory-expiry-select"
+                onchange="updateMemoryExpiryDays(parseInt(this.value, 10))"
+                ${!memoryEnabled ? 'disabled' : ''}
+              >
+                ${memoryExpiryOptions}
+              </select>
+            </label>
+          </div>
         </div>
       </div>
     `;

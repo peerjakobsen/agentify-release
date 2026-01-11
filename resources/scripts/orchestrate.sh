@@ -87,6 +87,8 @@ INFRA_JSON="${PROJECT_ROOT}/.agentify/infrastructure.json"
 if [ -f "${INFRA_JSON}" ] && command -v jq &> /dev/null; then
     REGION=$(jq -r '.region // empty' "${INFRA_JSON}" 2>/dev/null)
     TABLE_NAME_FROM_INFRA=$(jq -r '.workflow_events_table // empty' "${INFRA_JSON}" 2>/dev/null)
+    # Cross-Agent Memory: Load MEMORY_ID from infrastructure.json
+    MEMORY_ID_FROM_INFRA=$(jq -r '.memory.memoryId // empty' "${INFRA_JSON}" 2>/dev/null)
 fi
 REGION="${REGION:-${AWS_REGION:-us-east-1}}"
 
@@ -94,6 +96,10 @@ REGION="${REGION:-${AWS_REGION:-us-east-1}}"
 export AWS_REGION="${REGION}"
 if [ -n "$TABLE_NAME_FROM_INFRA" ]; then
     export AGENTIFY_TABLE_NAME="${TABLE_NAME_FROM_INFRA}"
+fi
+# Cross-Agent Memory: Export MEMORY_ID for Python subprocess
+if [ -n "$MEMORY_ID_FROM_INFRA" ]; then
+    export MEMORY_ID="${MEMORY_ID_FROM_INFRA}"
 fi
 
 # Parse arguments
@@ -191,6 +197,9 @@ echo "  Project: ${PROJECT_NAME}"
 echo "  Region: ${REGION}"
 if [ -n "$AWS_PROFILE" ]; then
     echo "  Profile: ${AWS_PROFILE}"
+fi
+if [ -n "$MEMORY_ID" ]; then
+    echo "  Memory: ${MEMORY_ID}"
 fi
 echo "============================================="
 echo ""
