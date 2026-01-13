@@ -9,10 +9,12 @@
 # Usage:
 #   ./scripts/orchestrate.sh -p "Customer ticket description"
 #   ./scripts/orchestrate.sh --prompt "Customer needs refund" --json output.json
+#   ./scripts/orchestrate.sh -p "Returning customer" --user-id user-123
 #
 # Examples:
 #   ./scripts/orchestrate.sh -p "Customer TKT-001 has API errors"
 #   ./scripts/orchestrate.sh --prompt "Billing issue" --skip-events
+#   ./scripts/orchestrate.sh -p "Returning user" --user-id user-456
 # =============================================================================
 
 set -e
@@ -89,6 +91,8 @@ if [ -f "${INFRA_JSON}" ] && command -v jq &> /dev/null; then
     TABLE_NAME_FROM_INFRA=$(jq -r '.workflow_events_table // empty' "${INFRA_JSON}" 2>/dev/null)
     # Cross-Agent Memory: Load MEMORY_ID from infrastructure.json
     MEMORY_ID_FROM_INFRA=$(jq -r '.memory.memoryId // empty' "${INFRA_JSON}" 2>/dev/null)
+    # Persistent Memory: Load PERSISTENT_MEMORY_ID from infrastructure.json
+    PERSISTENT_MEMORY_ID_FROM_INFRA=$(jq -r '.persistentMemory.memoryId // empty' "${INFRA_JSON}" 2>/dev/null)
 fi
 REGION="${REGION:-${AWS_REGION:-us-east-1}}"
 
@@ -101,11 +105,16 @@ fi
 if [ -n "$MEMORY_ID_FROM_INFRA" ]; then
     export MEMORY_ID="${MEMORY_ID_FROM_INFRA}"
 fi
+# Persistent Memory: Export PERSISTENT_MEMORY_ID for Python subprocess
+if [ -n "$PERSISTENT_MEMORY_ID_FROM_INFRA" ]; then
+    export PERSISTENT_MEMORY_ID="${PERSISTENT_MEMORY_ID_FROM_INFRA}"
+fi
 
 # Parse arguments
 PROMPT=""
 WORKFLOW_ID=""
 TRACE_ID=""
+USER_ID=""
 JSON_OUTPUT=""
 SKIP_EVENTS=false
 
@@ -121,6 +130,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --trace-id|-t)
             TRACE_ID="$2"
+            shift 2
+            ;;
+        --user-id|-u)
+            USER_ID="$2"
             shift 2
             ;;
         --json|-j)
@@ -140,6 +153,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --prompt, -p TEXT      Ticket description to process (required)"
             echo "  --workflow-id, -w ID   Workflow ID (auto-generated if not provided)"
             echo "  --trace-id, -t ID      Trace ID (auto-generated if not provided)"
+            echo "  --user-id, -u ID       User ID for persistent memory (optional)"
             echo "  --json, -j FILE        Save JSON events to file (default: temp file)"
             echo "  --skip-events          Skip DynamoDB event query"
             echo "  -h, --help             Show this help message"
@@ -148,6 +162,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 -p \"Customer TKT-001 has API errors\""
             echo "  $0 --prompt \"Billing issue\" --json events.json"
             echo "  $0 -p \"VIP customer complaint\" --skip-events"
+            echo "  $0 -p \"Returning user\" --user-id user-123"
             exit 0
             ;;
         *)
@@ -199,7 +214,13 @@ if [ -n "$AWS_PROFILE" ]; then
     echo "  Profile: ${AWS_PROFILE}"
 fi
 if [ -n "$MEMORY_ID" ]; then
-    echo "  Memory: ${MEMORY_ID}"
+    echo "  Cross-Agent Memory: ${MEMORY_ID}"
+fi
+if [ -n "$PERSISTENT_MEMORY_ID" ]; then
+    echo "  Persistent Memory: ${PERSISTENT_MEMORY_ID}"
+fi
+if [ -n "$USER_ID" ]; then
+    echo "  User ID: ${USER_ID}"
 fi
 echo "============================================="
 echo ""
@@ -218,15 +239,29 @@ echo ""
 # Create temp file to capture stderr
 STDERR_FILE=$(mktemp)
 
+# Build CLI arguments
+CLI_ARGS=(
+    "--prompt" "$PROMPT"
+    "--workflow-id" "$WORKFLOW_ID"
+    "--trace-id" "$TRACE_ID"
+    "--turn-number" "1"
+)
+
+# Add optional user-id argument if provided
+if [ -n "$USER_ID" ]; then
+    CLI_ARGS+=("--user-id" "$USER_ID")
+fi
+
+# Add persistent memory ID if available (Item 39.5)
+if [ -n "$PERSISTENT_MEMORY_ID" ]; then
+    CLI_ARGS+=("--persistent-memory-id" "$PERSISTENT_MEMORY_ID")
+fi
+
 # Run main.py: stdout (JSON) to file, stderr (human) to both terminal and temp file
 # Use process substitution to capture stderr while also displaying it
 # Always turn-number 1 for fresh runs (multi-turn handled by Demo Viewer extension)
 set +e  # Don't exit on error - we want to capture exit code
-uv run python agents/main.py \
-    --prompt "$PROMPT" \
-    --workflow-id "$WORKFLOW_ID" \
-    --trace-id "$TRACE_ID" \
-    --turn-number 1 \
+uv run python agents/main.py "${CLI_ARGS[@]}" \
     > "$JSON_OUTPUT" 2> >(tee "$STDERR_FILE" >&2)
 EXIT_CODE=$?
 set -e

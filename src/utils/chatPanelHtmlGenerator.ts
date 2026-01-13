@@ -554,6 +554,23 @@ export function generateStreamingContentHtml(content: string): string {
  * @param toolEvent - Tool call event to render
  * @returns HTML string for tool chip
  */
+/**
+ * Task 7.2: Get memory operation icon based on operation name
+ * Returns special icon for persistent memory functions
+ */
+function getMemoryOperationIcon(operation: string): string | null {
+  const memoryIconMap: Record<string, string> = {
+    // Persistent Session Memory operations
+    'remember_preference': '💾', // Save/disk icon
+    'recall_preferences': '🔍',  // Search/magnifying glass icon
+    'log_feedback': '⭐',        // Star icon
+    // Cross-agent memory operations (existing)
+    'store_context': '📝',       // Note icon
+    'search_memory': '🔎',       // Search icon
+  };
+  return memoryIconMap[operation] || null;
+}
+
 export function generateToolChipHtml(toolEvent: ToolCallEvent): string {
   const toolId = generateToolId(toolEvent);
   let statusClass: string;
@@ -578,10 +595,14 @@ export function generateToolChipHtml(toolEvent: ToolCallEvent): string {
       statusIcon = '<span class="tool-chip-spinner"></span>';
   }
 
+  // Task 7.2: Check for memory operation icon
+  const memoryIcon = getMemoryOperationIcon(toolEvent.operation);
+  const memoryIconHtml = memoryIcon ? `<span class="tool-chip-memory-icon" title="${escapeHtml(toolEvent.operation)}">${memoryIcon}</span>` : '';
+
   // Generate the label: system.operation
   const label = `${escapeHtml(toolEvent.system)}.${escapeHtml(toolEvent.operation)}`;
 
-  return `<div class="tool-chip ${statusClass}" data-tool-id="${escapeHtml(toolId)}">${statusIcon}<span class="tool-chip-label">${label}</span></div>`;
+  return `<div class="tool-chip ${statusClass}" data-tool-id="${escapeHtml(toolId)}">${statusIcon}${memoryIconHtml}<span class="tool-chip-label">${label}</span></div>`;
 }
 
 /**

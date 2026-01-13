@@ -129,6 +129,7 @@ project-root/
 │       ├── dynamodb_client.py     # Fire-and-forget events (pre-bundled)
 │       ├── gateway_client.py      # Gateway integration (pre-bundled)
 │       ├── memory_client.py       # Cross-agent memory (pre-bundled)
+│       ├── persistent_memory.py   # Persistent memory for LTM (pre-bundled)
 │       └── orchestrator_utils.py  # CLI, events, SDK calls (pre-bundled)
 ├── cdk/                           # AWS CDK infrastructure (Python)
 │   ├── app.py                     # CDK app entry point
@@ -359,17 +360,37 @@ Shared utilities for Agentify agents.
 PRE-BUNDLED by Agentify extension - DO NOT RECREATE.
 
 Available exports:
+
+Cross-Agent Memory (short-term, workflow-scoped):
 - init_memory: Initialize cross-agent memory (call once in orchestrator)
 - search_memory: Search for previously stored context
 - store_context: Store data for other agents to retrieve
 
-Import pattern:
+Persistent Memory (long-term, user-scoped):
+- init_persistent_memory: Initialize persistent memory (call once in orchestrator)
+- remember_preference: Store user preference
+- recall_preferences: Search user preferences
+- log_feedback: Log user feedback for personalization
+
+Import patterns:
     from agents.shared import init_memory, search_memory, store_context
+    from agents.shared import init_persistent_memory, remember_preference, recall_preferences, log_feedback
 """
 
 from .memory_client import init_memory, search_memory, store_context
+from .persistent_memory import (
+    init_persistent_memory,
+    remember_preference,
+    recall_preferences,
+    log_feedback
+)
 
-__all__ = ['init_memory', 'search_memory', 'store_context']
+__all__ = [
+    # Cross-agent memory (short-term)
+    'init_memory', 'search_memory', 'store_context',
+    # Persistent memory (long-term)
+    'init_persistent_memory', 'remember_preference', 'recall_preferences', 'log_feedback'
+]
 ```
 
 ## CDK Infrastructure

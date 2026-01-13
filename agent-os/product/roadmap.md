@@ -1808,7 +1808,7 @@ Sales presenter can point out: "See? It remembered from the previous agent."
 - `resources/prompts/steering/agentify-integration-steering.prompt.md` — Add memory section
 - `resources/prompts/steering/structure-steering.prompt.md` — Add to directory listing
 
-39.5. [ ] Persistent Session Memory — Enable agents to learn from past workflow sessions using AgentCore Memory's semantic and event strategies:
+39.5. [x] Persistent Session Memory — Enable agents to learn from past workflow sessions using AgentCore Memory's semantic and event strategies:
 
 **Problem:**
 Generated demos often need to remember user preferences, historical interactions, and learned patterns across multiple workflow sessions. Item #39 covers within-session memory sharing, but doesn't address persistent learning that survives across separate workflow runs.

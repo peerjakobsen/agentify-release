@@ -4,17 +4,21 @@
  */
 
 import type { OutcomeDefinitionService } from '../services/outcomeDefinitionService';
-import type { SystemAssumption } from '../types/wizardPanel';
+import type { SystemAssumption, LtmStrategy } from '../types/wizardPanel';
 import { INDUSTRY_COMPLIANCE_MAPPING } from './ideationConstants';
 import {
   DEFAULT_MEMORY_EXPIRY_DAYS,
   MIN_MEMORY_EXPIRY_DAYS,
   MAX_MEMORY_EXPIRY_DAYS,
+  DEFAULT_LTM_RETENTION_DAYS,
+  LTM_RETENTION_OPTIONS,
 } from '../types/wizardPanel';
 
 /**
  * Security & Guardrails state
  * Cross-Agent Memory Feature: Extended with memory configuration fields
+ * Persistent Session Memory Feature: Extended with LTM configuration fields
+ * CRITICAL: This interface MUST match SecurityState in src/types/wizardPanel.ts
  */
 export interface SecurityGuardrailsState {
   dataSensitivity: string;
@@ -30,6 +34,12 @@ export interface SecurityGuardrailsState {
   crossAgentMemoryEnabled: boolean;
   /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
   memoryExpiryDays: number;
+  /** Whether long-term memory (persistent session memory) is enabled */
+  longTermMemoryEnabled: boolean;
+  /** LTM retention in days (7, 30, or 90), only used when longTermMemoryEnabled is true */
+  ltmRetentionDays: number;
+  /** LTM strategy (semantic, summary, or user_preference) */
+  ltmStrategy: LtmStrategy;
 }
 
 /**
@@ -54,6 +64,7 @@ export interface Step4Callbacks {
 /**
  * Create default Security & Guardrails state
  * Cross-Agent Memory Feature: Includes memory configuration defaults
+ * Persistent Session Memory Feature: Includes LTM configuration defaults
  */
 export function createDefaultSecurityGuardrailsState(): SecurityGuardrailsState {
   return {
@@ -68,6 +79,9 @@ export function createDefaultSecurityGuardrailsState(): SecurityGuardrailsState 
     isLoading: false,
     crossAgentMemoryEnabled: true,
     memoryExpiryDays: DEFAULT_MEMORY_EXPIRY_DAYS,
+    longTermMemoryEnabled: false,
+    ltmRetentionDays: DEFAULT_LTM_RETENTION_DAYS,
+    ltmStrategy: 'semantic',
   };
 }
 
@@ -80,6 +94,36 @@ export function validateMemoryExpiryDays(days: number): number {
     return DEFAULT_MEMORY_EXPIRY_DAYS;
   }
   return Math.max(MIN_MEMORY_EXPIRY_DAYS, Math.min(MAX_MEMORY_EXPIRY_DAYS, Math.round(days)));
+}
+
+/**
+ * Validate LTM retention days value is one of the allowed values
+ * Persistent Session Memory Feature: Validation helper
+ */
+export function validateLtmRetentionDays(days: number): number {
+  if (typeof days !== 'number' || isNaN(days)) {
+    return DEFAULT_LTM_RETENTION_DAYS;
+  }
+  // Must be one of the allowed values: 7, 30, or 90
+  const allowedValues = LTM_RETENTION_OPTIONS as readonly number[];
+  if (allowedValues.includes(days)) {
+    return days;
+  }
+  // Find closest allowed value
+  const sorted = [...allowedValues].sort((a, b) => Math.abs(a - days) - Math.abs(b - days));
+  return sorted[0];
+}
+
+/**
+ * Validate LTM strategy is one of the allowed values
+ * Persistent Session Memory Feature: Validation helper
+ */
+export function validateLtmStrategy(strategy: string): LtmStrategy {
+  const validStrategies: LtmStrategy[] = ['semantic', 'summary', 'user_preference'];
+  if (validStrategies.includes(strategy as LtmStrategy)) {
+    return strategy as LtmStrategy;
+  }
+  return 'semantic';
 }
 
 /**
@@ -243,6 +287,43 @@ Please provide practical security considerations specific to this demo scenario.
    */
   public updateMemoryExpiryDays(days: number): void {
     this._state.memoryExpiryDays = validateMemoryExpiryDays(days);
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+  }
+
+  /**
+   * Toggle long-term memory enabled/disabled
+   * Persistent Session Memory Feature: Handler for LTM toggle
+   * When enabled, automatically enables cross-agent memory (STM) as well
+   */
+  public toggleLongTermMemory(enabled: boolean): void {
+    this._state.longTermMemoryEnabled = enabled;
+
+    // LTM requires STM - auto-enable cross-agent memory when LTM is enabled
+    if (enabled && !this._state.crossAgentMemoryEnabled) {
+      this._state.crossAgentMemoryEnabled = true;
+    }
+
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+  }
+
+  /**
+   * Update LTM retention days
+   * Persistent Session Memory Feature: Handler for retention dropdown
+   */
+  public updateLtmRetentionDays(days: number): void {
+    this._state.ltmRetentionDays = validateLtmRetentionDays(days);
+    this._callbacks.updateWebviewContent();
+    this._callbacks.syncStateToWebview();
+  }
+
+  /**
+   * Update LTM strategy
+   * Persistent Session Memory Feature: Handler for strategy dropdown
+   */
+  public updateLtmStrategy(strategy: string): void {
+    this._state.ltmStrategy = validateLtmStrategy(strategy);
     this._callbacks.updateWebviewContent();
     this._callbacks.syncStateToWebview();
   }

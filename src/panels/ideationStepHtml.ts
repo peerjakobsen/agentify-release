@@ -100,6 +100,12 @@ interface SecurityGuardrailsState {
   crossAgentMemoryEnabled: boolean;
   /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
   memoryExpiryDays: number;
+  /** Persistent Session Memory Feature: Whether long-term memory is enabled for user preference storage */
+  longTermMemoryEnabled: boolean;
+  /** LTM retention period in days (7, 30, or 90) */
+  ltmRetentionDays: number;
+  /** LTM strategy type */
+  ltmStrategy: 'semantic' | 'summary' | 'user_preference';
 }
 
 // Step 5: Agent Design types
@@ -114,6 +120,11 @@ interface ProposedAgent {
   nameEdited?: boolean;
   roleEdited?: boolean;
   toolsEdited?: boolean;
+  // Task 6.2: Per-agent memory configuration
+  usesShortTermMemory?: boolean;
+  usesLongTermMemory?: boolean;
+  ltmStrategy?: 'semantic' | 'summary' | 'user_preference';
+  memoryEdited?: boolean;
 }
 
 interface ProposedEdge {
@@ -1071,6 +1082,31 @@ export function getStep4Html(state: IdeationState): string {
     return `<option value="${days}" ${selected}>${label}</option>`;
   }).join('');
 
+  // Persistent Session Memory Feature: LTM Settings UI
+  const ltmEnabled = securityState.longTermMemoryEnabled ?? false;
+  const ltmRetentionDays = securityState.ltmRetentionDays ?? 30;
+  const ltmStrategy = securityState.ltmStrategy ?? 'semantic';
+  const ltmDisabledClass = !ltmEnabled ? 'disabled' : '';
+  // When LTM is enabled, STM should also be enabled and its toggle disabled
+  const stmControlledByLtm = ltmEnabled;
+
+  // LTM retention dropdown options (7, 30, 90 days)
+  const ltmRetentionOptions = [7, 30, 90].map(days => {
+    const selected = ltmRetentionDays === days ? 'selected' : '';
+    const label = days === 7 ? '7 days' : days === 30 ? '30 days' : '90 days';
+    return `<option value="${days}" ${selected}>${label}</option>`;
+  }).join('');
+
+  // LTM strategy dropdown options
+  const ltmStrategyOptions = [
+    { value: 'semantic', label: 'Semantic' },
+    { value: 'summary', label: 'Summary' },
+    { value: 'user_preference', label: 'User Preference' },
+  ].map(opt => {
+    const selected = ltmStrategy === opt.value ? 'selected' : '';
+    return `<option value="${opt.value}" ${selected}>${opt.label}</option>`;
+  }).join('');
+
   return `
       <div class="step-content">
         <h2>Security & Guardrails</h2>
@@ -1121,13 +1157,15 @@ export function getStep4Html(state: IdeationState): string {
           <p class="field-description">Cross-agent memory allows agents to share fetched data, reducing duplicate API calls and improving response consistency.</p>
           
           <div class="memory-toggle-row">
-            <label class="toggle-label">
+            <label class="toggle-label ${stmControlledByLtm ? 'controlled-by-ltm' : ''}">
               <input
                 type="checkbox"
-                ${memoryEnabled ? 'checked' : ''}
+                ${memoryEnabled || stmControlledByLtm ? 'checked' : ''}
+                ${stmControlledByLtm ? 'disabled' : ''}
                 onchange="toggleCrossAgentMemory(this.checked)"
               >
-              <span class="toggle-text">Enable Cross-Agent Memory</span>
+              <span class="toggle-text">Enable Cross-Agent Memory (STM)</span>
+              ${stmControlledByLtm ? '<span class="ltm-control-hint">(auto-enabled by LTM)</span>' : ''}
             </label>
           </div>
 
@@ -1142,6 +1180,51 @@ export function getStep4Html(state: IdeationState): string {
                 ${memoryExpiryOptions}
               </select>
             </label>
+          </div>
+
+          <div class="ltm-section">
+            <div class="ltm-header">
+              <label class="form-label">Long-Term Memory (LTM)</label>
+              <span class="ltm-info-tooltip" title="Long-term memory persists user preferences across sessions. When enabled, it automatically enables short-term memory for data sharing between agents.">ℹ️</span>
+            </div>
+            <p class="field-description">Enable persistent memory to remember user preferences across sessions. LTM requires STM for agent coordination.</p>
+            
+            <div class="memory-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  ${ltmEnabled ? 'checked' : ''}
+                  onchange="toggleLongTermMemory(this.checked)"
+                >
+                <span class="toggle-text">Enable Long-Term Memory</span>
+              </label>
+            </div>
+
+            <div class="ltm-settings-row ${ltmDisabledClass}">
+              <label class="expiry-label">
+                <span class="expiry-text">LTM Retention Period</span>
+                <select
+                  class="ltm-retention-select"
+                  onchange="updateLtmRetentionDays(parseInt(this.value, 10))"
+                  ${!ltmEnabled ? 'disabled' : ''}
+                >
+                  ${ltmRetentionOptions}
+                </select>
+              </label>
+            </div>
+
+            <div class="ltm-strategy-row ${ltmDisabledClass}">
+              <label class="expiry-label">
+                <span class="expiry-text">LTM Strategy</span>
+                <select
+                  class="ltm-strategy-select"
+                  onchange="updateLtmStrategy(this.value)"
+                  ${!ltmEnabled ? 'disabled' : ''}
+                >
+                  ${ltmStrategyOptions}
+                </select>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -1158,6 +1241,10 @@ export function getStep5Html(state: IdeationState): string {
   const hasAgents = agentDesignState?.proposedAgents?.length > 0;
   const proposalAccepted = agentDesignState?.proposalAccepted ?? false;
   const originalOrchestration = agentDesignState?.originalOrchestration ?? agentDesignState?.proposedOrchestration ?? 'workflow';
+
+  // Task 6.2: Per-agent memory configuration - check if LTM is enabled in Step 4
+  const ltmEnabledInStep4 = state.securityGuardrails?.longTermMemoryEnabled ?? false;
+  const stmEnabledInStep4 = state.securityGuardrails?.crossAgentMemoryEnabled ?? true;
 
   // Loading indicator
   let loadingHtml = '';
@@ -1205,6 +1292,47 @@ export function getStep5Html(state: IdeationState): string {
           </span>`
         ).join('');
 
+        // Task 6.2: Generate memory configuration HTML for this agent
+        const memoryConfigHtml = (stmEnabledInStep4 || ltmEnabledInStep4) ? `
+            <div class="agent-memory-section">
+              <div class="agent-memory-header" onclick="toggleAgentMemorySection('${escapeHtml(agent.id)}')">
+                <label class="form-label">Memory Configuration</label>
+                <span class="memory-toggle-icon">▼</span>
+              </div>
+              <div class="agent-memory-content" id="memory-content-${escapeHtml(agent.id)}">
+                ${stmEnabledInStep4 ? `
+                <div class="memory-checkbox-row">
+                  <label class="toggle-label">
+                    <input type="checkbox"
+                      ${agent.usesShortTermMemory ?? true ? 'checked' : ''}
+                      onchange="updateAgentMemory('${escapeHtml(agent.id)}', 'usesShortTermMemory', this.checked)">
+                    <span class="toggle-text">Uses Short-Term Memory (STM)</span>
+                  </label>
+                </div>` : ''}
+                ${ltmEnabledInStep4 ? `
+                <div class="memory-checkbox-row">
+                  <label class="toggle-label">
+                    <input type="checkbox"
+                      ${agent.usesLongTermMemory ?? false ? 'checked' : ''}
+                      onchange="updateAgentMemory('${escapeHtml(agent.id)}', 'usesLongTermMemory', this.checked)">
+                    <span class="toggle-text">Uses Long-Term Memory (LTM)</span>
+                  </label>
+                </div>
+                <div class="memory-strategy-row ${!(agent.usesLongTermMemory ?? false) ? 'disabled' : ''}">
+                  <label class="expiry-label">
+                    <span class="expiry-text">LTM Strategy</span>
+                    <select class="ltm-strategy-select"
+                      onchange="updateAgentMemory('${escapeHtml(agent.id)}', 'ltmStrategy', this.value)"
+                      ${!(agent.usesLongTermMemory ?? false) ? 'disabled' : ''}>
+                      <option value="semantic" ${(agent.ltmStrategy ?? 'semantic') === 'semantic' ? 'selected' : ''}>Semantic</option>
+                      <option value="summary" ${agent.ltmStrategy === 'summary' ? 'selected' : ''}>Summary</option>
+                      <option value="user_preference" ${agent.ltmStrategy === 'user_preference' ? 'selected' : ''}>User Preference</option>
+                    </select>
+                  </label>
+                </div>` : ''}
+              </div>
+            </div>` : '';
+
         return `
           <div class="agent-card agent-card-editable" data-agent-id="${escapeHtml(agent.id)}">
             <div class="agent-header">
@@ -1233,6 +1361,7 @@ export function getStep5Html(state: IdeationState): string {
                   onkeydown="handleToolInputKeydown(event, '${escapeHtml(agent.id)}')">
               </div>
             </div>
+            ${memoryConfigHtml}
             <button class="remove-agent-btn" onclick="removeAgent('${escapeHtml(agent.id)}')" title="Remove agent">
               <span class="trash-icon">🗑</span> Remove Agent
             </button>

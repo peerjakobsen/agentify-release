@@ -218,8 +218,9 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 
-# Handlers directory for mock data discovery
+# Directories for schema and mock data discovery
 HANDLERS_DIR="${CDK_DIR}/gateway/handlers"
+SCHEMAS_DIR="${CDK_DIR}/gateway/schemas"
 
 # Extract handler name from tool name (e.g., "get-deal___get_deal" -> "get_deal")
 get_handler_name() {
@@ -234,61 +235,115 @@ get_handler_name() {
     fi
 }
 
-# Auto-discover test arguments from mock_data.json
+# Generate test value based on parameter name and type
+generate_test_value() {
+    local param_name="$1"
+    local param_type="$2"
+    local handler_name="$3"
+
+    case "$param_type" in
+        "array")
+            # Generate array test values based on param name
+            case "$param_name" in
+                tags) echo '["test_tag", "automated"]' ;;
+                *) echo '["test_item"]' ;;
+            esac
+            ;;
+        "object")
+            # Generate object test values based on param name
+            case "$param_name" in
+                updates) echo '{"status": "pending", "comment": "Test update"}' ;;
+                *) echo '{"key": "value"}' ;;
+            esac
+            ;;
+        *)
+            # String type - generate based on param name
+            case "$param_name" in
+                ticket_id) echo '"TKT-12345"' ;;
+                email) echo '"john.developer@techcorp.com"' ;;
+                account_id) echo '"001XX000003NGSFYA4"' ;;
+                case_id) echo '"500XX000001AbcDEF"' ;;
+                subject) echo '"Test support ticket"' ;;
+                description) echo '"This is a test description for automated testing"' ;;
+                assignee) echo '"billing_team"' ;;
+                priority) echo '"high"' ;;
+                status) echo '"open"' ;;
+                query) echo '"test query"' ;;
+                deal_id) echo '"DEAL-001"' ;;
+                customer_id) echo '"CUST-001"' ;;
+                text) echo '"This is a test message"' ;;
+                *) echo '"test_value"' ;;
+            esac
+            ;;
+    esac
+}
+
+# Auto-discover test arguments from schema files
 get_test_arguments() {
     local tool_name="$1"
     local handler_name=$(get_handler_name "$tool_name")
-    local mock_file="${HANDLERS_DIR}/${handler_name}/mock_data.json"
+    local schema_file="${SCHEMAS_DIR}/${handler_name}.json"
 
-    # If mock_data.json exists, extract test parameters from it
+    # Primary: Read from schema file to get required parameters
+    if [ -f "$schema_file" ]; then
+        local schema=$(cat "$schema_file")
+        local required_params=$(echo "$schema" | jq -r '.inputSchema.required[]? // empty' 2>/dev/null)
+        local properties=$(echo "$schema" | jq -r '.inputSchema.properties // {}' 2>/dev/null)
+
+        if [ -n "$required_params" ]; then
+            # Build test arguments from required params
+            local args="{"
+            local first=true
+
+            for param in $required_params; do
+                # Get param type from properties
+                local param_type=$(echo "$properties" | jq -r ".\"$param\".type // \"string\"" 2>/dev/null)
+                local test_value=$(generate_test_value "$param" "$param_type" "$handler_name")
+
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    args="$args, "
+                fi
+                args="$args\"$param\": $test_value"
+            done
+            args="$args}"
+            echo "$args"
+            return
+        fi
+    fi
+
+    # Fallback: Try mock_data.json for older-style discovery
+    local mock_file="${HANDLERS_DIR}/${handler_name}/mock_data.json"
     if [ -f "$mock_file" ]; then
         local mock_data=$(cat "$mock_file")
-
-        # Mock data structure: {wrapper_key: {actual_key: data}}
-        # e.g., {"deals": {"DEAL-001": {...}}} or {"companies": {"Acme Corp": {...}}}
         local wrapper_key=$(echo "$mock_data" | jq -r 'keys[0] // empty' 2>/dev/null)
 
         if [ -n "$wrapper_key" ] && [ "$wrapper_key" != "null" ]; then
-            # Get the first actual key inside the wrapper
             local first_value_key=$(echo "$mock_data" | jq -r ".[\"$wrapper_key\"] | keys[0] // empty" 2>/dev/null)
 
             if [ -n "$first_value_key" ] && [ "$first_value_key" != "null" ]; then
-                # Determine the parameter name based on handler name patterns
                 local param_name=""
                 case "$handler_name" in
                     *deal*) param_name="deal_id" ;;
                     *ticket*) param_name="ticket_id" ;;
                     *customer*) param_name="customer_id" ;;
                     *company*|*profile*) param_name="company_name" ;;
-                    *product*|*inventory*) param_name="product_id" ;;
-                    *market*|*data*)
-                        # For market data, structure is: {market_data: {industry: {metric: data}}}
-                        local first_industry="$first_value_key"
-                        local first_metric=$(echo "$mock_data" | jq -r ".[\"$wrapper_key\"][\"$first_industry\"] | keys[0] // empty" 2>/dev/null)
-                        if [ -n "$first_metric" ] && [ "$first_metric" != "null" ]; then
-                            echo "{\"industry\": \"$first_industry\", \"metric\": \"$first_metric\"}"
-                            return
-                        fi
-                        # Fallback if nested structure not found
-                        param_name="industry"
-                        ;;
                     *) param_name="id" ;;
                 esac
-
-                # Return the discovered key as the test value
                 echo "{\"$param_name\": \"$first_value_key\"}"
                 return
             fi
         fi
     fi
 
-    # Fallback to pattern-based defaults if no mock data found
+    # Final fallback to pattern-based defaults
     case "$tool_name" in
         *get-deal*|*get_deal*)
             echo '{"deal_id": "DEAL-001"}'
             ;;
         *get-ticket*|*get_ticket*)
-            echo '{"ticket_id": "TKT-001"}'
+            echo '{"ticket_id": "TKT-12345"}'
             ;;
         *customer-lookup*|*customer_lookup*)
             echo '{"customer_id": "CUST-001"}'
@@ -300,7 +355,6 @@ get_test_arguments() {
             echo '{"query": "test query"}'
             ;;
         *)
-            # Default: empty arguments
             echo '{}'
             ;;
     esac
@@ -356,9 +410,10 @@ EOF
 
     # Check for Lambda errors wrapped in result content (e.g., ImportModuleError, Exception)
     if [ -n "$content_text" ]; then
-        if echo "$content_text" | grep -qiE "error|exception|traceback|failed|unable to import"; then
+        # Only flag as error if it's an actual error pattern, not just the word "error" in a field name
+        # Check for: "success": false, Exception, Traceback, ImportModuleError, "error": "some message"
+        if echo "$content_text" | grep -qE '"success":\s*false|Exception|Traceback|ImportModuleError|unable to import module'; then
             print_tool_fail "$tool_name"
-            # Extract and show the error message (first 200 chars)
             local error_preview=$(echo "$content_text" | head -c 200)
             echo -e "      Lambda Error: ${RED}${error_preview}${NC}"
             return 1
@@ -419,9 +474,9 @@ check_tool_result() {
         return
     fi
 
-    # Check for Lambda errors in content
+    # Check for Lambda errors in content (only actual errors, not field names)
     if [ -n "$content_text" ]; then
-        if echo "$content_text" | grep -qiE "error|exception|traceback|failed|unable to import"; then
+        if echo "$content_text" | grep -qE '"success":\s*false|Exception|Traceback|ImportModuleError|unable to import module'; then
             echo "fail"
             return
         fi

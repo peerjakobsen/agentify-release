@@ -505,6 +505,169 @@ The `setup-memory.sh` script creates the Memory resource and stores `MEMORY_ID` 
 
 ---
 
+## Pattern 10: Persistent Memory (Long-Term)
+
+Enable agents to remember user preferences across sessions via AgentCore Memory, providing personalized experiences.
+
+### When to Use Persistent Memory
+
+- **User preferences**: Remember communication style, notification preferences, etc.
+- **Personalization**: Tailor agent responses based on past interactions
+- **Feedback tracking**: Store user feedback for improvement
+- **Cross-session continuity**: Maintain context between workflow executions
+
+### Comparison with Cross-Agent Memory
+
+| Aspect | Cross-Agent Memory (STM) | Persistent Memory (LTM) |
+|--------|--------------------------|-------------------------|
+| Scope | Single workflow session | Across all sessions |
+| Namespace | `/workflow/{session_id}/context` | `/users/{effective_id}/preferences` |
+| Purpose | Share data between agents | Remember user preferences long-term |
+| Typical TTL | 7 days | 30-90 days |
+| Use case | Pass customer profile to next agent | Remember user's preferred language |
+
+### Configuration
+
+Enable in `.agentify/config.json`:
+
+```json
+{
+  "memory": {
+    "crossAgent": {
+      "enabled": true,
+      "expiryDays": 7
+    },
+    "persistence": {
+      "enabled": true,
+      "strategy": "semantic",
+      "retentionDays": 30
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Enable persistent memory |
+| `strategy` | `semantic` | Memory strategy (semantic, summary, user_preference) |
+| `retentionDays` | `30` | Retention period (7, 30, or 90 days) |
+
+### Memory Initialization (Orchestrator)
+
+**CRITICAL**: Initialize persistent memory once per workflow in the orchestrator, NOT in individual agents.
+
+```python
+# In main.py orchestrator - before first agent invocation
+from agents.shared import init_persistent_memory
+
+# Initialize with user_id (preferred) or session_id fallback
+if init_persistent_memory(user_id='user-123', session_id=session_id):
+    print("Persistent Memory: enabled", file=sys.stderr)
+else:
+    print("Persistent Memory: disabled (PERSISTENT_MEMORY_ID not configured)", file=sys.stderr)
+```
+
+### Dual Identity Pattern
+
+The effective_id is determined by priority:
+1. Explicit `user_id` (for authenticated users)
+2. `session_id` (for anonymous users)
+3. `WORKFLOW_ID` environment variable (fallback)
+
+```python
+# For authenticated users - use user_id for true cross-session persistence
+init_persistent_memory(user_id='user-123', session_id='session-abc')
+
+# For anonymous users - falls back to session_id
+init_persistent_memory(user_id=None, session_id='session-abc')
+```
+
+### Memory Tools (Agents)
+
+Agents use pre-bundled persistent memory tools.
+
+```python
+# CORRECT - Import from shared (pre-bundled)
+from agents.shared import remember_preference, recall_preferences, log_feedback
+
+# Include in agent's local_tools list
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[remember_preference, recall_preferences, log_feedback],
+        system_prompt=SYSTEM_PROMPT
+    )
+
+# WRONG - Never define these locally
+@tool
+@instrument_tool
+def remember_preference(category: str, preference: str, value: str) -> str:  # BLOCKING ERROR
+    ...
+```
+
+### Tool Behavior
+
+**remember_preference(category: str, preference: str, value: str)** - Store user preference:
+```python
+# Store a user preference
+result = remember_preference('communication', 'style', 'formal and concise')
+# Returns: "Remembered: communication/style" or "Persistent memory not initialized..."
+```
+
+**recall_preferences(query: str, category: Optional[str] = None)** - Search preferences:
+```python
+# Search all preferences
+result = recall_preferences('communication style')
+# Returns: "1. [communication/style]: formal and concise" or "No matching preferences found."
+
+# Search within category
+result = recall_preferences('frequency', category='notifications')
+```
+
+**log_feedback(entity_type: str, entity_id: str, rating: int, notes: Optional[str] = None)** - Log feedback:
+```python
+# Log user feedback
+result = log_feedback('product', 'PRD-123', rating=5, notes='Great feature!')
+# Returns: "Feedback logged: product/PRD-123"
+```
+
+### Fire-and-Forget Pattern
+
+Like cross-agent memory, persistent memory operations never block agent execution:
+
+```python
+# Memory errors are logged as warnings, never raised
+try:
+    _persistent_memory_client.create_event(...)
+    return f"Remembered: {category}/{preference}"
+except Exception as e:
+    logger.warning(f"Persistent memory store error: {e}")
+    return f"Failed to remember: {category}/{preference}"  # Don't raise - agent continues
+```
+
+### Namespace Isolation
+
+Persistent memory is scoped to user identity:
+
+```
+/users/{effective_id}/preferences
+       │
+       └── Each user has isolated persistent memory
+           - User A cannot access User B's preferences
+           - Data persists across sessions for same user
+           - Data expires based on retentionDays config
+```
+
+### Environment Variables
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `PERSISTENT_MEMORY_ID` | AgentCore Memory resource ID for LTM | `.agentify/infrastructure.json` |
+| `USER_ID` | Optional user identity | CLI argument or application context |
+
+The `setup-persistent-memory.sh` script creates the Memory resource and stores `PERSISTENT_MEMORY_ID` in infrastructure.json. The orchestrate.sh script exports it for the Python subprocess.
+
+
 ## Quick Checklist
 
 Before committing agent code, verify:
@@ -519,6 +682,8 @@ Before committing agent code, verify:
 - [ ] If using Haiku routing, `routing` section added to `.agentify/config.json`
 - [ ] If using cross-agent memory, `init_memory(session_id)` called in orchestrator
 - [ ] Memory tools imported from `agents.shared`, not defined locally
+- [ ] If using persistent memory, `init_persistent_memory(user_id, session_id)` called in orchestrator
+- [ ] Persistent memory tools (`remember_preference`, `recall_preferences`) imported from `agents.shared`
 
 ---
 

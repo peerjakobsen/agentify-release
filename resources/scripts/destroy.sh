@@ -4,7 +4,7 @@
 # =============================================================================
 # This script tears down Agentify infrastructure in 2 phases:
 #
-#   Phase 1: Delete AgentCore agents, Policy Engine, Memory, and MCP Gateway (always succeeds)
+#   Phase 1: Delete AgentCore agents, Policy Engine, Memory (both types), and MCP Gateway (always succeeds)
 #   Phase 2: Delete CDK stacks (only when ENIs are released)
 #
 # Note: AgentCore ENIs can take up to 8 hours to release after agent deletion.
@@ -185,7 +185,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Destroys Agentify infrastructure in 2 phases:"
-            echo "  Phase 1: Delete AgentCore agents, Policy Engine, Memory, and MCP Gateway"
+            echo "  Phase 1: Delete AgentCore agents, Policy Engine, Memory (both types), and MCP Gateway"
             echo "  Phase 2: Delete CDK stacks (VPC, DynamoDB, etc.)"
             echo ""
             echo "Note: AgentCore ENIs can take up to 8 hours to release after agent deletion."
@@ -261,7 +261,8 @@ if [ "$FORCE" = false ]; then
     echo "The following will be deleted:"
     echo "  - AgentCore agents (if any deployed)"
     echo "  - AgentCore Policy Engine (if configured)"
-    echo "  - AgentCore Memory (if configured)"
+    echo "  - AgentCore Cross-Agent Memory (if configured)"
+    echo "  - AgentCore Persistent Memory (if configured)"
     echo "  - AgentCore MCP Gateway (if configured)"
     echo "  - SSM Parameters (/agentify/${PROJECT_NAME}/*)"
     echo "  - DynamoDB workflow events table"
@@ -288,6 +289,7 @@ echo ""
 PHASE1_AGENTS_DELETED=false
 PHASE1_POLICY_DELETED=false
 PHASE1_MEMORY_DELETED=false
+PHASE1_PERSISTENT_MEMORY_DELETED=false
 PHASE1_GATEWAY_DELETED=false
 
 # Step 1: Delete AgentCore Agents
@@ -439,8 +441,8 @@ else
     print_warning "No infrastructure.json found. Skipping Policy Engine deletion."
 fi
 
-# Step 1c: Delete AgentCore Memory (Cross-Agent Memory Feature)
-print_step "Step 1c: Deleting AgentCore Memory..."
+# Step 1c: Delete AgentCore Cross-Agent Memory (Short-Term)
+print_step "Step 1c: Deleting AgentCore Cross-Agent Memory (Short-Term)..."
 
 if [ -f "${INFRA_CONFIG}" ] && command -v jq &> /dev/null; then
     MEMORY_ID=$(jq -r '.memory.memoryId // empty' "${INFRA_CONFIG}" 2>/dev/null)
@@ -454,22 +456,55 @@ if [ -f "${INFRA_CONFIG}" ] && command -v jq &> /dev/null; then
             uv add --dev bedrock-agentcore-starter-toolkit 2>/dev/null || true
         fi
 
-        print_step "Deleting Memory: ${MEMORY_ID}"
+        print_step "Deleting Cross-Agent Memory: ${MEMORY_ID}"
         if uv run agentcore memory delete \
             --memory-id "$MEMORY_ID" \
             --region "${REGION}" 2>/dev/null; then
-            print_success "Memory deleted: ${MEMORY_ID}"
+            print_success "Cross-Agent Memory deleted: ${MEMORY_ID}"
             PHASE1_MEMORY_DELETED=true
         else
-            print_warning "Could not delete Memory ${MEMORY_ID} (may already be deleted)"
+            print_warning "Could not delete Cross-Agent Memory ${MEMORY_ID} (may already be deleted)"
         fi
 
         cd "${PROJECT_ROOT}"
     else
-        print_warning "No Memory ID found in infrastructure.json"
+        print_warning "No Cross-Agent Memory ID found in infrastructure.json"
     fi
 else
-    print_warning "No infrastructure.json found. Skipping Memory deletion."
+    print_warning "No infrastructure.json found. Skipping Cross-Agent Memory deletion."
+fi
+
+# Step 1d: Delete AgentCore Persistent Memory (Long-Term)
+print_step "Step 1d: Deleting AgentCore Persistent Memory (Long-Term)..."
+
+if [ -f "${INFRA_CONFIG}" ] && command -v jq &> /dev/null; then
+    PERSISTENT_MEMORY_ID=$(jq -r '.persistentMemory.memoryId // empty' "${INFRA_CONFIG}" 2>/dev/null)
+
+    if [ -n "$PERSISTENT_MEMORY_ID" ]; then
+        cd "${CDK_DIR}"
+
+        # Ensure agentcore toolkit is available
+        if ! uv run agentcore --version &> /dev/null 2>&1; then
+            print_step "Installing AgentCore Starter Toolkit..."
+            uv add --dev bedrock-agentcore-starter-toolkit 2>/dev/null || true
+        fi
+
+        print_step "Deleting Persistent Memory: ${PERSISTENT_MEMORY_ID}"
+        if uv run agentcore memory delete \
+            --memory-id "$PERSISTENT_MEMORY_ID" \
+            --region "${REGION}" 2>/dev/null; then
+            print_success "Persistent Memory deleted: ${PERSISTENT_MEMORY_ID}"
+            PHASE1_PERSISTENT_MEMORY_DELETED=true
+        else
+            print_warning "Could not delete Persistent Memory ${PERSISTENT_MEMORY_ID} (may already be deleted)"
+        fi
+
+        cd "${PROJECT_ROOT}"
+    else
+        print_warning "No Persistent Memory ID found in infrastructure.json"
+    fi
+else
+    print_warning "No infrastructure.json found. Skipping Persistent Memory deletion."
 fi
 
 # Step 2: Cleanup MCP Gateway
@@ -570,9 +605,14 @@ if [ -n "$VPC_ID" ]; then
             echo "  - Policy Engine (none found or already deleted)"
         fi
         if [ "$PHASE1_MEMORY_DELETED" = true ]; then
-            echo "  ✓ Memory deleted"
+            echo "  ✓ Cross-Agent Memory deleted"
         else
-            echo "  - Memory (none found or already deleted)"
+            echo "  - Cross-Agent Memory (none found or already deleted)"
+        fi
+        if [ "$PHASE1_PERSISTENT_MEMORY_DELETED" = true ]; then
+            echo "  ✓ Persistent Memory deleted"
+        else
+            echo "  - Persistent Memory (none found or already deleted)"
         fi
         if [ "$PHASE1_GATEWAY_DELETED" = true ]; then
             echo "  ✓ MCP Gateway deleted"
@@ -652,7 +692,8 @@ echo ""
 echo "All resources have been deleted:"
 echo "  - AgentCore agents"
 echo "  - AgentCore Policy Engine"
-echo "  - AgentCore Memory"
+echo "  - AgentCore Cross-Agent Memory"
+echo "  - AgentCore Persistent Memory"
 echo "  - AgentCore MCP Gateway"
 echo "  - SSM Parameters"
 echo "  - AWS CDK resources (VPC, DynamoDB, etc.)"

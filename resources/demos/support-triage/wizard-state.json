@@ -77,7 +77,10 @@
     "guardrailNotes": "Demo with mock customer data. PII must be masked in responses. Escalation actions require approval.",
     "skipped": false,
     "crossAgentMemoryEnabled": true,
-    "memoryExpiryDays": 7
+    "memoryExpiryDays": 7,
+    "longTermMemoryEnabled": true,
+    "ltmRetentionDays": 30,
+    "ltmStrategy": "user_preference"
   },
   "agentDesign": {
     "proposedAgents": [

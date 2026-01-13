@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Persistent Memory Validator",
+  "description": "Validates persistent memory configuration and imports when LTM is enabled",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["agents/*/agent.py", "agents/*/main.py", "main.py"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this file for persistent memory configuration issues.\n\n## WHEN TO CHECK\n\nOnly validate if config.json has `memory.persistence.enabled: true`.\nIf persistent memory is disabled or config not found, no action needed.\n\n## PERSISTENT MEMORY INITIALIZATION\n\nIn main.py orchestrator, verify init_persistent_memory() is called:\n\n```python\nfrom agents.shared import init_persistent_memory\n\n# Initialize before first agent invocation\nif init_persistent_memory(user_id=user_id, session_id=session_id):\n    print(\"Persistent Memory: enabled\", file=sys.stderr)\nelse:\n    print(\"Persistent Memory: disabled\", file=sys.stderr)\n```\n\nThe user_id parameter is optional but recommended for authenticated users.\nThe session_id parameter is required as fallback for anonymous users.\n\n## PERSISTENT MEMORY TOOLS - MUST IMPORT FROM agents.shared\n\nThese functions MUST be imported, NEVER defined locally:\n- remember_preference\n- recall_preferences\n- log_feedback\n- init_persistent_memory\n\nCorrect import pattern:\n```python\nfrom agents.shared import remember_preference, recall_preferences, log_feedback\n```\n\n## LOCAL DEFINITIONS - BLOCKING ERROR\n\nThese functions MUST NOT be defined locally. REMOVE and import from agents.shared instead:\n- remember_preference\n- recall_preferences\n- log_feedback\n- init_persistent_memory\n\nIf any of these are defined locally (with @tool/@instrument_tool decorators), REMOVE the definitions and add:\n```python\nfrom agents.shared import remember_preference, recall_preferences, log_feedback\n```\n\n## AGENT FILES (agent.py)\n\nIf persistent memory tools are used, verify:\n1. Tools are imported from agents.shared\n2. Tools are included in local_tools list\n3. No local definitions of these functions\n\n```python\nfrom agents.shared import remember_preference, recall_preferences\n\ndef invoke_my_agent(prompt: str) -> str:\n    return invoke_with_gateway(\n        prompt=prompt,\n        local_tools=[remember_preference, recall_preferences],\n        system_prompt=SYSTEM_PROMPT\n    )\n```\n\n## ENVIRONMENT VARIABLES\n\nVerify PERSISTENT_MEMORY_ID is expected to be set by orchestrate.sh.\nDo NOT hardcode memory IDs in agent code.\n\n## ACTION\n\nFix imports if missing or incorrect.\nRemove local definitions of persistent memory functions.\nAdd init_persistent_memory() call in orchestrator if missing."
+  },
+  "shortName": "persistent-memory"
+}

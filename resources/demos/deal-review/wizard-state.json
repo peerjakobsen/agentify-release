@@ -88,7 +88,10 @@
     "guardrailNotes": "Demo with synthetic deal data. No real financial or legal information.",
     "skipped": false,
     "crossAgentMemoryEnabled": true,
-    "memoryExpiryDays": 7
+    "memoryExpiryDays": 7,
+    "longTermMemoryEnabled": true,
+    "ltmRetentionDays": 30,
+    "ltmStrategy": "semantic"
   },
   "agentDesign": {
     "proposedAgents": [

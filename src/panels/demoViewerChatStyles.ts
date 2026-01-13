@@ -655,6 +655,16 @@ export function getDemoViewerChatStyles(): string {
       font-size: 10px;
     }
 
+    /* Task 7.3: Memory operation icons */
+    .tool-chip-memory-icon {
+      font-size: 12px;
+      margin-right: 2px;
+      opacity: 0.9;
+    }
+    .tool-chip-memory-icon:hover {
+      opacity: 1;
+    }
+
     /* =========================================================================
      * Tool Chip Expanded Details Styles
      * Inline expansion with input/output/error details

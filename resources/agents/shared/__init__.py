@@ -30,10 +30,16 @@ chronological tool execution timelines across multi-agent workflows.
 - `GatewayTokenManager`: OAuth token management for MCP Gateway authentication
 - `invoke_with_gateway()`: Execute agent with proper MCP session lifecycle
 
-### Cross-Agent Memory
+### Cross-Agent Memory (Short-Term)
 - `init_memory()`: Initialize AgentCore Memory for cross-agent data sharing
 - `search_memory()`: Search for context stored by other agents
 - `store_context()`: Store context for downstream agents to access
+
+### Persistent Memory (Long-Term)
+- `init_persistent_memory()`: Initialize AgentCore Memory for user preference storage
+- `remember_preference()`: Store user preferences persistently
+- `recall_preferences()`: Search for previously stored preferences
+- `log_feedback()`: Log user feedback for improvement
 
 ## Integration Patterns for Agent Developers
 
@@ -93,7 +99,7 @@ def extract_user_id(request: str) -> dict:
     }
 ```
 
-### Cross-Agent Memory Pattern
+### Cross-Agent Memory Pattern (Short-Term)
 
 For sharing data between agents in a workflow:
 
@@ -110,6 +116,31 @@ store_context("customer_profile", "Premium tier, 5 years loyalty")
 results = search_memory("customer loyalty status")
 ```
 
+### Persistent Memory Pattern (Long-Term)
+
+For remembering user preferences across sessions:
+
+```python
+from agents.shared.persistent_memory import (
+    init_persistent_memory,
+    remember_preference,
+    recall_preferences,
+    log_feedback
+)
+
+# In main.py orchestrator - initialize once per session
+init_persistent_memory(user_id='user-123', session_id='session-abc')
+
+# In agent tools - store user preferences
+remember_preference('communication', 'style', 'formal and concise')
+
+# In downstream agent - recall user preferences
+results = recall_preferences("communication style")
+
+# Log user feedback
+log_feedback('product', 'PRD-123', rating=5, notes='Great feature!')
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -117,6 +148,7 @@ results = search_memory("customer loyalty status")
 - `AWS_REGION`: AWS region for DynamoDB and SSM (default: 'us-east-1')
 - `AGENTIFY_TABLE_NAME`: DynamoDB table name (fallback configuration)
 - `MEMORY_ID`: AgentCore Memory resource ID for cross-agent memory
+- `PERSISTENT_MEMORY_ID`: AgentCore Memory resource ID for persistent memory
 
 ### SSM Parameter Store
 
@@ -130,6 +162,7 @@ results = search_memory("customer loyalty status")
 4. **Same session_id**: Use consistent session_id across workflow agents
 5. **Lazy imports**: Import agent modules inside handlers for faster cold starts
 6. **Init memory early**: Call init_memory() before first agent invocation
+7. **Init persistent memory**: Call init_persistent_memory() for user preference storage
 """
 
 from .instrumentation import (
@@ -154,6 +187,14 @@ from .memory_client import (
     get_memory_status
 )
 
+from .persistent_memory import (
+    init_persistent_memory,
+    remember_preference,
+    recall_preferences,
+    log_feedback,
+    get_persistent_memory_status
+)
+
 __all__ = [
     # Instrumentation
     'instrument_tool',
@@ -167,9 +208,15 @@ __all__ = [
     # Gateway
     'GatewayTokenManager',
     'invoke_with_gateway',
-    # Memory
+    # Memory (Cross-Agent / Short-Term)
     'init_memory',
     'search_memory',
     'store_context',
-    'get_memory_status'
+    'get_memory_status',
+    # Persistent Memory (Long-Term)
+    'init_persistent_memory',
+    'remember_preference',
+    'recall_preferences',
+    'log_feedback',
+    'get_persistent_memory_status'
 ]

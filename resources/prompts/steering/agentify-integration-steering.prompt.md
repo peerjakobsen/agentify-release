@@ -138,7 +138,8 @@ The Demo Viewer polls DynamoDB for tool call events to visualize workflow execut
 | `agents/shared/instrumentation.py` | Tool observability | `instrument_tool`, `set_instrumentation_context`, `clear_instrumentation_context` |
 | `agents/shared/dynamodb_client.py` | Event persistence | `write_tool_event`, `query_tool_events`, `get_tool_events_table_name` |
 | `agents/shared/gateway_client.py` | Gateway integration | `GatewayTokenManager`, `invoke_with_gateway` |
-| `agents/shared/memory_client.py` | Cross-agent memory | `init_memory`, `search_memory`, `store_context` |
+| `agents/shared/memory_client.py` | Cross-agent memory (short-term) | `init_memory`, `search_memory`, `store_context` |
+| `agents/shared/persistent_memory.py` | Long-term memory (LTM) | `init_persistent_memory`, `remember_preference`, `recall_preferences`, `log_feedback` |
 
 ### Import Pattern
 
@@ -156,8 +157,11 @@ from agents.shared.dynamodb_client import write_tool_event
 # Import Gateway client (PRE-BUNDLED - do not recreate)
 from agents.shared.gateway_client import GatewayTokenManager, invoke_with_gateway
 
-# Import Memory client (PRE-BUNDLED - do not recreate)
+# Import Cross-Agent Memory client (PRE-BUNDLED - do not recreate)
 from agents.shared import init_memory, search_memory, store_context
+
+# Import Persistent Memory client for LTM (PRE-BUNDLED - do not recreate)
+from agents.shared import init_persistent_memory, remember_preference, recall_preferences, log_feedback
 ```
 
 ## Instrumentation Context Pattern
@@ -289,6 +293,78 @@ result = search_memory("customer info")
 
 # Agents can fall back to direct API calls when memory unavailable
 ```
+
+## Persistent Memory Initialization (Long-Term)
+
+Persistent memory enables agents to remember user preferences across sessions, providing personalized experiences.
+
+### When to Use Persistent Memory
+
+| Use Case | Cross-Agent Memory | Persistent Memory |
+|----------|-------------------|-------------------|
+| Share data between agents in workflow | Yes | No |
+| Remember user preferences across sessions | No | Yes |
+| Store feedback for personalization | No | Yes |
+| Typical retention | 7 days | 30-90 days |
+
+### Memory Initialization in Orchestrator
+
+**CRITICAL**: Initialize persistent memory once per workflow in the orchestrator (main.py), NOT in individual agents.
+
+```python
+# In main.py - import at module level
+from agents.shared import init_persistent_memory
+
+# In main() - after user_id/session_id available, BEFORE first agent invocation
+# user_id is optional but recommended for authenticated users
+if init_persistent_memory(user_id=user_id, session_id=session_id):
+    print("  Persistent Memory: enabled", file=sys.stderr)
+else:
+    print("  Persistent Memory: disabled (PERSISTENT_MEMORY_ID not configured)", file=sys.stderr)
+
+# Now safe to invoke agents...
+```
+
+### Persistent Memory Tools
+
+Agents use pre-bundled `remember_preference()`, `recall_preferences()`, and `log_feedback()` tools.
+
+```python
+from agents.shared import remember_preference, recall_preferences, log_feedback
+from agents.shared.gateway_client import invoke_with_gateway
+from .prompts import SYSTEM_PROMPT
+
+def invoke_my_agent(prompt: str) -> str:
+    return invoke_with_gateway(
+        prompt=prompt,
+        local_tools=[remember_preference, recall_preferences, log_feedback],
+        system_prompt=SYSTEM_PROMPT
+    )
+```
+
+### Tool Behavior
+
+**remember_preference(category, preference, value)** - Store user preference:
+- Returns "Remembered: {category}/{preference}" on success
+- Returns "Persistent memory not initialized..." if memory unavailable
+- Fire-and-forget pattern - never raises exceptions
+
+**recall_preferences(query, category=None)** - Search user preferences:
+- Returns formatted list of matching preferences
+- Returns "No matching preferences found." if none match
+- Optional category filter for targeted search
+
+**log_feedback(entity_type, entity_id, rating, notes=None)** - Log user feedback:
+- Returns "Feedback logged: {entity_type}/{entity_id}" on success
+- Fire-and-forget pattern - never raises exceptions
+
+### Environment Variables
+
+| Variable | Description | Source |
+|----------|-------------|--------|
+| `PERSISTENT_MEMORY_ID` | AgentCore Memory resource ID for LTM | `.agentify/infrastructure.json` |
+| `USER_ID` | Optional user identity | CLI argument or application context |
+
 
 ## DynamoDB Client Usage
 

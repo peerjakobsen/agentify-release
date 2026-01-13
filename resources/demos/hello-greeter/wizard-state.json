@@ -55,7 +55,10 @@
     "guardrailNotes": "Simple demo with mock data only.",
     "skipped": true,
     "crossAgentMemoryEnabled": false,
-    "memoryExpiryDays": 7
+    "memoryExpiryDays": 7,
+    "longTermMemoryEnabled": false,
+    "ltmRetentionDays": 30,
+    "ltmStrategy": "semantic"
   },
   "agentDesign": {
     "proposedAgents": [

@@ -165,6 +165,16 @@ export function getIdeationScript(): string {
       function updateMemoryExpiryDays(days) {
         vscode.postMessage({ command: 'updateMemoryExpiryDays', value: days });
       }
+      // Persistent Session Memory Feature: LTM settings functions
+      function toggleLongTermMemory(enabled) {
+        vscode.postMessage({ command: 'toggleLongTermMemory', value: enabled });
+      }
+      function updateLtmRetentionDays(days) {
+        vscode.postMessage({ command: 'updateLtmRetentionDays', value: days });
+      }
+      function updateLtmStrategy(strategy) {
+        vscode.postMessage({ command: 'updateLtmStrategy', value: strategy });
+      }
 
       // Step 5: Agent Design functions - Phase 1
       function regenerateAgentProposal() {
@@ -206,6 +216,18 @@ export function getIdeationScript(): string {
       }
       function updateAgentRole(agentId, value) {
         vscode.postMessage({ command: 'updateAgentRole', agentId, value });
+      }
+      // Task 6.2: Per-agent memory configuration functions
+      function updateAgentMemory(agentId, field, value) {
+        vscode.postMessage({ command: 'updateAgentMemory', agentId, field, value });
+      }
+      function toggleAgentMemorySection(agentId) {
+        const content = document.getElementById('memory-content-' + agentId);
+        const header = content?.previousElementSibling;
+        if (content && header) {
+          const isCollapsed = content.classList.toggle('collapsed');
+          header.querySelector('.memory-toggle-icon').textContent = isCollapsed ? '▶' : '▼';
+        }
       }
       function removeAgentTool(agentId, toolIndex) {
         vscode.postMessage({ command: 'removeAgentTool', agentId, toolIndex });

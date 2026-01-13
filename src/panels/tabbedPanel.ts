@@ -68,6 +68,8 @@ import {
   OrchestrationPattern,
   ResumeBannerState,
   WizardState,
+  LtmStrategy,
+  DEFAULT_LTM_RETENTION_DAYS,
 } from '../types/wizardPanel';
 import {
   getWizardStatePersistenceService,
@@ -493,6 +495,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           // Cross-Agent Memory Feature: Restore memory settings from wizard state
           crossAgentMemoryEnabled: wizardState.security.crossAgentMemoryEnabled ?? true,
           memoryExpiryDays: wizardState.security.memoryExpiryDays ?? 7,
+          // Persistent Session Memory Feature: Restore LTM settings from wizard state
+          longTermMemoryEnabled: wizardState.security.longTermMemoryEnabled ?? false,
+          ltmRetentionDays: wizardState.security.ltmRetentionDays ?? DEFAULT_LTM_RETENTION_DAYS,
+          ltmStrategy: wizardState.security.ltmStrategy ?? 'semantic',
         };
         this._ideationState.agentDesign = wizardState.agentDesign;
         this._ideationState.mockData = wizardState.mockData;
@@ -623,6 +629,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         // Cross-Agent Memory Feature: Include memory settings in persisted state
         crossAgentMemoryEnabled: this._ideationState.securityGuardrails.crossAgentMemoryEnabled,
         memoryExpiryDays: this._ideationState.securityGuardrails.memoryExpiryDays,
+        // Persistent Session Memory Feature: Include LTM settings in persisted state
+        longTermMemoryEnabled: this._ideationState.securityGuardrails.longTermMemoryEnabled,
+        ltmRetentionDays: this._ideationState.securityGuardrails.ltmRetentionDays,
+        ltmStrategy: this._ideationState.securityGuardrails.ltmStrategy,
       },
       agentDesign: this._ideationState.agentDesign,
       mockData: this._ideationState.mockData,
@@ -944,6 +954,19 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         this.syncStateToWebview();
         this.saveState();
         break;
+      // Persistent Session Memory Feature: LTM settings handlers
+      case 'toggleLongTermMemory':
+        this._step4Handler?.toggleLongTermMemory(message.value as boolean);
+        this.saveState();
+        break;
+      case 'updateLtmRetentionDays':
+        this._step4Handler?.updateLtmRetentionDays(message.value as number);
+        this.saveState();
+        break;
+      case 'updateLtmStrategy':
+        this._step4Handler?.updateLtmStrategy(message.value as string);
+        this.saveState();
+        break;
       case 'skipSecurityStep':
         // Apply sensible defaults
         this._ideationState.securityGuardrails.dataSensitivity = 'Internal';
@@ -1019,6 +1042,16 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
           message.agentId as string,
           message.value as string
         );
+        break;
+
+      // Task 6.2: Per-agent memory configuration
+      case 'updateAgentMemory':
+        this._step5Handler?.handleUpdateAgentMemory(
+          message.agentId as string,
+          message.field as string,
+          message.value as boolean | string
+        );
+        this.saveState();
         break;
 
       case 'addAgentTool':
@@ -1652,6 +1685,10 @@ export class TabbedPanelProvider implements vscode.WebviewViewProvider {
         // Cross-Agent Memory Feature: Include memory settings in steering context
         crossAgentMemoryEnabled: this._ideationState.securityGuardrails.crossAgentMemoryEnabled,
         memoryExpiryDays: this._ideationState.securityGuardrails.memoryExpiryDays,
+        // Persistent Session Memory Feature: Include LTM settings in steering context
+        longTermMemoryEnabled: this._ideationState.securityGuardrails.longTermMemoryEnabled,
+        ltmRetentionDays: this._ideationState.securityGuardrails.ltmRetentionDays,
+        ltmStrategy: this._ideationState.securityGuardrails.ltmStrategy,
       },
       agentDesign: this._ideationState.agentDesign,
       mockData: this._ideationState.mockData,

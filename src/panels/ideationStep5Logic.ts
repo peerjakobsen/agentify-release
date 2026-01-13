@@ -404,6 +404,26 @@ export class Step5LogicHandler {
   }
 
   /**
+   * Task 6.2: Update agent memory configuration
+   * Handles per-agent memory settings (usesShortTermMemory, usesLongTermMemory, ltmStrategy)
+   */
+  public handleUpdateAgentMemory(agentId: string, field: string, value: boolean | string): void {
+    const agent = this._state.proposedAgents.find(a => a.id === agentId);
+    if (agent) {
+      if (field === 'usesShortTermMemory') {
+        agent.usesShortTermMemory = value as boolean;
+      } else if (field === 'usesLongTermMemory') {
+        agent.usesLongTermMemory = value as boolean;
+      } else if (field === 'ltmStrategy') {
+        agent.ltmStrategy = value as 'semantic' | 'summary' | 'user_preference';
+      }
+      agent.memoryEdited = true;
+      this._callbacks.updateWebviewContent();
+      this._callbacks.syncStateToWebview();
+    }
+  }
+
+  /**
    * Add tool to agent and set toolsEdited flag
    */
   public handleAddAgentTool(agentId: string, tool: string): void {
@@ -697,6 +717,12 @@ Please provide an updated agent design proposal that incorporates the user's req
         if (!existingAgent.toolsEdited) {
           existingAgent.tools = [...aiAgent.tools];
         }
+        // Task 6.4: Respect memoryEdited flag for memory fields
+        if (!existingAgent.memoryEdited) {
+          existingAgent.usesShortTermMemory = aiAgent.usesShortTermMemory;
+          existingAgent.usesLongTermMemory = aiAgent.usesLongTermMemory;
+          existingAgent.ltmStrategy = aiAgent.ltmStrategy;
+        }
       } else {
         // New agent from AI - add it
         this._state.proposedAgents.push({
@@ -705,6 +731,11 @@ Please provide an updated agent design proposal that incorporates the user's req
           nameEdited: false,
           roleEdited: false,
           toolsEdited: false,
+          // Task 6.4: Initialize memory fields for new agents
+          usesShortTermMemory: aiAgent.usesShortTermMemory ?? true,
+          usesLongTermMemory: aiAgent.usesLongTermMemory ?? false,
+          ltmStrategy: aiAgent.ltmStrategy ?? 'semantic',
+          memoryEdited: false,
         });
       }
     }

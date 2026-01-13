@@ -474,9 +474,47 @@ export const MIN_MEMORY_EXPIRY_DAYS = 1;
  */
 export const MAX_MEMORY_EXPIRY_DAYS = 365;
 
+// ============================================================================
+// Persistent Session Memory Types (Item 39.5)
+// ============================================================================
+
+/**
+ * Long-Term Memory (LTM) strategy type
+ * Persistent Session Memory Feature: Strategy for LTM extraction
+ */
+export type LtmStrategy = 'semantic' | 'summary' | 'user_preference';
+
+/**
+ * LTM retention options in days
+ * Persistent Session Memory Feature: Allowed retention periods
+ */
+export const LTM_RETENTION_OPTIONS = [7, 30, 90] as const;
+
+/**
+ * Default LTM retention in days
+ * Persistent Session Memory Feature: Default retention period
+ */
+export const DEFAULT_LTM_RETENTION_DAYS = 30;
+
+/**
+ * Memory persistence configuration
+ * Persistent Session Memory Feature: Configuration for LTM
+ */
+export interface MemoryPersistenceConfig {
+  /** Whether persistent memory is enabled */
+  enabled: boolean;
+  /** LTM strategy (semantic, summary, or user_preference) */
+  strategy: LtmStrategy;
+  /** Retention period in days (7, 30, or 90) */
+  retentionDays: number;
+  /** Namespace prefix for memory storage */
+  namespacePrefix?: string;
+}
+
 /**
  * Security and guardrails state for Step 4
  * Cross-Agent Memory Feature: Extended with memory configuration fields
+ * Persistent Session Memory Feature: Extended with LTM configuration fields
  */
 export interface SecurityState {
   /** Data sensitivity classification */
@@ -493,6 +531,12 @@ export interface SecurityState {
   crossAgentMemoryEnabled: boolean;
   /** Memory expiry in days (1-365), only used when crossAgentMemoryEnabled is true */
   memoryExpiryDays: number;
+  /** Whether long-term memory (persistent session memory) is enabled */
+  longTermMemoryEnabled: boolean;
+  /** LTM retention in days (7, 30, or 90), only used when longTermMemoryEnabled is true */
+  ltmRetentionDays: number;
+  /** LTM strategy (semantic, summary, or user_preference) */
+  ltmStrategy: LtmStrategy;
 }
 
 // ============================================================================
@@ -513,6 +557,7 @@ export type OrchestrationPattern = 'graph' | 'swarm' | 'workflow';
  *
  * Task 1.2: Extended with edited flags to track user modifications
  * Following pattern from OutcomeDefinitionState edited flags
+ * Persistent Session Memory Feature: Extended with memory configuration fields
  */
 export interface ProposedAgent {
   /** Lowercase agent identifier (e.g., 'planner', 'executor') used in flow notation */
@@ -529,6 +574,14 @@ export interface ProposedAgent {
   roleEdited: boolean;
   /** Whether user has edited the agent's tools (prevents AI overwrite on regeneration) */
   toolsEdited: boolean;
+  /** Whether this agent uses short-term memory (cross-agent memory) */
+  usesShortTermMemory?: boolean;
+  /** Whether this agent uses long-term memory (persistent session memory) */
+  usesLongTermMemory?: boolean;
+  /** LTM strategy for this agent (overrides global setting) */
+  ltmStrategy?: LtmStrategy;
+  /** Whether user has edited the agent's memory configuration (prevents AI overwrite) */
+  memoryEdited?: boolean;
 }
 
 /**
@@ -1108,6 +1161,7 @@ export interface WizardValidationState {
  * Task 1.5: Extended with Step 8 Generation commands
  * Phase 2: Extended with Roadmap Generation commands
  * Cross-Agent Memory Feature: Extended with memory settings commands
+ * Persistent Session Memory Feature: Extended with LTM settings commands
  */
 export const WIZARD_COMMANDS = {
   /** Navigate to next step */
@@ -1168,11 +1222,18 @@ export const WIZARD_COMMANDS = {
   // -------------------------------------------------------------------------
   // Step 4: Security & Guardrails commands (Roadmap Item 17)
   // Cross-Agent Memory Feature: Commands for memory configuration
+  // Persistent Session Memory Feature: Commands for LTM configuration
   // -------------------------------------------------------------------------
   /** Toggle cross-agent memory enabled/disabled */
   TOGGLE_CROSS_AGENT_MEMORY: 'toggleCrossAgentMemory',
   /** Update memory expiry days slider value */
   UPDATE_MEMORY_EXPIRY_DAYS: 'updateMemoryExpiryDays',
+  /** Toggle long-term memory enabled/disabled */
+  TOGGLE_LONG_TERM_MEMORY: 'toggleLongTermMemory',
+  /** Update LTM retention days dropdown value */
+  UPDATE_LTM_RETENTION_DAYS: 'updateLtmRetentionDays',
+  /** Update LTM strategy dropdown value */
+  UPDATE_LTM_STRATEGY: 'updateLtmStrategy',
   // Step 5: Agent Design commands (Roadmap Item 18)
   /** Regenerate agent design proposal */
   REGENERATE_AGENT_PROPOSAL: 'regenerateAgentProposal',
@@ -1216,6 +1277,8 @@ export const WIZARD_COMMANDS = {
   DISMISS_EDGE_SUGGESTION: 'dismissEdgeSuggestion',
   /** Confirm design and navigate to Step 6 */
   CONFIRM_DESIGN: 'confirmDesign',
+  /** Update agent memory configuration */
+  UPDATE_AGENT_MEMORY_CONFIG: 'updateAgentMemoryConfig',
   // -------------------------------------------------------------------------
   // Step 6: Mock Data Strategy commands (Roadmap Item 21)
   // Task 1.5: Commands for mock data editing and management
@@ -1494,6 +1557,7 @@ export function createDefaultGenerationState(): GenerationState {
  * Default wizard state factory
  * Creates a fresh WizardState with default values
  * Cross-Agent Memory Feature: Includes memory configuration defaults
+ * Persistent Session Memory Feature: Includes LTM configuration defaults
  */
 export function createDefaultWizardState(): WizardState {
   return {
@@ -1510,7 +1574,7 @@ export function createDefaultWizardState(): WizardState {
     aiGapFillingState: createDefaultAIGapFillingState(),
     // Step 3: Outcome Definition
     outcome: createDefaultOutcomeDefinitionState(),
-    // Step 4: Security & Guardrails (includes cross-agent memory)
+    // Step 4: Security & Guardrails (includes cross-agent memory and LTM)
     security: {
       dataSensitivity: 'internal',
       complianceFrameworks: [],
@@ -1519,6 +1583,9 @@ export function createDefaultWizardState(): WizardState {
       skipped: false,
       crossAgentMemoryEnabled: true,
       memoryExpiryDays: DEFAULT_MEMORY_EXPIRY_DAYS,
+      longTermMemoryEnabled: false,
+      ltmRetentionDays: DEFAULT_LTM_RETENTION_DAYS,
+      ltmStrategy: 'semantic',
     },
     // Step 5: Agent Design
     agentDesign: createDefaultAgentDesignState(),
@@ -1672,6 +1739,7 @@ export function wizardStateToPersistedState(state: WizardState): PersistedWizard
  * Task 1.7: Restores state, sets uploadedFile to undefined
  * Refactored: 4-phase layout with backwards compatibility for renamed fields
  * Cross-Agent Memory Feature: Includes backwards compatibility for memory fields
+ * Persistent Session Memory Feature: Includes backwards compatibility for LTM fields
  *
  * @param persisted Previously saved state
  * @returns Full wizard state with file metadata preserved
@@ -1685,10 +1753,13 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     cedarError?: string;
   };
 
-  // Type for backwards compatibility with old SecurityState without memory fields
+  // Type for backwards compatibility with old SecurityState without memory/LTM fields
   type OldSecurityState = SecurityState & {
     crossAgentMemoryEnabled?: boolean;
     memoryExpiryDays?: number;
+    longTermMemoryEnabled?: boolean;
+    ltmRetentionDays?: number;
+    ltmStrategy?: LtmStrategy;
   };
 
   const oldSecurity = persisted.security as OldSecurityState;
@@ -1711,16 +1782,19 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
     // Step 2-8: State Objects
     aiGapFillingState: persisted.aiGapFillingState,
     outcome: persisted.outcome,
-    // Security state with backwards compatibility for memory fields
+    // Security state with backwards compatibility for memory and LTM fields
     security: {
       ...persisted.security,
       crossAgentMemoryEnabled: oldSecurity.crossAgentMemoryEnabled ?? true,
       memoryExpiryDays: oldSecurity.memoryExpiryDays ?? DEFAULT_MEMORY_EXPIRY_DAYS,
+      longTermMemoryEnabled: oldSecurity.longTermMemoryEnabled ?? false,
+      ltmRetentionDays: oldSecurity.ltmRetentionDays ?? DEFAULT_LTM_RETENTION_DAYS,
+      ltmStrategy: oldSecurity.ltmStrategy ?? 'semantic',
     },
     agentDesign: persisted.agentDesign,
     mockData: persisted.mockData,
     demoStrategy: persisted.demoStrategy ?? createDefaultDemoStrategyState(),
-    // Restore generation state with generating flags = false, backwards compat for cedar→policy
+    // Restore generation state with generating flags = false, backwards compat for cedar->policy
     generation: persisted.generation
       ? (() => {
           const gen = persisted.generation as OldGenerationState;
@@ -1734,7 +1808,7 @@ export function persistedStateToWizardState(persisted: PersistedWizardState): Wi
             accordionExpanded: gen.accordionExpanded ?? false,
             canGenerate: gen.canGenerate ?? true,
             steeringComplete: gen.steeringComplete ?? false,
-            // Phase 2 (backwards compat: cedar* → policy*)
+            // Phase 2 (backwards compat: cedar* -> policy*)
             policyGenerating: false,
             policyGenerated: gen.policyGenerated ?? gen.cedarGenerated ?? false,
             policyFilePaths: gen.policyFilePaths ?? gen.cedarFilePaths ?? [],

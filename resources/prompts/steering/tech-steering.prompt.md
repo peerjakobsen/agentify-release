@@ -271,13 +271,22 @@ agents/shared/                     # PRE-BUNDLED — DO NOT MODIFY
 ├── __init__.py                    # Module exports
 ├── instrumentation.py             # @instrument_tool decorator, context management
 ├── dynamodb_client.py             # Fire-and-forget event persistence
-└── gateway_client.py              # invoke_with_gateway(), GatewayTokenManager
+├── gateway_client.py              # invoke_with_gateway(), GatewayTokenManager
+├── memory_client.py               # Cross-agent memory (init_memory, search_memory, store_context)
+├── persistent_memory.py           # Long-term memory (init_persistent_memory, remember_preference, recall_preferences, log_feedback)
+└── orchestrator_utils.py          # CLI parsing, event emission, SDK calls
 ```
 
-Import pattern:
+Import patterns:
 ```python
 from agents.shared.instrumentation import instrument_tool, set_instrumentation_context
 from agents.shared.gateway_client import invoke_with_gateway
+
+# Cross-agent memory (short-term, workflow-scoped)
+from agents.shared import init_memory, search_memory, store_context
+
+# Persistent memory (long-term, user-scoped) - only if LTM enabled
+from agents.shared import init_persistent_memory, remember_preference, recall_preferences, log_feedback
 ```
 
 The `@instrument_tool` decorator emits tool events to DynamoDB for Demo Viewer visualization. All agents should IMPORT from this module.

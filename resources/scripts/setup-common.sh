@@ -191,7 +191,9 @@ init_common() {
 
     # Common config file paths
     export CONFIG_JSON="${PROJECT_ROOT}/.agentify/config.json"
-    export INFRA_CONFIG="${PROJECT_ROOT}/.agentify/infrastructure.json"
+    export WIZARD_STATE="${PROJECT_ROOT}/.agentify/wizard-state.json"
+    export INFRA_JSON="${PROJECT_ROOT}/.agentify/infrastructure.json"
+    export INFRA_CONFIG="${INFRA_JSON}"  # Alias for compatibility
     export GATEWAY_CONFIG="${CDK_DIR}/gateway_config.json"
 }
 

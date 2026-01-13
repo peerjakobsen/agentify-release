@@ -92,23 +92,30 @@ main() {
 # =============================================================================
 
 check_memory_enabled() {
-    if [ ! -f "$CONFIG_JSON" ]; then
-        print_warning "Config file not found: ${CONFIG_JSON}"
-        return 1
-    fi
-
     if ! command -v jq &> /dev/null; then
         print_warning "jq not found, assuming memory is enabled"
         return 0
     fi
 
-    # Check memory.crossAgent.enabled in config
-    ENABLED=$(jq -r '.memory.crossAgent.enabled // true' "$CONFIG_JSON" 2>/dev/null)
-
-    if [ "$ENABLED" = "false" ]; then
-        return 1
+    # Check wizard-state.json first (primary source from Agentify wizard)
+    if [ -f "$WIZARD_STATE" ]; then
+        ENABLED=$(jq -r '.security.crossAgentMemoryEnabled // true' "$WIZARD_STATE" 2>/dev/null)
+        if [ "$ENABLED" = "true" ]; then
+            return 0
+        elif [ "$ENABLED" = "false" ]; then
+            return 1
+        fi
     fi
 
+    # Fallback to config.json for backward compatibility
+    if [ -f "$CONFIG_JSON" ]; then
+        ENABLED=$(jq -r '.memory.crossAgent.enabled // true' "$CONFIG_JSON" 2>/dev/null)
+        if [ "$ENABLED" = "false" ]; then
+            return 1
+        fi
+    fi
+
+    # Default to enabled if no config found
     return 0
 }
 
@@ -147,26 +154,35 @@ setup_memory() {
     # Ensure AgentCore toolkit is installed
     ensure_agentcore_toolkit
 
-    # Get expiry days from config (default 7)
+    # Get expiry days from wizard-state.json or config.json (default 7)
     EXPIRY_DAYS=7
-    if [ -f "$CONFIG_JSON" ] && command -v jq &> /dev/null; then
-        EXPIRY_DAYS=$(jq -r '.memory.crossAgent.expiryDays // 7' "$CONFIG_JSON" 2>/dev/null)
+    if command -v jq &> /dev/null; then
+        if [ -f "$WIZARD_STATE" ]; then
+            EXPIRY_DAYS=$(jq -r '.security.memoryExpiryDays // 7' "$WIZARD_STATE" 2>/dev/null)
+        elif [ -f "$CONFIG_JSON" ]; then
+            EXPIRY_DAYS=$(jq -r '.memory.crossAgent.expiryDays // 7' "$CONFIG_JSON" 2>/dev/null)
+        fi
     fi
 
-    # Calculate expiry in seconds (days * 24 * 60 * 60)
-    EXPIRY_SECONDS=$((EXPIRY_DAYS * 86400))
+    # Build strategies JSON for semantic memory (cross-agent uses "CrossAgent" namespace)
+    STRATEGIES_JSON='[{"semanticMemoryStrategy": {"name": "CrossAgent"}}]'
+
+    # Convert project name to valid memory name (replace hyphens with underscores)
+    # AgentCore Memory names must match: [a-zA-Z][a-zA-Z0-9_]{0,47}
+    MEMORY_NAME="${PROJECT_NAME//-/_}_memory"
 
     print_step "Creating AgentCore Memory resource..."
-    print_step "  Name: ${PROJECT_NAME}-memory"
-    print_step "  Strategy: semantic"
+    print_step "  Name: ${MEMORY_NAME}"
+    print_step "  Strategy: semantic (CrossAgent)"
     print_step "  Expiry: ${EXPIRY_DAYS} day(s)"
 
     # Create memory using agentcore CLI
-    MEMORY_OUTPUT=$(uv run agentcore memory create \
-        --name "${PROJECT_NAME}-memory" \
-        --strategy semantic \
-        --expiry "${EXPIRY_SECONDS}" \
-        --region "${REGION}" 2>&1) || {
+    # Syntax: agentcore memory create <name> [OPTIONS]
+    MEMORY_OUTPUT=$(uv run agentcore memory create "${MEMORY_NAME}" \
+        --strategies "${STRATEGIES_JSON}" \
+        --event-expiry-days "${EXPIRY_DAYS}" \
+        --region "${REGION}" \
+        --wait 2>&1) || {
         print_error "Memory creation failed"
         echo "$MEMORY_OUTPUT"
         cd "${PROJECT_ROOT}"
@@ -174,12 +190,12 @@ setup_memory() {
     }
 
     # Extract MEMORY_ID from output
-    # Output format may vary, try common patterns
-    MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -oE 'mem-[a-zA-Z0-9]+' | head -1)
+    # Output format: "Memory ID: support_triage_memory-0BCgey361B"
+    MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -E "^Memory ID:" | sed 's/Memory ID: *//')
 
     if [ -z "$MEMORY_ID" ]; then
-        # Try alternative extraction
-        MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -i "memory_id" | grep -oE '[a-zA-Z0-9-]+' | tail -1)
+        # Try alternative: "Created memory: support_triage_memory-0BCgey361B"
+        MEMORY_ID=$(echo "$MEMORY_OUTPUT" | grep -E "Created memory:" | sed 's/Created memory: *//' | head -1)
     fi
 
     if [ -z "$MEMORY_ID" ]; then

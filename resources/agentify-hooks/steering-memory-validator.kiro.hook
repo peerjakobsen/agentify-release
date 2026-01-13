@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "Steering Memory Validator",
+  "description": "Validates steering files have correct memory module documentation",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [".kiro/steering/tech.md", ".kiro/steering/structure.md", ".kiro/steering/agentify-integration.md"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Validate this steering file has correct memory documentation.\n\n## REQUIRED MEMORY MODULES\n\nThe Pre-Bundled Shared Utilities section MUST list these memory modules:\n- memory_client.py - Cross-agent memory (init_memory, search_memory, store_context)\n- persistent_memory.py - Long-term memory (init_persistent_memory, remember_preference, recall_preferences, log_feedback)\n\n## FORBIDDEN TERMINOLOGY\n\nThese terms indicate outdated or incorrect documentation:\n- 'Bedrock Knowledge Base' (should be 'AgentCore Memory')\n- 'KNOWLEDGE_BASE_ID' (should be 'MEMORY_ID' or 'PERSISTENT_MEMORY_ID')\n- 'EMBEDDING_MODEL_ID' (AgentCore Memory handles embeddings internally)\n\n## REQUIRED ENVIRONMENT VARIABLES\n\nMemory configuration should reference:\n- MEMORY_ID - Cross-agent memory resource ID\n- PERSISTENT_MEMORY_ID - Long-term memory resource ID\n\n## VALIDATION RULES\n\n### For tech.md:\n1. Pre-Bundled Shared Utilities includes memory_client.py and persistent_memory.py\n2. No references to 'Bedrock Knowledge Base' or 'KNOWLEDGE_BASE_ID'\n3. Memory environment variables documented if memory section exists\n\n### For structure.md:\n1. agents/shared/ directory tree includes memory_client.py and persistent_memory.py\n2. __init__.py exports section shows both cross-agent and persistent memory tools\n\n### For agentify-integration.md:\n1. Available Modules table includes both memory_client.py and persistent_memory.py\n2. Import patterns show both memory types\n3. Both memory initialization sections present (Cross-Agent and Persistent)\n\n## ACTION\n\nIf missing memory modules, add them to the appropriate sections.\nIf forbidden terminology found, replace with correct terms.\nIf environment variables incorrect, update to MEMORY_ID/PERSISTENT_MEMORY_ID."
+  },
+  "shortName": "steering-memory"
+}

@@ -388,6 +388,71 @@ export function getIdeationStyles(): string {
         margin-top: 4px;
       }
 
+      /* Persistent Session Memory: LTM Settings */
+      .ltm-section {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .ltm-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .ltm-header .form-label {
+        margin-bottom: 0;
+      }
+      .ltm-info-tooltip {
+        cursor: help;
+        font-size: 14px;
+        opacity: 0.8;
+      }
+      .ltm-info-tooltip:hover {
+        opacity: 1;
+      }
+      .ltm-settings-row,
+      .ltm-strategy-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .ltm-settings-row.disabled,
+      .ltm-strategy-row.disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      .ltm-retention-select,
+      .ltm-strategy-select {
+        width: 100%;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .ltm-retention-select:focus,
+      .ltm-strategy-select:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
+      }
+      .ltm-retention-select:disabled,
+      .ltm-strategy-select:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .controlled-by-ltm {
+        opacity: 0.7;
+      }
+      .ltm-control-hint {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        margin-left: 4px;
+        font-style: italic;
+      }
+
       /* Step 2: AI Gap-Filling Chat Styles */
       .step2-header {
         display: flex;
@@ -1069,6 +1134,56 @@ export function getIdeationStyles(): string {
       .tool-input:focus {
         outline: none;
         border-color: var(--vscode-focusBorder);
+      }
+
+      /* Task 6.2: Per-agent memory configuration styles */
+      .agent-memory-section {
+        margin-top: 12px;
+        border-top: 1px solid var(--vscode-panel-border);
+        padding-top: 8px;
+      }
+      .agent-memory-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        padding: 4px 0;
+      }
+      .agent-memory-header .form-label {
+        margin-bottom: 0;
+        font-size: 11px;
+      }
+      .memory-toggle-icon {
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+        transition: transform 0.15s;
+      }
+      .agent-memory-content {
+        padding: 8px 0;
+      }
+      .agent-memory-content.collapsed {
+        display: none;
+      }
+      .memory-checkbox-row {
+        margin-bottom: 8px;
+      }
+      .memory-checkbox-row .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--vscode-foreground);
+      }
+      .memory-checkbox-row .toggle-text {
+        font-weight: normal;
+      }
+      .memory-strategy-row {
+        margin-top: 8px;
+      }
+      .memory-strategy-row.disabled {
+        opacity: 0.5;
+        pointer-events: none;
       }
       .remove-agent-btn {
         display: flex;
